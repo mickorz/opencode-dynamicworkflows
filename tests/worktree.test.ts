@@ -30,7 +30,7 @@ test("createWorktree：隔离目录与分支创建成功，文件改动互不影
   try {
     const wt = await createWorktree(repo, "run-x-0-label")
     assert.equal(wt.isolated, true)
-    assert.ok(wt.cwd.includes(path.join(".opencode-workflows", "worktrees")))
+    assert.ok(wt.cwd.includes(".opencode-workflows/worktrees"))
     assert.equal(wt.branch, "wf/run-x-0-label")
     assert.ok(fs.existsSync(path.join(wt.cwd, "base.txt")), "worktree 含基准提交的文件")
 
@@ -83,7 +83,7 @@ test("runtime：isolation worktree 的 agent 收到 worktree 目录，结束自�
     assert.equal(result.result, "ok")
     assert.equal(seenDirectories.length, 1)
     assert.ok(seenDirectories[0], "应传入 worktree 目录")
-    assert.ok(seenDirectories[0]!.includes(path.join(".opencode-workflows", "worktrees")))
+    assert.ok(seenDirectories[0]!.includes(".opencode-workflows/worktrees"))
     // 运行结束后 worktree 已拆除
     const worktreesDir = path.join(repo, ".opencode-workflows", "worktrees")
     const leftover = fs.existsSync(worktreesDir) ? fs.readdirSync(worktreesDir) : []
