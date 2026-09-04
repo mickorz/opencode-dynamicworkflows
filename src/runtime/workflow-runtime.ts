@@ -230,7 +230,8 @@ export async function runWorkflow<T = unknown>(
       let worktree: WorktreeInfo | undefined
       if (scriptOptions.isolation === "worktree") {
         worktree = await createWorktree(baseCwd, `${runId}-${callIndex}-${label}`)
-        if (!worktree.isolated) log(`agent "${label}" 的 worktree 隔离不可用，降级共享目录（${worktree.reason}）`)
+        if (worktree.isolated) log(`agent "${label}" worktree 隔离：${worktree.branch} @ ${worktree.cwd}`)
+        else log(`agent "${label}" 的 worktree 隔离不可用，降级共享目录（${worktree.reason}）`)
       }
       const runDirectory = worktree?.isolated ? worktree.cwd : undefined
 

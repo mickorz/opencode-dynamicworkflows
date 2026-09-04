@@ -60,12 +60,14 @@ export async function createWorktree(baseCwd: string, slug: string): Promise<Wor
   }
   const repoRoot = rootResult.stdout
   const branch = `wf/${safeSlug}`
-  const worktreePath = path.join(repoRoot, ".opencode-workflows", "worktrees", safeSlug)
+  // 目录统一正斜杠：服务端 directory 键为正斜杠规范形（git/workspace 体系均如此），
+  // Windows 下 path.join 的反斜杠会导致 query 路由匹配失败退回 cwd（真机 run-mtmj353a 实证）
+  const worktreePath = path.join(repoRoot, ".opencode-workflows", "worktrees", safeSlug).replace(/\\/g, "/")
   const addResult = await git(repoRoot, ["worktree", "add", "-b", branch, worktreePath, "HEAD"])
   if (!addResult.ok) {
     return { isolated: false, cwd: baseCwd, reason: `git worktree add 失败（${addResult.stderr.slice(0, 80)}）` }
   }
-  return { isolated: true, cwd: worktreePath, branch, repoRoot }
+  return { isolated: true, cwd: worktreePath, branch, repoRoot: repoRoot.replace(/\\/g, "/") }
 }
 
 /** 拆除 worktree 与分支（best-effort；共享目录降级时为 no-op） */
