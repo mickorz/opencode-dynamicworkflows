@@ -30,7 +30,7 @@ API 在已安装的 `@opencode-ai/plugin` / `@opencode-ai/sdk` 类型中找不�
 5. 主会话 abort **不级联** child session；需按 `packages/opencode/src/tool/task.ts:321-357` 的 addEventListener/removeEventListener 范式自行接线
 6. tool 输出默认截断 2000 行 / 50KB（tool/truncate.ts:13-14），原文落盘，metadata 带 outputPath
 7. `session.prompt` 支持 `agent` 参数；内置 `explore` 为只读分析型子代理，`general` 为通用型
-8. v1 插件模块必须 **default export `{ server: Plugin }`**（plugin/shared.ts:272-302）
+8. v1 插件模块必须 **default export `{ id, server: Plugin }`**（plugin/shared.ts:272-302）；**文件路径源的 id 运行时必填**（plugin/index.ts:117 + shared.ts:315 报 "must export id"，npm 源才可回退 package.json name；类型上 id 可选是假象，tests/plugin-module.test.ts 兜底）
 9. 插件 tool 执行无超时限制；`ToolContext.abort` 为 AbortSignal，Esc 中断会话会触发
 
 ## 架构约束

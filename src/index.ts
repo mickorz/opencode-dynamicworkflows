@@ -21,4 +21,6 @@ export const DynamicWorkflowPlugin: Plugin = async (input) => {
   }
 }
 
-export default { server: DynamicWorkflowPlugin } satisfies PluginModule
+// 文件路径源插件的 default export 必须带 id（运行时强制：plugin/index.ts:117 + shared.ts:315，
+// npm 源会回退 package.json name，文件源无回退；类型上 id 可选是假象）
+export default { id: "opencode-dynamic-workflows", server: DynamicWorkflowPlugin } satisfies PluginModule
