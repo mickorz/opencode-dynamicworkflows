@@ -27,7 +27,7 @@ const DESCRIPTION = [
   "运行动态工作流：执行一段 JavaScript 编排脚本，通过 agent() 将任务分发给子代理（独立会话）并行执行，",
   "parallel()/pipeline() 组合调度，脚本内变量汇总后仅返回最终结果，避免大量子代理上下文污染主会话。",
   "适用形态：全仓检查、独立并行调研、多视角评审、扇出汇总。编写脚本前先加载 workflow-authoring skill。",
-  "脚本规则：首条语句 export const meta = { name, description }；只可用 agent/parallel/pipeline/phase/log/args；",
+  "脚本规则：首条语句 export const meta = { name, description }；可用全局 agent/parallel/pipeline/phase/log/args/verify/judgePanel/retry/checkpoint；",
   "禁止 import/require/Date.now()/Math.random()/new Date()；agent() 至少调用一次。",
   "agent() 缺省用只读的 explore 子代理，写文件类任务显式传 { agentType: 'general' }。",
 ].join("")
@@ -73,6 +73,20 @@ export function createWorkflowTool(ctx: PluginInput) {
       let journaledRunId: string | undefined
       const modelTiers = loadModelTiers({ projectDir: context.directory })
       const resolveTier = (tier: string) => modelTiers[tier]
+      // checkpoint 人工确认通道：ToolContext.ask 的允许/拒绝映射为 true/false（拒绝不抛错，脚本可分支处理）
+      const confirm = async (promptText: string): Promise<unknown> => {
+        try {
+          await context.ask({
+            permission: "workflow-checkpoint",
+            patterns: [promptText.slice(0, 120)],
+            always: [],
+            metadata: { message: promptText },
+          })
+          return true
+        } catch {
+          return false
+        }
+      }
       const onAgentJournal = (entry: JournalEntry & { key: string }) => {
         journaledRunId = entry.key.slice(0, entry.key.indexOf(":"))
         try {
@@ -111,6 +125,7 @@ export function createWorkflowTool(ctx: PluginInput) {
           agentRetries: input.agentRetries,
           signal: runController.signal,
           resolveTier,
+          confirm,
           runId: input.resumeFromRunId,
           resumeJournal,
           onAgentJournal,

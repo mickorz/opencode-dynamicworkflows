@@ -68,6 +68,16 @@ export interface WorkflowRunOptions {
   resumeJournal?: Map<string, JournalEntry>
   /** 每个成功 live agent 完成后回调，调用方负责持久化（P1-1） */
   onAgentJournal?: (entry: JournalEntry & { key: string }) => void
+  /** checkpoint() 的人工确认通道（tool 层接 ToolContext.ask；缺省走 headless default，P1-4） */
+  confirm?: (promptText: string) => Promise<unknown>
+}
+
+/** checkpoint() 的可选项（P1-4，仅确认型：OpenCode 无自由文本 UI 通道） */
+export interface CheckpointOptions {
+  /** 无人工通道（headless）时的回复；缺省 true */
+  default?: unknown
+  /** "abort"：headless 时抛错终止而非取 default */
+  headless?: "default" | "abort"
 }
 
 interface RuntimeState {
@@ -326,6 +336,145 @@ export async function runWorkflow<T = unknown>(
     error: (m: unknown) => log(`[error] ${String(m)}`),
   }
 
+  // ── 质量与控制 DSL（P1-4，移植自 Pi；纯构建在 agent()/parallel() 之上，callSeq 稳定、resume 安全） ──
+
+  const VERIFY_SCHEMA: Record<string, unknown> = {
+    type: "object",
+    properties: { real: { type: "boolean" }, reason: { type: "string" } },
+    required: ["real"],
+  }
+
+  const JUDGE_SCHEMA: Record<string, unknown> = {
+    type: "object",
+    properties: { score: { type: "number" }, reason: { type: "string" } },
+    required: ["score"],
+  }
+
+  const normalizeQualityFanout = (value: unknown, fallback: number, optionName: string): number => {
+    const count = value === undefined ? fallback : value
+    if (typeof count !== "number" || !Number.isFinite(count) || !Number.isInteger(count) || count < 1) {
+      throw new TypeError(`${optionName} 必须是大于等于 1 的整数`)
+    }
+    return count
+  }
+
+  /** 对抗式评审：多个 reviewer 尝试反驳 item，投票达阈值判真（照搬 Pi verify） */
+  const verify = async (
+    item: unknown,
+    opts: { reviewers?: number; threshold?: number; lens?: string | string[] } = {},
+  ): Promise<unknown> => {
+    throwIfAborted()
+    const reviewerSlots = normalizeQualityFanout(opts.reviewers, 2, "verify() reviewers")
+    const threshold = opts.threshold ?? 0.5
+    const lenses = opts.lens ? (Array.isArray(opts.lens) ? opts.lens : [opts.lens]) : []
+    const claim = typeof item === "string" ? item : JSON.stringify(item)
+    const votes = (
+      await parallel(
+        Array.from({ length: reviewerSlots }, (_v, i) => () =>
+          agent(
+            `Adversarially review whether the following is REAL/correct. Try to refute it; default to real=false if unsure.${lenses.length ? ` Focus lens: ${lenses[i % lenses.length]}.` : ""}\n\n${claim}`,
+            { label: `verify ${i + 1}`, schema: VERIFY_SCHEMA },
+          )),
+      )
+    ).filter(Boolean) as Array<{ real?: boolean; reason?: string }>
+    const realCount = votes.filter((v) => v?.real).length
+    return {
+      real: votes.length > 0 && realCount / votes.length >= threshold,
+      realCount,
+      total: votes.length,
+      votes,
+    }
+  }
+
+  /** 评审团：多个 judge 按指标给每个候选打分，返回最高均分（照搬 Pi judgePanel） */
+  const judgePanel = async (
+    attempts: unknown[],
+    opts: { judges?: number; rubric?: string } = {},
+  ): Promise<unknown> => {
+    throwIfAborted()
+    const judgeSlots = normalizeQualityFanout(opts.judges, 3, "judgePanel() judges")
+    const candidates: Array<{ attempt: unknown; index: number }> = Array.isArray(attempts)
+      ? attempts.map((attempt, index) => ({ attempt, index })).filter((c) => c.attempt != null)
+      : []
+    if (!candidates.length) throw new TypeError("judgePanel() 需要非空候选数组")
+    const rubric = opts.rubric ?? "overall quality and correctness"
+    const scored = (
+      await parallel(
+        candidates.map(({ attempt: att, index }) => async () => {
+          const text = typeof att === "string" ? att : JSON.stringify(att)
+          const js = (
+            await parallel(
+              Array.from({ length: judgeSlots }, (_v, j) => () =>
+                agent(`Score this candidate from 0 to 1 on: ${rubric}. Reply with the score.\n\nCandidate:\n${text}`, {
+                  label: `judge ${index + 1}.${j + 1}`,
+                  schema: JUDGE_SCHEMA,
+                })),
+            )
+          ).filter(Boolean) as Array<{ score?: number }>
+          const score = js.length ? js.reduce((s, v) => s + (Number(v?.score) || 0), 0) / js.length : 0
+          return { index, attempt: att, score, judgments: js }
+        }),
+      )
+    ).filter(Boolean) as Array<{ index: number; attempt: unknown; score: number; judgments: unknown[] }>
+    // 最高均分；同分稳定取输入顺序靠前者（与 Pi 一致）
+    let best = scored[0]
+    for (const s of scored) if (s.score > best.score || (s.score === best.score && s.index < best.index)) best = s
+    return best
+  }
+
+  /** 有界重试糖（照搬 Pi retry）：直到 until 通过或耗尽，返回最后一次结果（不抛错） */
+  const retry = async (
+    thunk: (attempt: number) => Promise<unknown> | unknown,
+    opts: { attempts?: number; until?: (r: unknown) => boolean } = {},
+  ): Promise<unknown> => {
+    const attempts = Math.max(1, opts.attempts ?? 3)
+    let last: unknown
+    for (let i = 0; i < attempts; i++) {
+      last = await thunk(i)
+      const accepted = !opts.until || opts.until(last)
+      if (accepted) return last
+    }
+    return last
+  }
+
+  /** 人工确认点（P1-4，Pi checkpoint 的确认型子集）：确定性哈希 + journal 回放，不花 token */
+  const checkpoint = async (promptText: string, checkpointOptions: CheckpointOptions = {}): Promise<unknown> => {
+    throwIfAborted()
+    if (typeof promptText !== "string") throw new TypeError("checkpoint(promptText, options?) 需要 prompt 字符串")
+    // 哈希身份：promptText + default + headless（与结果相关的全部选项）
+    const callIndex = state.callSeq++
+    const journalKey = `${runId}:${callIndex}`
+    const callHash = createHash("sha256")
+      .update(JSON.stringify({ promptText, default: checkpointOptions.default ?? null, headless: checkpointOptions.headless ?? null }))
+      .digest("hex")
+    const cached = options.resumeJournal?.get(journalKey)
+    if (cached != null && cached.hash === callHash && callIndex < state.firstMiss) {
+      agentCount++
+      return cached.result
+    }
+    if (cached == null || cached.hash !== callHash) {
+      state.firstMiss = Math.min(state.firstMiss, callIndex)
+    }
+    agentCount++
+
+    let reply: unknown
+    if (options.confirm) {
+      reply = await options.confirm(promptText)
+    } else if (checkpointOptions.headless === "abort") {
+      throw new WorkflowError(
+        `checkpoint 需要人工确认但无可用通道（headless）："${promptText}"`,
+        WorkflowErrorCode.WORKFLOW_ABORTED,
+        { recoverable: false },
+      )
+    } else {
+      reply = checkpointOptions.default ?? true
+    }
+    throwIfAborted()
+    log(`checkpoint："${promptText}" -> ${JSON.stringify(reply)}`)
+    options.onAgentJournal?.({ key: journalKey, hash: callHash, result: reply })
+    return reply
+  }
+
   const globals: Record<string, unknown> = {
     agent,
     parallel,
@@ -333,6 +482,10 @@ export async function runWorkflow<T = unknown>(
     phase,
     log,
     args: options.args,
+    verify,
+    judgePanel,
+    retry,
+    checkpoint,
     console: consoleShim,
   }
 

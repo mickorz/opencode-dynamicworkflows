@@ -18,6 +18,7 @@ description: 编写 OpenCode 动态工作流 JavaScript 脚本时加载。涉及
 ## 可用全局
 
 `agent(prompt, opts?)` `parallel(thunks)` `pipeline(items, ...stages)` `phase(title)` `log(msg)` `args`
+`verify(item, opts?)` `judgePanel(attempts, opts?)` `retry(fn, opts?)` `checkpoint(promptText, opts?)`
 
 ## 典型形态
 
@@ -47,6 +48,22 @@ return await agent('综合以下审计结果，输出风险清单：\n' + findin
 | `timeoutMs` | 单 agent 超时毫秒 |
 | `retries` | 可恢复失败重试次数（上限 3） |
 | `phase` | 显式归属阶段（缺省用当前 phase） |
+
+## 质量与控制助手
+
+```javascript
+// 对抗式验证：多 reviewer 试图反驳，投票达阈值判真
+const verdict = await verify(agent 的结论, { reviewers: 3, threshold: 0.5 })
+
+// 评审团：多 judge 给多个候选打分，返回最高均分
+const best = await judgePanel([方案A, 方案B], { judges: 3, rubric: '正确性与成本' })
+
+// 有界重试：until 通过即停，耗尽返回最后一次结果
+const out = await retry(() => agent('生成'), { attempts: 3, until: (r) => r && r.ok })
+
+// 人工确认点：会弹权限确认（允许=true）；回放时不再询问，不花 token
+if (!await checkpoint('即将改动生产配置，确认？')) return '已取消'
+```
 
 ## 参考
 
