@@ -40,6 +40,8 @@ export interface ScriptAgentOptions {
   agentType?: string
   /** "provider/modelId" 或裸 "modelId"；缺省用会话默认模型 */
   model?: string
+  /** 模型分层名（small/medium/big 或自定义），经 resolveTier 解析为具体模型；优先级低于 model（P1-3） */
+  tier?: string
   /** 本 agent 的超时毫秒数；null 表示不设硬超时 */
   timeoutMs?: number | null
   /** 本 agent 的重试次数（可恢复失败后） */
@@ -60,6 +62,8 @@ export interface WorkflowRunOptions {
   /** run 级默认重试次数 */
   agentRetries?: number
   runId?: string
+  /** tier 名 -> "provider/modelId" 的解析器（由 tool 层从配置文件注入，测试可 fake；P1-3） */
+  resolveTier?: (tier: string) => string | undefined
   /** resume：上一轮的 journal（key 为 runId:callIndex），未变前缀直接回放（P1-1） */
   resumeJournal?: Map<string, JournalEntry>
   /** 每个成功 live agent 完成后回调，调用方负责持久化（P1-1） */
@@ -72,6 +76,8 @@ interface RuntimeState {
   logs: string[]
   agents: AgentRecord[]
   callSeq: number
+  /** 已告警过的未配置 tier（每 run 每 tier 只告警一次） */
+  warnedTiers: Set<string>
   /** 首个未命中 journal 的 callIndex；其后所有调用一律 live 重跑（最长未变前缀语义，照搬 Pi） */
   firstMiss: number
 }
@@ -98,6 +104,7 @@ export async function runWorkflow<T = unknown>(
     currentPhase: meta.phases?.[0]?.title,
     agents: [],
     callSeq: 0,
+    warnedTiers: new Set(),
     firstMiss: Number.POSITIVE_INFINITY,
   }
 
@@ -153,6 +160,19 @@ export async function runWorkflow<T = unknown>(
     ensureAgentCapacity()
 
     const assignedPhase = scriptOptions.phase ?? state.currentPhase
+    // 模型优先级：显式 model > tier（经 resolveTier）> 会话默认（P1-3）
+    let modelSpec = scriptOptions.model
+    if (!modelSpec && scriptOptions.tier) {
+      const resolved = options.resolveTier?.(scriptOptions.tier)
+      if (resolved) {
+        modelSpec = resolved
+      } else if (!state.warnedTiers.has(scriptOptions.tier)) {
+        state.warnedTiers.add(scriptOptions.tier)
+        log(
+          `tier "${scriptOptions.tier}" 未配置，回退会话默认模型；配置见 ~/.config/opencode/workflows/model-tiers.json 或项目 .opencode-workflows/model-tiers.json`,
+        )
+      }
+    }
     const callIndex = state.callSeq++
     agentCount++
     const label = scriptOptions.label?.trim() || defaultAgentLabel(assignedPhase, agentCount)
@@ -200,7 +220,7 @@ export async function runWorkflow<T = unknown>(
             label,
             phase: assignedPhase,
             agentType: scriptOptions.agentType,
-            model: scriptOptions.model,
+            model: modelSpec,
             schema: scriptOptions.schema,
             signal: attemptController.signal,
             onUsage: (usage: AgentUsage) => {
@@ -212,10 +232,10 @@ export async function runWorkflow<T = unknown>(
           )
           record.status = "ok"
           record.durationMs = Date.now() - agentStarted
-          record.model = scriptOptions.model
+          record.model = modelSpec
           // 成功且非空结果写入 journal 回调；失败/null/空文本不进（与 Pi 一致）
           if (!isEmptyTextResult(value, scriptOptions.schema)) {
-            options.onAgentJournal?.({ key: deltaKey, hash: callHash, result: value, model: scriptOptions.model })
+            options.onAgentJournal?.({ key: deltaKey, hash: callHash, result: value, model: modelSpec })
           }
           return value
         } catch (error) {
@@ -385,13 +405,14 @@ function normalizeConcurrency(value: unknown): number {
 
 /**
  * agent 调用的稳定身份哈希（P1-1，照搬 Pi hashAgentCall 思路）。
- * 身份面 = prompt / model / phase / agentType / schema，sha256 后十六进制。
- * 注意：model 只取脚本声明的 spec 字符串（与 Pi 一致，真实解析后的模型不进哈希，换 tier 配置不破缓存）。
+ * 身份面 = prompt / model spec / tier / phase / agentType / schema，sha256 后十六进制。
+ * 注意：model/tier 只取脚本声明的 spec（与 Pi 一致，resolveTier 解析结果不进哈希，换 tier 配置不破缓存）。
  */
 function hashAgentCall(prompt: string, options: ScriptAgentOptions, phase: string | undefined): string {
   const identity = JSON.stringify({
     prompt,
     model: options.model ?? null,
+    tier: options.tier ?? null,
     phase: phase ?? null,
     agentType: options.agentType ?? null,
     schema: options.schema ?? null,

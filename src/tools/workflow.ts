@@ -15,6 +15,7 @@ import { tool, type PluginInput } from "@opencode-ai/plugin"
 import { runWorkflow } from "../runtime/workflow-runtime.js"
 import { OpenCodeSessionAdapter } from "../adapters/opencode-session-adapter.js"
 import { JournalStore } from "../persistence/journal.js"
+import { loadModelTiers } from "../agent/model-tiers.js"
 import type { JournalEntry } from "../types/index.js"
 
 /** tool 输出预算：平台默认 50KB 截断（tool/truncate.ts:13-14），自留 2KB 余量给头部与摘要 */
@@ -70,6 +71,8 @@ export function createWorkflowTool(ctx: PluginInput) {
         }
       }
       let journaledRunId: string | undefined
+      const modelTiers = loadModelTiers({ projectDir: context.directory })
+      const resolveTier = (tier: string) => modelTiers[tier]
       const onAgentJournal = (entry: JournalEntry & { key: string }) => {
         journaledRunId = entry.key.slice(0, entry.key.indexOf(":"))
         try {
@@ -107,6 +110,7 @@ export function createWorkflowTool(ctx: PluginInput) {
           agentTimeoutMs: input.agentTimeoutMs ?? null,
           agentRetries: input.agentRetries,
           signal: runController.signal,
+          resolveTier,
           runId: input.resumeFromRunId,
           resumeJournal,
           onAgentJournal,
