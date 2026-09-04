@@ -9,6 +9,7 @@ OpenCode 动态工作流插件：Main Agent 生成一段 JavaScript 编排脚本
 - `workflow` 自定义 tool：接受 JS 脚本，返回结果 + 每个 agent 的单行摘要与 token 用量（metadata）
 - VM 沙箱：确定性护栏（禁 `Date.now()` / `Math.random()` / `new Date()` / import / require）
 - DSL：`agent(prompt, opts)` / `parallel(thunks)` / `pipeline(items, ...stages)` / `phase(title)` / `log(msg)` / `args`
+- 后台运行：`background: true` 立即返回 runId，完成后结果自动回传会话；`workflow_control` 工具查进度/停止
 - 原生结构化输出：`agent(prompt, { schema })` 直接走 OpenCode `format: json_schema`
 - 并发控制：缺省 `CPU核数-2`，钳制上限 16；`maxAgents` 缺省 1000
 - 超时 / 重试 / abort 级联（Esc 中断主会话会取消所有在飞子会话）

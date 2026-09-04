@@ -39,6 +39,7 @@ interface PromptResponse {
     error?: unknown
     structured?: unknown
     tokens?: { input?: number; output?: number; reasoning?: number }
+    cost?: number
   }
   parts: Array<{ type: string; text?: string; ignored?: boolean }>
 }
@@ -262,7 +263,12 @@ export class OpenCodeSessionAdapter implements AgentSessionRunner {
     if (tokens && options?.onUsage) {
       const input = tokens.input ?? 0
       const output = tokens.output ?? 0
-      options.onUsage({ input, output, total: input + output + (tokens.reasoning ?? 0) })
+      options.onUsage({
+        input,
+        output,
+        total: input + output + (tokens.reasoning ?? 0),
+        ...(message.info.cost !== undefined ? { cost: message.info.cost } : {}),
+      })
     }
   }
 }

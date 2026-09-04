@@ -1,27 +1,11 @@
-/**
- * workflow 自定义 tool（F-01/F-07）—— Main Agent 的唯一入口
- *
- * 执行流程：
- *  execute(args, context)
- *   -> 剥离 markdown 围栏 + runWorkflow(script, options)
- *        -> Runtime（vm 沙箱 + agent/parallel/pipeline/phase/log/args）
- *             -> OpenCodeSessionAdapter -> client.session.*
- *   -> abort 级联：context.abort -> run 级 controller -> 各 agent 的 attempt controller
- *   -> 渲染输出：结果 JSON + agent 单行摘要（控制在 50KB 截断预算内，F-07/N-07）
- *   -> metadata：{ runId, agents, phases, logs, agentCount, durationMs, tokens }
- */
-
 import { tool, type PluginInput } from "@opencode-ai/plugin"
 import { runWorkflow } from "../runtime/workflow-runtime.js"
 import { OpenCodeSessionAdapter } from "../adapters/opencode-session-adapter.js"
 import { JournalStore } from "../persistence/journal.js"
 import { loadModelTiers } from "../agent/model-tiers.js"
+import { renderWorkflowResult } from "./render.js"
+import { BackgroundRunManager } from "./background-runs.js"
 import type { JournalEntry } from "../types/index.js"
-
-/** tool 输出预算：平台默认 50KB 截断（tool/truncate.ts:13-14），自留 2KB 余量给头部与摘要 */
-const OUTPUT_BUDGET_BYTES = 48 * 1024
-/** agent 摘要最多展示的行数（超出部分折叠为一行计数说明） */
-const AGENT_SUMMARY_MAX_LINES = 200
 
 const DESCRIPTION = [
   "运行动态工作流：执行一段 JavaScript 编排脚本，通过 agent() 将任务分发给子代理（独立会话）并行执行，",
@@ -32,7 +16,7 @@ const DESCRIPTION = [
   "agent() 缺省用只读的 explore 子代理，写文件类任务显式传 { agentType: 'general' }。",
 ].join("")
 
-export function createWorkflowTool(ctx: PluginInput) {
+export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunManager) {
   return tool({
     description: DESCRIPTION,
 
@@ -50,12 +34,43 @@ export function createWorkflowTool(ctx: PluginInput) {
       resumeFromRunId: tool.schema.string().optional().describe(
         "续跑某次历史 run（传入上次结果里的 runId）与修改后的 script：未变的 agent() 调用直接从 journal 回放（不调 LLM），首个变更调用及其后全部重跑。调用按位置匹配，保持前序调用不变且有序。",
       ),
+      background: tool.schema.boolean().optional().describe(
+        "后台运行（P2）：true 时立即返回 runId不阻塞本轮对话，完成后结果自动发回本会话；用 workflow_control 工具查状态或停止。缺省 false（前台阻塞直到完成）。后台 run 的 checkpoint 走 headless 默认值。",
+      ),
     },
 
     async execute(input, context) {
       const script = normalizeWorkflowScript(input.script)
       if (!script) {
         return { title: "workflow", output: "workflow 需要 script 字符串参数" }
+      }
+
+      // 后台路径（P2-2）：立即返回 runId，结果完成后回传主会话
+      if (input.background) {
+        let runId: string
+        try {
+          runId = background.start(
+            { client: ctx.client, parentSessionId: context.sessionID, directory: context.directory },
+            {
+              script,
+              args: input.args,
+              concurrency: input.concurrency,
+              maxAgents: input.maxAgents,
+              agentTimeoutMs: input.agentTimeoutMs,
+              agentRetries: input.agentRetries,
+            },
+          )
+        } catch (error) {
+          return {
+            title: "workflow",
+            output: `后台工作流启动失败（脚本校验）：${error instanceof Error ? error.message : String(error)}`,
+          }
+        }
+        return {
+          title: "workflow",
+          output: `后台工作流已启动（runId: ${runId}）。本轮对话不被阻塞；完成后结果会自动发回本会话。可用 workflow_control 查询进度或停止；中断后可用 resumeFromRunId="${runId}" 续跑。`,
+          metadata: { runId, background: true },
+        }
       }
 
       // journal：按项目目录落盘，逐 agent 写入（中断后续跑仍可回放已完成部分）
@@ -133,7 +148,7 @@ export function createWorkflowTool(ctx: PluginInput) {
         })
         // 结构化降级可观测性：附在日志尾部（P1-2）
         for (const note of degradeNotes) result.logs.push(note)
-        return renderResult(result)
+        return renderWorkflowResult(result)
       } catch (error) {
         if (runController.signal.aborted || (error instanceof Error && /abort/i.test(error.message))) {
           // 用户中断：返回已完成的进度摘要而非抛错（平台会把 tool part 标记为 interrupted）
@@ -153,84 +168,7 @@ export function createWorkflowTool(ctx: PluginInput) {
   })
 }
 
-/** 渲染 tool 返回（F-07：return 值 + agent 单行摘要 + metadata，控制在截断预算内） */
-function renderResult(
-  result: Awaited<ReturnType<typeof runWorkflow>>,
-): { title: string; output: string; metadata: Record<string, unknown> } {
-  const failed = result.agents.filter((a) => a.status === "failed").length
-  const abortedCount = result.agents.filter((a) => a.status === "aborted").length
-  const replayed = result.agents.filter((a) => a.replayed).length
-  const tokens = result.agents.reduce((sum, a) => sum + (a.tokens ?? 0), 0)
 
-  const lines: string[] = []
-  lines.push(
-    `工作流 ${result.meta.name} 完成：${result.agentCount} 个 agent` +
-      `${failed ? `，${failed} 失败` : ""}${abortedCount ? `，${abortedCount} 中止` : ""}` +
-      `${replayed ? `，${replayed} 缓存回放` : ""}` +
-      `，耗时 ${(result.durationMs / 1000).toFixed(1)}s，共 ${tokens} tokens` +
-      `（runId: ${result.runId}）`,
-  )
-  if (result.phases.length) lines.push(`阶段: ${result.phases.join(" > ")}`)
-
-  lines.push("")
-  lines.push("agent 摘要:")
-  const shown = result.agents.slice(0, AGENT_SUMMARY_MAX_LINES)
-  for (const agent of shown) {
-    const status =
-      agent.status === "ok"
-        ? agent.replayed
-          ? "缓存"
-          : "成功"
-        : agent.status === "failed"
-          ? "失败"
-          : agent.status === "aborted"
-            ? "中止"
-            : "运行中"
-    const tokensPart = agent.tokens !== undefined ? ` ${agent.tokens} tok` : ""
-    const errorPart = agent.error ? ` | ${agent.error}` : ""
-    lines.push(`  [${status}] ${agent.label}${agent.phase ? ` (${agent.phase})` : ""}${tokensPart}${errorPart}`)
-  }
-  if (result.agents.length > AGENT_SUMMARY_MAX_LINES) {
-    lines.push(`  ...其余 ${result.agents.length - AGENT_SUMMARY_MAX_LINES} 个 agent 见 metadata.agents`)
-  }
-
-  lines.push("")
-  lines.push("## 结果")
-  let resultJson = JSON.stringify(result.result, null, 2) ?? "null"
-  // 结果过大时降级为紧凑 JSON，再超则截断（完整结构仍在 metadata.agents / 后续 journal）
-  let output = lines.join("\n") + "\n```json\n" + resultJson + "\n```\n"
-  if (Buffer.byteLength(output, "utf8") > OUTPUT_BUDGET_BYTES) {
-    resultJson = JSON.stringify(result.result) ?? "null"
-    output = lines.join("\n") + "\n```json\n" + resultJson + "\n```\n"
-    if (Buffer.byteLength(output, "utf8") > OUTPUT_BUDGET_BYTES) {
-      output =
-        lines.join("\n") +
-        `\n\`\`\`json\n${resultJson.slice(0, OUTPUT_BUDGET_BYTES - lines.join("\n").length - 64)}\n...(结果过大已截断)\n\`\`\`\n`
-    }
-  }
-  if (result.logs.length) {
-    output += `\n日志:\n${result.logs.slice(-20).join("\n")}`
-  }
-  // 续跑提示：有 live 写入过 journal 才提示（纯回放轮不提示）
-  const journaled = result.agents.some((a) => !a.replayed && a.status === "ok")
-  if (journaled) {
-    output += `\n\n提示：迭代不重烧——修改脚本后重传 resumeFromRunId="${result.runId}"，未变 agent() 调用直接回放，仅改动的重跑。`
-  }
-
-  return {
-    title: `workflow ${result.meta.name}`,
-    output,
-    metadata: {
-      runId: result.runId,
-      agentCount: result.agentCount,
-      durationMs: result.durationMs,
-      phases: result.phases,
-      logs: result.logs,
-      agents: result.agents,
-      result: result.result,
-    },
-  }
-}
 
 /** 剥离可能的 markdown 围栏（照搬 Pi normalizeWorkflowScript） */
 function normalizeWorkflowScript(script: string): string {

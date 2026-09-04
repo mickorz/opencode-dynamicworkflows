@@ -13,7 +13,8 @@ examples/sample-project/          # 测试工程（在这里启动 OpenCode，�
    ├─ resume-test.js              # P1 journal/resume 首跑（续跑步骤见 Docs/P1测试指南.md）
    ├─ quality-dsl-test.js         # P1 质量 DSL：judgePanel + verify + checkpoint
    ├─ tier-fallback-test.js       # P1 tier 回退告警演示
-   └─ worktree-test.js            # P1 worktree 隔离演示
+   ├─ worktree-test.js            # P1 worktree 隔离演示
+   └─ background-test.js          # P2 后台运行演示（配合 background: true）
 ```
 
 ## 使用步骤

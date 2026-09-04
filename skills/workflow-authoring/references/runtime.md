@@ -99,3 +99,12 @@ await agent('重构 src/player.ts 并提交修改说明', { isolation: 'worktree
 - 在独立 git worktree（`.opencode-workflows/worktrees/<runId-callIndex-label>`，分支 `wf/<同名>`）中运行该 agent 的会话，多个写型 agent 互不覆盖文件
 - 需要写文件时配合 `agentType: 'general'`（缺省 explore 是只读的）
 - 语义：opt-in 按 agent 开启；非 git 目录或创建失败时**静默降级**为共享目录（日志可见）；运行结束（含超时/中断）自动拆除 worktree 与分支；**结果不自动合并**——改动留在 worktree 生命周期内，需要保留产物时在脚本里让 agent 把结果写入指定路径或以文本返回
+
+## 后台运行与控制（tool 参数，非脚本全局）
+
+workflow tool 传 `background: true` 时立即返回 runId、本轮对话不阻塞；完成后结果自动作为一条消息发回当前会话，Main Agent 会接力汇报。后台 run 不受 Esc 影响，控制走 `workflow_control` 工具：
+
+- `workflow_control({ action: "status" })`：列出全部后台 run 与进度（X/N agent）
+- `workflow_control({ action: "stop", runId })`：停止运行中的 run（已完成的 agent 结果在 journal，可用 `workflow(resumeFromRunId)` 续跑）
+
+适用：长跑批量任务（大扇出分析、全仓审计）且期间想继续对话。后台 run 的 checkpoint 走 headless 默认值（无人工弹窗）。

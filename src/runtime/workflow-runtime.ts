@@ -75,6 +75,8 @@ export interface WorkflowRunOptions {
   confirm?: (promptText: string) => Promise<unknown>
   /** 项目基准目录（worktree 隔离的 base；缺省 process.cwd()，P1-5） */
   cwd?: string
+  /** agent 记录到达终态（ok/failed/aborted，含缓存回放）时回调（P2 后台进度用） */
+  onAgentUpdate?: (record: AgentRecord) => void
 }
 
 /** checkpoint() 的可选项（P1-4，仅确认型：OpenCode 无自由文本 UI 通道） */
@@ -214,6 +216,7 @@ export async function runWorkflow<T = unknown>(
       record.status = "ok"
       record.replayed = true
       record.model = cached.model
+      options.onAgentUpdate?.(record)
       return cached.result
     }
     if (!hashMatches || cachedEmpty) {
@@ -259,6 +262,7 @@ export async function runWorkflow<T = unknown>(
               signal: attemptController.signal,
               onUsage: (usage: AgentUsage) => {
                 record.tokens = (record.tokens ?? 0) + (usage.total ?? 0)
+                record.cost = (record.cost ?? 0) + (usage.cost ?? 0)
               },
             }
             const value = await withTimeout(agentRunner.run(effectivePrompt, runOptions), timeout, label, () =>
@@ -267,6 +271,7 @@ export async function runWorkflow<T = unknown>(
             record.status = "ok"
             record.durationMs = Date.now() - agentStarted
             record.model = modelSpec
+            options.onAgentUpdate?.(record)
             // 成功且非空结果写入 journal 回调；失败/null/空文本不进（与 Pi 一致）
             if (!isEmptyTextResult(value, scriptOptions.schema)) {
               options.onAgentJournal?.({ key: deltaKey, hash: callHash, result: value, model: modelSpec })

@@ -7,6 +7,8 @@ export interface AgentUsage {
   input?: number
   output?: number
   total?: number
+  /** 该次调用的货币成本（provider 上报时才有，美元） */
+  cost?: number
 }
 
 /** agent 记录状态 */
@@ -20,6 +22,7 @@ export interface AgentRecord {
   phase?: string
   status: AgentRecordStatus
   tokens?: number
+  cost?: number
   error?: string
   durationMs?: number
   /** resume 时从 journal 免费回放（未真实调 LLM） */
