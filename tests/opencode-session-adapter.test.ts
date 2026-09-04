@@ -151,6 +151,25 @@ test("降级结果缺必填字段：抛出缺失字段名", async () => {
   await assert.rejects(adapter.run("x", { schema: SCHEMA }), /缺少必填字段 keyFields/)
 })
 
+test("同 run 内第二次 schema 调用直接降级，不再发原生尝试", async () => {
+  const prompts: Array<Record<string, unknown>> = []
+  let plainCalls = 0
+  const client = makeClient({
+    onFormatPresent: "error400",
+    prompts,
+    plainResponse: () => {
+      plainCalls++
+      return { info: {}, parts: [{ type: "text", text: '{ "topic": "t' + plainCalls + '", "keyFields": [] }' }] }
+    },
+  })
+  const adapter = new OpenCodeSessionAdapter({ client })
+  await adapter.run("x1", { schema: SCHEMA })
+  await adapter.run("x2", { schema: SCHEMA })
+  // 第一次：原生（带 format）+ 降级重试 = 2 次；第二次：直接降级 = 1 次
+  assert.equal(prompts.length, 3, "第二次不再发注定 400 的原生请求")
+  assert.equal(prompts.filter((p) => "format" in p).length, 1, "仅首次带 format")
+})
+
 test("非 400 错误不降级，直接上抛", async () => {
   const prompts: Array<Record<string, unknown>> = []
   const client = makeClient({ onFormatPresent: "error500", prompts, plainResponse: () => ({ info: {}, parts: [] }) })

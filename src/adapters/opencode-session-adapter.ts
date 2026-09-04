@@ -94,6 +94,8 @@ export class OpenCodeSessionAdapter implements AgentSessionRunner {
   private readonly parentSessionId?: string
   private readonly defaultAgent: string
   private readonly onStructuredDegrade?: (info: { label: string; reason: string }) => void
+  /** 本 run 内已确认网关不支持 json_schema：后续 schema 调用直接走降级，不再白发注定 400 的请求 */
+  private formatUnsupported = false
 
   constructor(options: OpenCodeSessionAdapterOptions) {
     this.client = options.client
@@ -132,10 +134,17 @@ export class OpenCodeSessionAdapter implements AgentSessionRunner {
       const model = parseModelSpec(options?.model)
 
       if (options?.schema) {
+        // 已确认不支持时跳过原生尝试，直接降级（消除每次必败的 400 噪音）
+        if (this.formatUnsupported) {
+          const label = options.label ?? prompt.slice(0, 30)
+          this.onStructuredDegrade?.({ label, reason: "网关已知不支持 json_schema（本 run 内首次探测已确认）" })
+          return await this.promptDegradedJson(sessionId, prompt, model, options, new Error("format unsupported (cached)"))
+        }
         try {
           return await this.promptStructured(sessionId, prompt, model, options)
         } catch (error) {
           if (!isSchemaUnsupported(error)) throw error
+          this.formatUnsupported = true
           const label = options.label ?? prompt.slice(0, 30)
           this.onStructuredDegrade?.({ label, reason: summarizeError(error) })
           return await this.promptDegradedJson(sessionId, prompt, model, options, error)
