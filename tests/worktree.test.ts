@@ -66,13 +66,13 @@ test("createWorktree：非 git 目录静默降级共享目录", async () => {
   }
 })
 
-test("runtime：isolation worktree 的 agent 收到 worktree 目录，结束自动拆除", async () => {
+test("runtime：isolation worktree 的 agent 收到含工作目录的 prompt 与 directory，结束自动拆除", async () => {
   const repo = makeGitRepo()
   try {
-    const seenDirectories: Array<string | undefined> = []
+    const seen: Array<{ prompt: string; directory?: string }> = []
     const runner: AgentSessionRunner = {
-      async run(_prompt, options?: AgentRunOptions) {
-        seenDirectories.push(options?.directory)
+      async run(prompt, options) {
+        seen.push({ prompt, directory: options?.directory })
         return "ok"
       },
     }
@@ -81,9 +81,11 @@ test("runtime：isolation worktree 的 agent 收到 worktree 目录，结束自�
       { agent: runner, cwd: repo },
     )
     assert.equal(result.result, "ok")
-    assert.equal(seenDirectories.length, 1)
-    assert.ok(seenDirectories[0], "应传入 worktree 目录")
-    assert.ok(seenDirectories[0]!.includes(".opencode-workflows/worktrees"))
+    assert.equal(seen.length, 1)
+    assert.ok(seen[0].directory, "应传入 worktree 目录")
+    assert.ok(seen[0].directory!.includes(".opencode-workflows/worktrees"))
+    assert.ok(seen[0].prompt.includes("[工作目录]"), "prompt 应注入工作目录说明")
+    assert.ok(seen[0].prompt.includes(seen[0].directory!), "prompt 应含 worktree 绝对路径")
     // 运行结束后 worktree 已拆除
     const worktreesDir = path.join(repo, ".opencode-workflows", "worktrees")
     const leftover = fs.existsSync(worktreesDir) ? fs.readdirSync(worktreesDir) : []
@@ -93,13 +95,13 @@ test("runtime：isolation worktree 的 agent 收到 worktree 目录，结束自�
   }
 })
 
-test("runtime：无 isolation 的 agent 不传 directory", async () => {
+test("runtime：无 isolation 的 agent 不注入工作目录也不传 directory", async () => {
   const repo = makeGitRepo()
   try {
-    const seen: Array<string | undefined> = []
+    const seen: Array<{ prompt: string; directory?: string }> = []
     const runner: AgentSessionRunner = {
-      async run(_p, options) {
-        seen.push(options?.directory)
+      async run(prompt, options) {
+        seen.push({ prompt, directory: options?.directory })
         return "ok"
       },
     }
@@ -107,7 +109,8 @@ test("runtime：无 isolation 的 agent 不传 directory", async () => {
       agent: runner,
       cwd: repo,
     })
-    assert.equal(seen[0], undefined)
+    assert.equal(seen[0].directory, undefined)
+    assert.ok(!seen[0].prompt.includes("[工作目录]"))
   } finally {
     fs.rmSync(repo, { recursive: true, force: true })
   }

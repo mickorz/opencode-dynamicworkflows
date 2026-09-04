@@ -234,6 +234,12 @@ export async function runWorkflow<T = unknown>(
         else log(`agent "${label}" 的 worktree 隔离不可用，降级共享目录（${worktree.reason}）`)
       }
       const runDirectory = worktree?.isolated ? worktree.cwd : undefined
+      // 平台路由类注：目录 query 在真机上未生效（三次实验 session.directory 均落共享目录，
+// 服务端多套路由面静态追踪未定位到尊重该 query 的路径），改为 prompt 注入工作目录——
+// agent 用绝对路径/先 cd 完成隔离写；query 保留给未来版本。语义不变：worktree 生命周期照旧。
+      const effectivePrompt = runDirectory
+        ? `${prompt}\n\n[工作目录] 你在一个独立的 git worktree 中（分支 ${worktree!.branch}）。全部文件操作必须在以下目录内进行，用绝对路径或先 cd：\n${runDirectory}`
+        : prompt
 
       try {
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -255,7 +261,7 @@ export async function runWorkflow<T = unknown>(
                 record.tokens = (record.tokens ?? 0) + (usage.total ?? 0)
               },
             }
-            const value = await withTimeout(agentRunner.run(prompt, runOptions), timeout, label, () =>
+            const value = await withTimeout(agentRunner.run(effectivePrompt, runOptions), timeout, label, () =>
               attemptController.abort(),
             )
             record.status = "ok"
