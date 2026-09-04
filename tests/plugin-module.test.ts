@@ -15,7 +15,7 @@ test("插件 default export 形状满足 v1 加载器要求", () => {
   assert.equal(typeof pluginModule.id, "string", "file 源插件必须导出非空 id（shared.ts:315）")
   assert.ok(pluginModule.id.trim().length > 0, "id 不能为空串")
   assert.equal(typeof pluginModule.server, "function", "default.server 必须是 Plugin 函数")
-  assert.equal(pluginModule.tui, undefined, "server 与 tui 不能同时存在")
+  assert.equal((pluginModule as { tui?: unknown }).tui, undefined, "server 与 tui 不能同时存在")
 })
 
 test("命名导出 DynamicWorkflowPlugin 是 Plugin 函数", () => {

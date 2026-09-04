@@ -95,7 +95,7 @@ test("tier 参与哈希：换 tier 后缓存失效重跑", async () => {
   const scriptB = `export const meta = { name: 'tier4' }\nreturn await agent('x', { tier: 'big' })`
   const journal = new Map()
   const first = await runWorkflow(scriptA, {
-    agent: { async run: () => "a" } as AgentSessionRunner,
+    agent: { run: async () => "a" } as AgentSessionRunner,
     resolveTier: () => "openai/gpt-4o-mini",
     onAgentJournal: (e) => journal.set(e.key, e),
   })
@@ -103,7 +103,7 @@ test("tier 参与哈希：换 tier 后缓存失效重跑", async () => {
   let liveCalls = 0
   const resumed = await runWorkflow(scriptB, {
     agent: {
-      async run() {
+      run: async () => {
         liveCalls++
         return "b"
       },
