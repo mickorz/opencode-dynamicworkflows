@@ -14,6 +14,8 @@
 import { tool, type PluginInput } from "@opencode-ai/plugin"
 import { runWorkflow } from "../runtime/workflow-runtime.js"
 import { OpenCodeSessionAdapter } from "../adapters/opencode-session-adapter.js"
+import { JournalStore } from "../persistence/journal.js"
+import type { JournalEntry } from "../types/index.js"
 
 /** tool 输出预算：平台默认 50KB 截断（tool/truncate.ts:13-14），自留 2KB 余量给头部与摘要 */
 const OUTPUT_BUDGET_BYTES = 48 * 1024
@@ -44,12 +46,41 @@ export function createWorkflowTool(ctx: PluginInput) {
       maxAgents: tool.schema.number().optional().describe("本次 run 的 agent 总数上限，缺省 1000。"),
       agentTimeoutMs: tool.schema.number().optional().describe("单 agent 超时毫秒数；缺省不设硬超时。"),
       agentRetries: tool.schema.number().optional().describe("可恢复失败的自动重试次数（上限 3），缺省 0。"),
+      resumeFromRunId: tool.schema.string().optional().describe(
+        "续跑某次历史 run（传入上次结果里的 runId）与修改后的 script：未变的 agent() 调用直接从 journal 回放（不调 LLM），首个变更调用及其后全部重跑。调用按位置匹配，保持前序调用不变且有序。",
+      ),
     },
 
     async execute(input, context) {
       const script = normalizeWorkflowScript(input.script)
       if (!script) {
         return { title: "workflow", output: "workflow 需要 script 字符串参数" }
+      }
+
+      // journal：按项目目录落盘，逐 agent 写入（中断后续跑仍可回放已完成部分）
+      const journalStore = new JournalStore(context.directory)
+      let resumeJournal: Map<string, JournalEntry> | undefined
+      if (input.resumeFromRunId) {
+        resumeJournal = journalStore.load(input.resumeFromRunId)
+        if (resumeJournal.size === 0) {
+          return {
+            title: "workflow",
+            output: `找不到 run "${input.resumeFromRunId}" 的 journal（该项目目录下无 .opencode-workflows/journal/<runId>.json，或内容为空）；直接省略 resumeFromRunId 开新 run。`,
+          }
+        }
+      }
+      let journaledRunId: string | undefined
+      const onAgentJournal = (entry: JournalEntry & { key: string }) => {
+        journaledRunId = entry.key.slice(0, entry.key.indexOf(":"))
+        try {
+          journalStore.append(journaledRunId, entry.key, {
+            hash: entry.hash,
+            result: entry.result,
+            model: entry.model,
+          })
+        } catch {
+          // 落盘失败不阻断运行（journal 仅影响回放优化）
+        }
       }
 
       const adapter = new OpenCodeSessionAdapter({
@@ -72,14 +103,20 @@ export function createWorkflowTool(ctx: PluginInput) {
           agentTimeoutMs: input.agentTimeoutMs ?? null,
           agentRetries: input.agentRetries,
           signal: runController.signal,
+          runId: input.resumeFromRunId,
+          resumeJournal,
+          onAgentJournal,
         })
-        return renderResult(result, false)
+        return renderResult(result)
       } catch (error) {
         if (runController.signal.aborted || (error instanceof Error && /abort/i.test(error.message))) {
           // 用户中断：返回已完成的进度摘要而非抛错（平台会把 tool part 标记为 interrupted）
+          const resumeHint = journaledRunId
+            ? `\n已完成的 agent 已记入 journal，续跑请传 resumeFromRunId="${journaledRunId}"。`
+            : ""
           return {
             title: "workflow",
-            output: `工作流被用户中断：${error instanceof Error ? error.message : String(error)}`,
+            output: `工作流被用户中断：${error instanceof Error ? error.message : String(error)}${resumeHint}`,
           }
         }
         throw error
@@ -93,16 +130,17 @@ export function createWorkflowTool(ctx: PluginInput) {
 /** 渲染 tool 返回（F-07：return 值 + agent 单行摘要 + metadata，控制在截断预算内） */
 function renderResult(
   result: Awaited<ReturnType<typeof runWorkflow>>,
-  _aborted: boolean,
 ): { title: string; output: string; metadata: Record<string, unknown> } {
   const failed = result.agents.filter((a) => a.status === "failed").length
   const abortedCount = result.agents.filter((a) => a.status === "aborted").length
+  const replayed = result.agents.filter((a) => a.replayed).length
   const tokens = result.agents.reduce((sum, a) => sum + (a.tokens ?? 0), 0)
 
   const lines: string[] = []
   lines.push(
     `工作流 ${result.meta.name} 完成：${result.agentCount} 个 agent` +
       `${failed ? `，${failed} 失败` : ""}${abortedCount ? `，${abortedCount} 中止` : ""}` +
+      `${replayed ? `，${replayed} 缓存回放` : ""}` +
       `，耗时 ${(result.durationMs / 1000).toFixed(1)}s，共 ${tokens} tokens` +
       `（runId: ${result.runId}）`,
   )
@@ -112,7 +150,16 @@ function renderResult(
   lines.push("agent 摘要:")
   const shown = result.agents.slice(0, AGENT_SUMMARY_MAX_LINES)
   for (const agent of shown) {
-    const status = agent.status === "ok" ? "成功" : agent.status === "failed" ? "失败" : agent.status === "aborted" ? "中止" : "运行中"
+    const status =
+      agent.status === "ok"
+        ? agent.replayed
+          ? "缓存"
+          : "成功"
+        : agent.status === "failed"
+          ? "失败"
+          : agent.status === "aborted"
+            ? "中止"
+            : "运行中"
     const tokensPart = agent.tokens !== undefined ? ` ${agent.tokens} tok` : ""
     const errorPart = agent.error ? ` | ${agent.error}` : ""
     lines.push(`  [${status}] ${agent.label}${agent.phase ? ` (${agent.phase})` : ""}${tokensPart}${errorPart}`)
@@ -137,6 +184,11 @@ function renderResult(
   }
   if (result.logs.length) {
     output += `\n日志:\n${result.logs.slice(-20).join("\n")}`
+  }
+  // 续跑提示：有 live 写入过 journal 才提示（纯回放轮不提示）
+  const journaled = result.agents.some((a) => !a.replayed && a.status === "ok")
+  if (journaled) {
+    output += `\n\n提示：迭代不重烧——修改脚本后重传 resumeFromRunId="${result.runId}"，未变 agent() 调用直接回放，仅改动的重跑。`
   }
 
   return {

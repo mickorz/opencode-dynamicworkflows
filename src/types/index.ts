@@ -22,6 +22,9 @@ export interface AgentRecord {
   tokens?: number
   error?: string
   durationMs?: number
+  /** resume 时从 journal 免费回放（未真实调 LLM） */
+  replayed?: boolean
+  model?: string
 }
 
 /** workflow 脚本 meta 信封 */
@@ -42,4 +45,11 @@ export interface WorkflowRunResult<T = unknown> {
   agentCount: number
   durationMs: number
   runId: string
+}
+
+/** journal 条目：key 为 runId:callIndex，hash 覆盖 prompt/model/phase/agentType/schema（P1-1） */
+export interface JournalEntry {
+  hash: string
+  result: unknown
+  model?: string
 }

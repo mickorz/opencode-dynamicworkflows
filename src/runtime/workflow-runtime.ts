@@ -20,7 +20,8 @@ import { createLimiter } from "./semaphore.js"
 import { parseWorkflowScript, runScriptInVm } from "./vm.js"
 import { WorkflowError, WorkflowErrorCode, wrapError } from "./errors.js"
 import type { AgentSessionRunner, AgentRunOptions } from "../agent/session-runner.js"
-import type { AgentRecord, AgentUsage, WorkflowRunResult } from "../types/index.js"
+import type { AgentRecord, AgentUsage, JournalEntry, WorkflowRunResult } from "../types/index.js"
+import { createHash } from "node:crypto"
 
 /** 运行时最大并发（与 Claude Code / Pi 一致） */
 export const MAX_CONCURRENCY = 16
@@ -59,6 +60,10 @@ export interface WorkflowRunOptions {
   /** run 级默认重试次数 */
   agentRetries?: number
   runId?: string
+  /** resume：上一轮的 journal（key 为 runId:callIndex），未变前缀直接回放（P1-1） */
+  resumeJournal?: Map<string, JournalEntry>
+  /** 每个成功 live agent 完成后回调，调用方负责持久化（P1-1） */
+  onAgentJournal?: (entry: JournalEntry & { key: string }) => void
 }
 
 interface RuntimeState {
@@ -67,6 +72,8 @@ interface RuntimeState {
   logs: string[]
   agents: AgentRecord[]
   callSeq: number
+  /** 首个未命中 journal 的 callIndex；其后所有调用一律 live 重跑（最长未变前缀语义，照搬 Pi） */
+  firstMiss: number
 }
 
 export async function runWorkflow<T = unknown>(
@@ -91,6 +98,7 @@ export async function runWorkflow<T = unknown>(
     currentPhase: meta.phases?.[0]?.title,
     agents: [],
     callSeq: 0,
+    firstMiss: Number.POSITIVE_INFINITY,
   }
 
   let agentCount = 0
@@ -158,6 +166,24 @@ export async function runWorkflow<T = unknown>(
     state.agents.push(record)
     const agentStarted = Date.now()
 
+    // ---- journal / resume（P1-1）：确定性哈希 + 最长未变前缀回放 ----
+    // 哈希身份：prompt/model/phase/agentType/schema（与 Pi 同思路，无 thread/agentDef/tier 面）
+    const deltaKey = `${runId}:${callIndex}`
+    const callHash = hashAgentCall(prompt, scriptOptions, assignedPhase)
+    const cached = options.resumeJournal?.get(deltaKey)
+    const hashMatches = cached != null && cached.hash === callHash
+    // 空文本结果不回放：历史 journal 里的空串一律重跑（与 Pi isEmptyTextAgentResult 同语义）
+    const cachedEmpty = hashMatches && isEmptyTextResult(cached.result, scriptOptions.schema)
+    if (hashMatches && !cachedEmpty && callIndex < state.firstMiss) {
+      record.status = "ok"
+      record.replayed = true
+      record.model = cached.model
+      return cached.result
+    }
+    if (!hashMatches || cachedEmpty) {
+      state.firstMiss = Math.min(state.firstMiss, callIndex)
+    }
+
     return limiter(async () => {
       const timeout = scriptOptions.timeoutMs !== undefined ? scriptOptions.timeoutMs : agentTimeoutMs
       const retries = normalizeAgentRetries(scriptOptions.retries ?? options.agentRetries ?? 0)
@@ -186,6 +212,11 @@ export async function runWorkflow<T = unknown>(
           )
           record.status = "ok"
           record.durationMs = Date.now() - agentStarted
+          record.model = scriptOptions.model
+          // 成功且非空结果写入 journal 回调；失败/null/空文本不进（与 Pi 一致）
+          if (!isEmptyTextResult(value, scriptOptions.schema)) {
+            options.onAgentJournal?.({ key: deltaKey, hash: callHash, result: value, model: scriptOptions.model })
+          }
           return value
         } catch (error) {
           if (isAborted()) {
@@ -350,6 +381,27 @@ async function withTimeout<T>(
 function normalizeConcurrency(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 1) return 1
   return Math.min(MAX_CONCURRENCY, Math.floor(value))
+}
+
+/**
+ * agent 调用的稳定身份哈希（P1-1，照搬 Pi hashAgentCall 思路）。
+ * 身份面 = prompt / model / phase / agentType / schema，sha256 后十六进制。
+ * 注意：model 只取脚本声明的 spec 字符串（与 Pi 一致，真实解析后的模型不进哈希，换 tier 配置不破缓存）。
+ */
+function hashAgentCall(prompt: string, options: ScriptAgentOptions, phase: string | undefined): string {
+  const identity = JSON.stringify({
+    prompt,
+    model: options.model ?? null,
+    phase: phase ?? null,
+    agentType: options.agentType ?? null,
+    schema: options.schema ?? null,
+  })
+  return createHash("sha256").update(identity).digest("hex")
+}
+
+/** 无 schema 且结果为空/纯空白字符串 → 视为空文本（不 journal、不回放） */
+function isEmptyTextResult(result: unknown, schema: Record<string, unknown> | undefined): boolean {
+  return schema === undefined && typeof result === "string" && result.trim().length === 0
 }
 
 function normalizeAgentRetries(value: unknown): number {
