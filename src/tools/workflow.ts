@@ -83,9 +83,13 @@ export function createWorkflowTool(ctx: PluginInput) {
         }
       }
 
+      const degradeNotes: string[] = []
       const adapter = new OpenCodeSessionAdapter({
         client: ctx.client,
         parentSessionId: context.sessionID,
+        onStructuredDegrade: ({ label, reason }) => {
+          degradeNotes.push(`agent "${label}" 结构化输出降级（网关不支持 json_schema，已改用 prompt JSON 模式）：${reason}`)
+        },
       })
 
       // abort 级联：Esc 中断主会话 -> context.abort -> run 级信号 -> 各 agent attempt 取消 + 子会话 abort
@@ -107,6 +111,8 @@ export function createWorkflowTool(ctx: PluginInput) {
           resumeJournal,
           onAgentJournal,
         })
+        // 结构化降级可观测性：附在日志尾部（P1-2）
+        for (const note of degradeNotes) result.logs.push(note)
         return renderResult(result)
       } catch (error) {
         if (runController.signal.aborted || (error instanceof Error && /abort/i.test(error.message))) {
