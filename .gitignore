@@ -1,0 +1,20 @@
+# 依赖与构建产物（安装时需先 npm install && npm run build，见 README）
+node_modules/
+dist/
+
+# 本仓库的参考源码与文档（不入插件仓库版本库）
+thirdparties/
+Docs/
+
+# workflow 运行时产物（journal、运行状态）
+.opencode-workflows/
+
+# 日志与系统文件
+*.log
+.DS_Store
+Thumbs.db
+
+# 编辑器
+.idea/
+.vscode/
+*.tsbuildinfo
