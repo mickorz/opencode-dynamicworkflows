@@ -89,3 +89,13 @@ const reports = await pipeline(
 ## 迭代与续跑（resume）
 
 workflow tool 支持 `resumeFromRunId`：修改脚本后重传上次结果的 runId，未变的 agent()/checkpoint() 调用直接从 journal 回放（不调 LLM），首个变更调用及其后全部重跑。调用按位置匹配——保持前序调用不变且有序。
+
+## agent() 的 isolation 选项（P1-5）
+
+```javascript
+await agent('重构 src/player.ts 并提交修改说明', { isolation: 'worktree', agentType: 'general' })
+```
+
+- 在独立 git worktree（`.opencode-workflows/worktrees/<runId-callIndex-label>`，分支 `wf/<同名>`）中运行该 agent 的会话，多个写型 agent 互不覆盖文件
+- 需要写文件时配合 `agentType: 'general'`（缺省 explore 是只读的）
+- 语义：opt-in 按 agent 开启；非 git 目录或创建失败时**静默降级**为共享目录（日志可见）；运行结束（含超时/中断）自动拆除 worktree 与分支；**结果不自动合并**——改动留在 worktree 生命周期内，需要保留产物时在脚本里让 agent 把结果写入指定路径或以文本返回

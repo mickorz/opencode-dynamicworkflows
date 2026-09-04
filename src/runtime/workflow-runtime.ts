@@ -19,6 +19,7 @@
 import { createLimiter } from "./semaphore.js"
 import { parseWorkflowScript, runScriptInVm } from "./vm.js"
 import { WorkflowError, WorkflowErrorCode, wrapError } from "./errors.js"
+import { createWorktree, removeWorktree, type WorktreeInfo } from "../isolation/worktree.js"
 import type { AgentSessionRunner, AgentRunOptions } from "../agent/session-runner.js"
 import type { AgentRecord, AgentUsage, JournalEntry, WorkflowRunResult } from "../types/index.js"
 import { createHash } from "node:crypto"
@@ -46,6 +47,8 @@ export interface ScriptAgentOptions {
   timeoutMs?: number | null
   /** 本 agent 的重试次数（可恢复失败后） */
   retries?: number
+  /** worktree 隔离：独立 git worktree 中运行，互不覆盖；失败静默降级共享目录（P1-5） */
+  isolation?: "worktree"
 }
 
 export interface WorkflowRunOptions {
@@ -70,6 +73,8 @@ export interface WorkflowRunOptions {
   onAgentJournal?: (entry: JournalEntry & { key: string }) => void
   /** checkpoint() 的人工确认通道（tool 层接 ToolContext.ask；缺省走 headless default，P1-4） */
   confirm?: (promptText: string) => Promise<unknown>
+  /** 项目基准目录（worktree 隔离的 base；缺省 process.cwd()，P1-5） */
+  cwd?: string
 }
 
 /** checkpoint() 的可选项（P1-4，仅确认型：OpenCode 无自由文本 UI 通道） */
@@ -101,6 +106,7 @@ export async function runWorkflow<T = unknown>(
   const maxAgents = options.maxAgents ?? MAX_AGENTS_PER_RUN
   const agentTimeoutMs = options.agentTimeoutMs !== undefined ? options.agentTimeoutMs : null
   const runId = options.runId ?? `run-${started.toString(36)}`
+  const baseCwd = options.cwd ?? process.cwd()
   const agentRunner = options.agent
   const concurrency = normalizeConcurrency(
     options.concurrency ?? Math.max(1, (globalThis.navigator?.hardwareConcurrency ?? 8) - 2),
@@ -219,61 +225,76 @@ export async function runWorkflow<T = unknown>(
       const retries = normalizeAgentRetries(scriptOptions.retries ?? options.agentRetries ?? 0)
       const maxAttempts = retries + 1
 
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        throwIfAborted()
-        // 每次 attempt 一个独立 controller：超时只取消本次，run 级 abort 取消所有
-        const attemptController = new AbortController()
-        const onRunAbort = () => attemptController.abort()
-        options.signal?.addEventListener("abort", onRunAbort)
-        try {
-          const runOptions: AgentRunOptions = {
-            label,
-            phase: assignedPhase,
-            agentType: scriptOptions.agentType,
-            model: modelSpec,
-            schema: scriptOptions.schema,
-            signal: attemptController.signal,
-            onUsage: (usage: AgentUsage) => {
-              record.tokens = (record.tokens ?? 0) + (usage.total ?? 0)
-            },
-          }
-          const value = await withTimeout(agentRunner.run(prompt, runOptions), timeout, label, () =>
-            attemptController.abort(),
-          )
-          record.status = "ok"
-          record.durationMs = Date.now() - agentStarted
-          record.model = modelSpec
-          // 成功且非空结果写入 journal 回调；失败/null/空文本不进（与 Pi 一致）
-          if (!isEmptyTextResult(value, scriptOptions.schema)) {
-            options.onAgentJournal?.({ key: deltaKey, hash: callHash, result: value, model: modelSpec })
-          }
-          return value
-        } catch (error) {
-          if (isAborted()) {
-            record.status = "aborted"
-            record.durationMs = Date.now() - agentStarted
-            throw wrapError(error)
-          }
-          const workflowError = wrapError(error)
-          if (!workflowError.recoverable) {
-            record.status = "failed"
-            record.error = workflowError.message
-            record.durationMs = Date.now() - agentStarted
-            throw workflowError
-          }
-          if (attempt >= maxAttempts) {
-            record.status = "failed"
-            record.error = workflowError.message
-            record.durationMs = Date.now() - agentStarted
-            log(`agent "${label}" ${maxAttempts} 次尝试后失败: ${workflowError.code} ${workflowError.message}`)
-            return null
-          }
-          log(`agent "${label}" 第 ${attempt} 次尝试失败，重试: ${workflowError.message}`)
-        } finally {
-          options.signal?.removeEventListener("abort", onRunAbort)
-        }
+      // worktree 隔离（P1-5）：确定性命名（runId-callIndex-label）保证 resume key 稳定；
+      // 失败静默降级共享目录；结束（含超时/abort）在 finally 拆除；结果不自动合并（与 Pi 一致）
+      let worktree: WorktreeInfo | undefined
+      if (scriptOptions.isolation === "worktree") {
+        worktree = await createWorktree(baseCwd, `${runId}-${callIndex}-${label}`)
+        if (!worktree.isolated) log(`agent "${label}" 的 worktree 隔离不可用，降级共享目录（${worktree.reason}）`)
       }
-      return null
+      const runDirectory = worktree?.isolated ? worktree.cwd : undefined
+
+      try {
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          throwIfAborted()
+          // 每次 attempt 一个独立 controller：超时只取消本次，run 级 abort 取消所有
+          const attemptController = new AbortController()
+          const onRunAbort = () => attemptController.abort()
+          options.signal?.addEventListener("abort", onRunAbort)
+          try {
+            const runOptions: AgentRunOptions = {
+              label,
+              phase: assignedPhase,
+              agentType: scriptOptions.agentType,
+              model: modelSpec,
+              schema: scriptOptions.schema,
+              directory: runDirectory,
+              signal: attemptController.signal,
+              onUsage: (usage: AgentUsage) => {
+                record.tokens = (record.tokens ?? 0) + (usage.total ?? 0)
+              },
+            }
+            const value = await withTimeout(agentRunner.run(prompt, runOptions), timeout, label, () =>
+              attemptController.abort(),
+            )
+            record.status = "ok"
+            record.durationMs = Date.now() - agentStarted
+            record.model = modelSpec
+            // 成功且非空结果写入 journal 回调；失败/null/空文本不进（与 Pi 一致）
+            if (!isEmptyTextResult(value, scriptOptions.schema)) {
+              options.onAgentJournal?.({ key: deltaKey, hash: callHash, result: value, model: modelSpec })
+            }
+            return value
+          } catch (error) {
+            if (isAborted()) {
+              record.status = "aborted"
+              record.durationMs = Date.now() - agentStarted
+              throw wrapError(error)
+            }
+            const workflowError = wrapError(error)
+            if (!workflowError.recoverable) {
+              record.status = "failed"
+              record.error = workflowError.message
+              record.durationMs = Date.now() - agentStarted
+              throw workflowError
+            }
+            if (attempt >= maxAttempts) {
+              record.status = "failed"
+              record.error = workflowError.message
+              record.durationMs = Date.now() - agentStarted
+              log(`agent "${label}" ${maxAttempts} 次尝试后失败: ${workflowError.code} ${workflowError.message}`)
+              return null
+            }
+            log(`agent "${label}" 第 ${attempt} 次尝试失败，重试: ${workflowError.message}`)
+          } finally {
+            options.signal?.removeEventListener("abort", onRunAbort)
+          }
+        }
+        return null
+      } finally {
+        // 无论成功/失败/超时/abort，都拆除 worktree（与 Pi 一致）
+        if (worktree?.isolated) await removeWorktree(worktree)
+      }
     })
   }
 
@@ -569,6 +590,7 @@ function hashAgentCall(prompt: string, options: ScriptAgentOptions, phase: strin
     phase: phase ?? null,
     agentType: options.agentType ?? null,
     schema: options.schema ?? null,
+    isolation: options.isolation ?? null,
   })
   return createHash("sha256").update(identity).digest("hex")
 }

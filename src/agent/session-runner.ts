@@ -26,6 +26,8 @@ export interface AgentRunOptions {
   schema?: Record<string, unknown>
   /** 本 attempt 的取消信号（run 级 abort 或本 agent 超时触发） */
   signal?: AbortSignal
+  /** 会话路由目录（worktree 隔离时指向 worktree 路径，经 query.directory 路由，P1-5） */
+  directory?: string
   /** Adapter 从 prompt 响应提取用量后回调 */
   onUsage?: (usage: AgentUsage) => void
 }

@@ -156,12 +156,16 @@ export class OpenCodeSessionAdapter implements AgentSessionRunner {
   ): Promise<unknown> {
     // 注意：format 字段在当前 1.18.27 的旧版 gen 类型中缺失，但服务端已支持
     //（本地源码证据：session/prompt.ts:1499-1521 PromptInput.format；schema/src/v1/session.ts:65-79）
-    const message = await this.execPrompt(sessionId, {
-      model,
-      agent: options.agentType ?? this.defaultAgent,
-      parts: [{ type: "text", text: prompt }],
-      format: { type: "json_schema", schema: options.schema },
-    })
+    const message = await this.execPrompt(
+      sessionId,
+      {
+        model,
+        agent: options.agentType ?? this.defaultAgent,
+        parts: [{ type: "text", text: prompt }],
+        format: { type: "json_schema", schema: options.schema },
+      },
+      options.directory,
+    )
     this.emitUsage(message, options)
     return message.info.structured ?? null
   }
@@ -178,11 +182,15 @@ export class OpenCodeSessionAdapter implements AgentSessionRunner {
     const instructed =
       `${prompt}\n\n请只输出一个符合以下 JSON Schema 的 JSON 值，不要输出任何解释文字、Markdown 或代码围栏：\n` +
       JSON.stringify(schema)
-    const message = await this.execPrompt(sessionId, {
-      model,
-      agent: options.agentType ?? this.defaultAgent,
-      parts: [{ type: "text", text: instructed }],
-    })
+    const message = await this.execPrompt(
+      sessionId,
+      {
+        model,
+        agent: options.agentType ?? this.defaultAgent,
+        parts: [{ type: "text", text: instructed }],
+      },
+      options.directory,
+    )
     this.emitUsage(message, options)
 
     const text = extractText(message)
@@ -206,11 +214,15 @@ export class OpenCodeSessionAdapter implements AgentSessionRunner {
     model: { providerID: string; modelID: string } | undefined,
     options?: AgentRunOptions,
   ): Promise<unknown> {
-    const message = await this.execPrompt(sessionId, {
-      model,
-      agent: options?.agentType ?? this.defaultAgent,
-      parts: [{ type: "text", text: prompt }],
-    })
+    const message = await this.execPrompt(
+      sessionId,
+      {
+        model,
+        agent: options?.agentType ?? this.defaultAgent,
+        parts: [{ type: "text", text: prompt }],
+      },
+      options?.directory,
+    )
     this.emitUsage(message, options)
     return extractText(message)
   }
@@ -219,10 +231,12 @@ export class OpenCodeSessionAdapter implements AgentSessionRunner {
   private async execPrompt(
     sessionId: string,
     body: Record<string, unknown>,
+    directory?: string,
   ): Promise<PromptResponse> {
     const response = await this.client.session.prompt({
       path: { id: sessionId },
       body: body as never,
+      query: directory ? { directory } : undefined,
     })
     if (response.error) {
       throw new Error(`session prompt 失败: ${JSON.stringify(response.error)}`)

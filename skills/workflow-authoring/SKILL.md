@@ -45,6 +45,7 @@ return await agent('综合以下审计结果，输出风险清单：\n' + findin
 | `schema` | JSON Schema 对象，返回结构化 JSON |
 | `agentType` | OpenCode agent 名；缺省 explore（只读），写任务传 general |
 | `model` | "provider/modelId"，如 anthropic/claude-sonnet-4-6 |
+| `isolation` | `"worktree"` 独立 git worktree 隔离（写型任务配合 agentType general） |
 | `timeoutMs` | 单 agent 超时毫秒 |
 | `retries` | 可恢复失败重试次数（上限 3） |
 | `phase` | 显式归属阶段（缺省用当前 phase） |

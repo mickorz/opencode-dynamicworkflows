@@ -126,6 +126,7 @@ export function createWorkflowTool(ctx: PluginInput) {
           signal: runController.signal,
           resolveTier,
           confirm,
+          cwd: context.directory,
           runId: input.resumeFromRunId,
           resumeJournal,
           onAgentJournal,
