@@ -18,7 +18,7 @@ import type { PluginInput } from "@opencode-ai/plugin"
 import type { ToolContext } from "@opencode-ai/plugin"
 import { createWorkflowTool } from "../src/tools/workflow.js"
 import { createWorkflowControlTool } from "../src/tools/workflow-control.js"
-import { BackgroundRunManager } from "../src/tools/background-runs.js"
+import { BackgroundRunManager, type BackgroundRunSnapshot } from "../src/tools/background-runs.js"
 
 type Client = PluginInput["client"]
 
@@ -203,6 +203,43 @@ test("后台脚本校验错误同步返回，不启动 run", async () => {
     assert.match(result.output, /启动失败/)
     assert.equal(manager.status().length, 0)
   } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("status 进度含进行中 agent：running 计入分母（修复进度永远 X/X）", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wf-bg-progress-"))
+  let runId = ""
+  const manager = new BackgroundRunManager()
+  try {
+    const fake = makeFakeClient({ blockChildren: true })
+    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager)
+    const control = createWorkflowControlTool(manager)
+
+    const started = (await workflowTool.execute(
+      {
+        script: `export const meta = { name: 'bg_progress' }\nconst r = await parallel([() => agent('a'), () => agent('b'), () => agent('c')])\nreturn r.join(',')`,
+        background: true,
+        concurrency: 3,
+      },
+      makeToolContext(dir),
+    )) as { metadata: { runId: string } }
+    runId = started.metadata.runId
+
+    // 3 个子会话都派发并挂起
+    await until(() => fake.childPrompts.length >= 3, 3000)
+
+    const status = (await control.execute({ action: "status" }, makeToolContext(dir))) as {
+      output: string
+      metadata: { runs: BackgroundRunSnapshot[] }
+    }
+    const run = status.metadata.runs.find((r) => r.name === "bg_progress")!
+    const running = run.records.filter((r) => r.status === "running").length
+    assert.ok(running >= 1, "进行中 agent 应进 records（修复前 records 只含已完成，running 不在内）")
+    // 进度分母含 running：done=0、total>=1，不再 done/done
+    assert.match(status.output, /0\/[1-9]\d* agent/, "进度 0/N 反映进行中 agent")
+  } finally {
+    manager.stop(runId)
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })

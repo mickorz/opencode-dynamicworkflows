@@ -202,6 +202,8 @@ export async function runWorkflow<T = unknown>(
       status: "running",
     }
     state.agents.push(record)
+    // 通知进行中状态：让后台 run 注册表能反映 running agent，进度展示才不会 done/total 永远相等
+    options.onAgentUpdate?.(record)
     const agentStarted = Date.now()
 
     // ---- journal / resume（P1-1）：确定性哈希 + 最长未变前缀回放 ----
@@ -281,6 +283,7 @@ export async function runWorkflow<T = unknown>(
             if (isAborted()) {
               record.status = "aborted"
               record.durationMs = Date.now() - agentStarted
+              options.onAgentUpdate?.(record)
               throw wrapError(error)
             }
             const workflowError = wrapError(error)
@@ -288,12 +291,14 @@ export async function runWorkflow<T = unknown>(
               record.status = "failed"
               record.error = workflowError.message
               record.durationMs = Date.now() - agentStarted
+              options.onAgentUpdate?.(record)
               throw workflowError
             }
             if (attempt >= maxAttempts) {
               record.status = "failed"
               record.error = workflowError.message
               record.durationMs = Date.now() - agentStarted
+              options.onAgentUpdate?.(record)
               log(`agent "${label}" ${maxAttempts} 次尝试后失败: ${workflowError.code} ${workflowError.message}`)
               return null
             }
