@@ -1,5 +1,5 @@
 /**
- * workflow 运行快照（F-20 实时通道 / Docs/TUI实时通道优化方案.md 第 3 节）
+ * workflow 运行快照（F-20 实时通道 / Docs/02_设计与说明/TUI实时通道优化方案.md 第 3 节）
  *
  * 通道职责：server 在 workflow 执行期（前台与后台）把 records 快照原子写入
  * <项目目录>/.opencode-workflows/runs/<runId>.json，TUI 每秒轮询读取渲染实时树。

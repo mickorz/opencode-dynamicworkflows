@@ -2,7 +2,7 @@
 
 > 测试工程：examples/sample-project（在本目录启动 OpenCode）
 > 验收对象：sidebar 实时 workflow 树（前台 metadata 通道）
-> 对应需求：Docs/TUI增强需求文档.md v0.2 的 TA-01a / TA-02 / TA-05 / TA-06 / TA-07
+> 对应需求：Docs/01_需求与规划/TUI增强需求文档.md v0.2 的 TA-01a / TA-02 / TA-05 / TA-06 / TA-07
 > 前置阅读：本指南假定插件已按需求文档实现并通过 70 个单元测试
 
 ---
@@ -252,7 +252,7 @@ sidebar 没出现 Dynamic Workflow 时按序检查：
 
 ## 引用说明
 
-- 需求：Docs/TUI增强需求文档.md（v0.2，第 4/5/10 节）
-- 审查：Docs/TUI增强需求审查报告.md（双通道决策依据）
+- 需求：Docs/01_需求与规划/TUI增强需求文档.md（v0.2，第 4/5/10 节）
+- 审查：Docs/01_需求与规划/TUI增强需求审查报告.md（双通道决策依据）
 - 插件加载行为参考：thirdparties/opencode-subagents-view README（tui.json 独立配置、Plugins 面板验证、debug info 不可靠）
 - 相对路径解析：thirdparties/opencode packages/opencode/src/config/plugin.ts:43-53

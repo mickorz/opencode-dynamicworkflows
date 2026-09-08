@@ -1,7 +1,7 @@
 /**
  * workflow 进度元数据序列化（F-20 / TUI 增强 MVP-1 前台通道）
  *
- * 数据流（需求文档 Docs/TUI增强需求文档.md 5.1）：
+ * 数据流（需求文档 Docs/01_需求与规划/TUI增强需求文档.md 5.1）：
  *  workflow tool 前台执行期
  *   -> onAgentUpdate 维护 records
  *        -> buildProgressMetadata 序列化

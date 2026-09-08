@@ -69,7 +69,7 @@ npm run build       # 产出 dist/
 
 ## 阶段规划
 
-v0.1 为最小闭环（P0）。后续：journal/resume、model tier 分层、verify/judgePanel/retry/checkpoint、worktree 隔离、workflow_control、后台执行。详见 `Docs/opencode-dynamic-workflows需求文档.md`。
+v0.1 为最小闭环（P0）。后续：journal/resume、model tier 分层、verify/judgePanel/retry/checkpoint、worktree 隔离、workflow_control、后台执行。详见 `Docs/01_需求与规划/opencode-dynamic-workflows需求文档.md`。
 
 ## License
 
