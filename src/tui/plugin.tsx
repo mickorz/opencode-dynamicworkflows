@@ -274,10 +274,16 @@ function RouteView(props: { api: TuiPluginApi; sessionID?: string }) {
     return current ? buildSidebarRows(current) : []
   }
   const ids = () => selectableNodeIds(rows())
+  // 滚动跟随：行渲染体的 id 登记表 + 滚动容器引用，选中越屏时 scrollChildIntoView
+  const rowRenderableIds = new Map<string, string>()
+  let scrollBox: { scrollChildIntoView(childId: string): void } | undefined
 
   const move = (delta: number) => {
     const next = moveSelection(ids(), selectedNode(), delta)
-    if (next !== undefined) setSelectedNode(next)
+    if (next === undefined) return
+    setSelectedNode(next)
+    const childId = rowRenderableIds.get(next)
+    if (childId) scrollBox?.scrollChildIntoView(childId)
   }
   const openSelected = () => {
     const current = progress()
@@ -335,44 +341,73 @@ function RouteView(props: { api: TuiPluginApi; sessionID?: string }) {
           </text>
         </Show>
       </box>
-      <For each={rows()}>
-        {(row) => {
-          if (row.kind === "phase") {
+      <scrollbox
+        flexGrow={1}
+        ref={(el: { scrollChildIntoView(childId: string): void; id: string }) => {
+          scrollBox = el
+        }}
+      >
+        <For each={rows()}>
+          {(row) => {
+            if (row.kind === "phase") {
+              return (
+                <box paddingTop={1}>
+                  <text fg={theme().textMuted}>{row.title}</text>
+                </box>
+              )
+            }
+            const meta = getNodeMeta(row.node.status)
+            const selected = selectedNode() === row.node.id
             return (
-              <box paddingTop={1}>
-                <text fg={theme().textMuted}>{row.title}</text>
+              <box
+                flexDirection="row"
+                backgroundColor={selected ? theme().backgroundPanel : undefined}
+                ref={(el: { id: string }) => {
+                  // 登记行渲染体 id，选中越屏时 scrollChildIntoView 跟随
+                  rowRenderableIds.set(row.node.id, el.id)
+                }}
+              >
+                <box width={2}>
+                  <text fg={selected ? theme().text : theme().textMuted}>{selected ? "▸ " : "  "}</text>
+                </box>
+                <box width={2}>
+                  <text fg={toneColor(props.api, meta.tone)}>{meta.icon} </text>
+                </box>
+                <box flexGrow={1}>
+                  <text fg={toneColor(props.api, meta.tone)} wrapMode="word">
+                    {routeNodeLine(row.node)}
+                  </text>
+                </box>
               </box>
             )
-          }
-          const meta = getNodeMeta(row.node.status)
-          const selected = selectedNode() === row.node.id
-          return (
-            <box flexDirection="row" backgroundColor={selected ? theme().backgroundPanel : undefined}>
-              <box width={2}>
-                <text fg={selected ? theme().text : theme().textMuted}>{selected ? "▸ " : "  "}</text>
-              </box>
-              <box width={2}>
-                <text fg={toneColor(props.api, meta.tone)}>{meta.icon} </text>
-              </box>
-              <box flexGrow={1}>
-                <text fg={toneColor(props.api, meta.tone)} wrapMode="word">
-                  {routeNodeLine(row.node)}
-                </text>
-              </box>
-            </box>
-          )
-        }}
-      </For>
-      <Show when={!progress()}>
-        <box paddingTop={1}>
-          <text fg={theme().textMuted}>当前不在会话中打开，或该会话还没有 workflow 运行记录</text>
-        </box>
-      </Show>
+          }}
+        </For>
+        <Show when={!progress()}>
+          <box paddingTop={1}>
+            <text fg={theme().textMuted}>当前不在会话中打开，或该会话还没有 workflow 运行记录</text>
+          </box>
+        </Show>
+      </scrollbox>
       <box flexGrow={1} />
       <box paddingTop={1}>
         <text fg={theme().textMuted}>j/k 上下选择 · Enter 进入子会话 · Esc 返回</text>
       </box>
     </box>
+  )
+}
+
+/** 输入框右侧状态条（session_prompt_right 插槽）：仅运行中的 workflow 显示一行进度摘要 */
+function PromptFooterView(props: { api: TuiPluginApi; session_id: string }) {
+  const progress = getOrCreateProgress(props.api, props.session_id, props.api.lifecycle.onDispose)
+  const line = () => {
+    const p = progress()
+    if (!p || p.status !== "running") return null
+    return `◐ workflow ${p.name} ${p.completed}/${p.total}${p.running > 0 ? ` · ${p.running} running` : ""}`
+  }
+  return (
+    <Show when={line()}>
+      <text fg={toneColor(props.api, "warning")}>{line()}</text>
+    </Show>
   )
 }
 
@@ -382,6 +417,9 @@ const tui: TuiPlugin = async (api) => {
     slots: {
       sidebar_content(_ctx, props) {
         return <View api={api} session_id={props.session_id} />
+      },
+      session_prompt_right(_ctx, props) {
+        return <PromptFooterView api={api} session_id={props.session_id} />
       },
     },
   })
