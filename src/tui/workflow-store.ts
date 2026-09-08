@@ -201,6 +201,19 @@ export function formatDuration(ms: number | undefined): string {
   return `${minutes}m${seconds.toString().padStart(2, "0")}s`
 }
 
+/** token 展示：999 原样 / 9876 -> 9.9k / 1234567 -> 1.2m（千分位缩写，保留一位小数） */
+export function formatTokens(tokens: number | undefined): string {
+  if (tokens === undefined) return ""
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}m`
+  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}k`
+  return String(tokens)
+}
+
+/** 全部节点 token 合计（header 展示用） */
+export function sumTokens(progress: WorkflowProgress): number {
+  return progress.nodes.reduce((sum, node) => sum + (node.tokens ?? 0), 0)
+}
+
 function isNodeStatus(value: unknown): value is WorkflowNodeStatus {
   return value === "running" || value === "ok" || value === "failed" || value === "aborted"
 }

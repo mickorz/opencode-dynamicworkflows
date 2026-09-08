@@ -18,11 +18,13 @@ import {
   buildSidebarRows,
   findWorkflowMetadata,
   formatDuration,
+  formatTokens,
   moveSelection,
   parseWorkflowMetadata,
   pickBestProgress,
   progressViewKey,
   selectableNodeIds,
+  sumTokens,
   type WorkflowNode,
   type WorkflowProgress,
 } from "./workflow-store.js"
@@ -166,14 +168,18 @@ function getOrCreateCollapsed(
 function headerLine(progress: WorkflowProgress): string {
   const suffix =
     progress.status === "running" && progress.running > 0 ? ` | ${progress.running} running` : ""
-  return `${progress.name} (${progress.completed}/${progress.total}${suffix})`
+  const tokens = sumTokens(progress)
+  const tokensPart = tokens > 0 ? ` | ${formatTokens(tokens)} tok` : ""
+  return `${progress.name} (${progress.completed}/${progress.total}${suffix})${tokensPart}`
 }
 
 function nodeLine(node: WorkflowNode): string {
   const duration = formatDuration(node.durationMs)
+  const tokens = formatTokens(node.tokens)
   const replayed = node.replayed ? " ·缓存" : ""
   const durationPart = duration ? ` ·${duration}` : ""
-  return `${node.label}${durationPart}${replayed}`
+  const tokensPart = tokens ? ` ·${tokens} tok` : ""
+  return `${node.label}${durationPart}${tokensPart}${replayed}`
 }
 
 function View(props: { api: TuiPluginApi; session_id: string }) {
@@ -247,7 +253,6 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
 /** 全屏路由内节点行：比 sidebar 多展示 tokens 与进入标记 */
 function routeNodeLine(node: WorkflowNode): string {
   const parts = [nodeLine(node)]
-  if (node.tokens !== undefined) parts.push(`${node.tokens} tok`)
   if (node.sessionId) parts.push("[Enter 进入]")
   return parts.join(" · ")
 }
@@ -341,6 +346,7 @@ function RouteView(props: { api: TuiPluginApi; sessionID?: string }) {
             {progress()!.status} · {progress()!.completed}/{progress()!.total} done
             {progress()!.running > 0 ? ` · ${progress()!.running} running` : ""}
             {progress()!.failed > 0 ? ` · ${progress()!.failed} failed` : ""}
+            {sumTokens(progress()!) > 0 ? ` · ${formatTokens(sumTokens(progress()!))} tok` : ""}
           </text>
         </Show>
       </box>

@@ -8,9 +8,11 @@ import {
   buildSidebarRows,
   findWorkflowMetadata,
   formatDuration,
+  formatTokens,
   moveSelection,
   parseWorkflowMetadata,
   selectableNodeIds,
+  sumTokens,
   type ToolPartLike,
 } from "../src/tui/workflow-store.js"
 
@@ -130,4 +132,27 @@ test("selectableNodeIds 与 moveSelection：键盘导航基础（MVP-3）", () =
   assert.equal(moveSelection(ids, "gone", 1), "run-x:0")
   // 空列表安全
   assert.equal(moveSelection([], null, 1), undefined)
+})
+
+test("formatTokens：千分位缩写（k 与 m，保留一位小数）", () => {
+  assert.equal(formatTokens(undefined), "")
+  assert.equal(formatTokens(0), "0")
+  assert.equal(formatTokens(999), "999")
+  assert.equal(formatTokens(1000), "1.0k")
+  assert.equal(formatTokens(9876), "9.9k")
+  assert.equal(formatTokens(123_456), "123.5k")
+  assert.equal(formatTokens(1_000_000), "1.0m")
+  assert.equal(formatTokens(1_234_567), "1.2m")
+})
+
+test("sumTokens：全部节点 token 合计，缺省按 0", () => {
+  const p = parseWorkflowMetadata({
+    runId: "r",
+    agents: [
+      { id: "r:0", label: "a", status: "ok", tokens: 9876 },
+      { id: "r:1", label: "b", status: "running" },
+      { id: "r:2", label: "c", status: "ok", tokens: 200 },
+    ],
+  })!
+  assert.equal(sumTokens(p), 10_076)
 })
