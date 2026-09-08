@@ -130,8 +130,12 @@ export class BackgroundRunManager {
     const journalStore = new JournalStore(deps.directory)
     const modelTiers = loadModelTiers({ projectDir: deps.directory })
 
-    // 心跳：agent 状态迁移间隔可达数十秒（并行期无迁移），补时间戳防 TUI 误判失联
-    const heartbeat = setInterval(() => writeSnapshot("running"), RUN_SNAPSHOT_HEARTBEAT_MS)
+    // 心跳：agent 状态迁移间隔可达数十秒（并行期无迁移），补时间戳防 TUI 误判失联。
+    // 仅 running 态才写：完成后的 session.prompt 回传期间不再覆写终态快照，
+    // 否则已完成 run 的快照被持续刷新为 running，与后续 run 的活快照 time 交错导致 TUI 横跳
+    const heartbeat = setInterval(() => {
+      if (info.status === "running") writeSnapshot("running")
+    }, RUN_SNAPSHOT_HEARTBEAT_MS)
     try {
       const result = await runWorkflow(input.script, {
         agent: adapter,

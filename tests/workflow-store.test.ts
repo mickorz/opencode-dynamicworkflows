@@ -6,12 +6,13 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import {
   buildSidebarRows,
+  buildMultiRunRows,
   findWorkflowMetadata,
   formatDuration,
   formatTokens,
   moveSelection,
   parseWorkflowMetadata,
-  selectableNodeIds,
+  selectableNodeKeys,
   sumTokens,
   type ToolPartLike,
 } from "../src/tui/workflow-store.js"
@@ -113,23 +114,23 @@ test("formatDuration：三档展示", () => {
   assert.equal(formatDuration(undefined), "")
 })
 
-test("selectableNodeIds 与 moveSelection：键盘导航基础（MVP-3）", () => {
+test("selectableNodeKeys 与 moveSelection：键盘导航基础（MVP-3 与 多树复合键）", () => {
   const p = parseWorkflowMetadata(VALID)!
-  const rows = buildSidebarRows(p)
-  const ids = selectableNodeIds(rows)
-  assert.deepEqual(ids, ["run-x:0", "run-x:1", "run-x:2"]) // phase 标题行不可选
+  const rows = buildMultiRunRows([p])
+  const ids = selectableNodeKeys(rows)
+  assert.deepEqual(ids, ["run-x:run-x:0", "run-x:run-x:1", "run-x:run-x:2"]) // phase 与 run 标题行不可选，键为 runId 节点id
 
   // 无选中时：正向下取首个，向上取末个
-  assert.equal(moveSelection(ids, null, 1), "run-x:0")
-  assert.equal(moveSelection(ids, null, -1), "run-x:2")
+  assert.equal(moveSelection(ids, null, 1), ids[0])
+  assert.equal(moveSelection(ids, null, -1), ids[2])
   // 常规移动
-  assert.equal(moveSelection(ids, "run-x:0", 1), "run-x:1")
-  assert.equal(moveSelection(ids, "run-x:2", -1), "run-x:1")
+  assert.equal(moveSelection(ids, ids[0], 1), ids[1])
+  assert.equal(moveSelection(ids, ids[2], -1), ids[1])
   // 越界回绕
-  assert.equal(moveSelection(ids, "run-x:2", 1), "run-x:0")
-  assert.equal(moveSelection(ids, "run-x:0", -1), "run-x:2")
-  // 选中 id 已不在列表（树已刷新）时重新锚定
-  assert.equal(moveSelection(ids, "gone", 1), "run-x:0")
+  assert.equal(moveSelection(ids, ids[2], 1), ids[0])
+  assert.equal(moveSelection(ids, ids[0], -1), ids[2])
+  // 选中键已不在列表（树已刷新）时重新锚定
+  assert.equal(moveSelection(ids, "gone", 1), ids[0])
   // 空列表安全
   assert.equal(moveSelection([], null, 1), undefined)
 })

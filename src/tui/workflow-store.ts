@@ -8,8 +8,6 @@
  * solid 渲染集中在 plugin.tsx 单文件（需求文档 9.3 单实例约束）。
  */
 
-import { type RunSnapshotView, RUN_SNAPSHOT_STALE_MS } from "./run-snapshot-reader.js"
-
 export type WorkflowProgressStatus = "running" | "completed" | "aborted" | "failed"
 export type WorkflowNodeStatus = "running" | "ok" | "failed" | "aborted"
 
@@ -138,44 +136,68 @@ export function buildSidebarRows(progress: WorkflowProgress): SidebarRow[] {
   return rows
 }
 
+/** 单树标题行：名称 进度计数 运行中后缀 token 合计（sidebar 与全屏路由共用） */
+export function headerLine(progress: WorkflowProgress): string {
+  const suffix =
+    progress.status === "running" && progress.running > 0 ? ` | ${progress.running} running` : ""
+  const tokens = sumTokens(progress)
+  const tokensPart = tokens > 0 ? ` | ${formatTokens(tokens)} tok` : ""
+  return `${progress.name} (${progress.completed}/${progress.total}${suffix})${tokensPart}`
+}
+
 /**
- * 通道合并规则（TUI实时通道优化方案 6 节）：
- * 1. 最新快照非失联 -> 镜像优先（执行期与后台的实时主通道）
- * 2. 否则 -> C 通道（tool 返回值 metadata）兑底；旧会话重开 与 镜像写失败时生效
+ * 多树合并行（全屏路由 /workflow 用）：每棵树前插入 run 标题行，节点行携带 runId。
+ * 不同 run 的节点 id 可能重复，选中态用 runId 节点id 复合键保证跨树唯一。
  */
-export function pickBestProgress(
-  snapshots: ReadonlyArray<RunSnapshotView>,
-  metadataProgress: WorkflowProgress | null,
-  now: number,
-): WorkflowProgress | null {
-  const latest = snapshots[0]
-  if (latest) {
-    const stale = latest.status === "running" && now - latest.time > RUN_SNAPSHOT_STALE_MS
-    if (!stale) {
-      return {
-        runId: latest.runId,
-        name: latest.name,
-        status: latest.status,
-        phases: latest.phases,
-        nodes: latest.nodes,
-        running: latest.running,
-        completed: latest.completed,
-        failed: latest.failed,
-        total: latest.total,
+export type MultiRunRow =
+  | { kind: "run"; runId: string; title: string; status: WorkflowProgressStatus }
+  | { kind: "phase"; title: string; runId: string }
+  | { kind: "node"; node: WorkflowNode; runId: string }
+
+export function buildMultiRunRows(progresses: ReadonlyArray<WorkflowProgress>): MultiRunRow[] {
+  const rows: MultiRunRow[] = []
+  for (const progress of progresses) {
+    rows.push({ kind: "run", runId: progress.runId, title: headerLine(progress), status: progress.status })
+    let currentPhase: string | undefined
+    for (const node of progress.nodes) {
+      if (node.phase && node.phase !== currentPhase) {
+        rows.push({ kind: "phase", title: node.phase, runId: progress.runId })
+        currentPhase = node.phase
       }
+      rows.push({ kind: "node", node, runId: progress.runId })
     }
   }
-  return metadataProgress
+  return rows
+}
+
+/** 选中复合键：runId 节点id，跨树唯一 */
+export function selectionKey(runId: string, nodeId: string): string {
+  return `${runId}:${nodeId}`
+}
+
+/** 多树可选中键列表（保持展示顺序，供 moveSelection 回绕导航） */
+export function selectableNodeKeys(rows: ReadonlyArray<MultiRunRow>): string[] {
+  return rows.filter((row) => row.kind === "node").map((row) => selectionKey(row.runId, row.node.id))
+}
+
+/** 按选中键在多树中找节点；找不到返回 undefined */
+export function findSelectedNode(
+  progresses: ReadonlyArray<WorkflowProgress>,
+  key: string | null,
+): WorkflowNode | undefined {
+  if (!key) return undefined
+  for (const progress of progresses) {
+    for (const node of progress.nodes) {
+      if (selectionKey(progress.runId, node.id) === key) return node
+    }
+  }
+  return undefined
 }
 
 /**
  * 可选中导航目标：节点行中带 sessionId 的（可进子会话）优先，无 sessionId 的也允许选中高亮但不可进入
  * 返回可选中节点 id 列表（保持展示顺序）
  */
-export function selectableNodeIds(rows: ReadonlyArray<SidebarRow>): string[] {
-  return rows.filter((row) => row.kind === "node").map((row) => (row.kind === "node" ? row.node.id : ""))
-}
-
 /** 上下移动选中：delta +1 下移 与 -1 上移，越界回绕；空列表返回 undefined */
 export function moveSelection(ids: ReadonlyArray<string>, currentId: string | null, delta: number): string | undefined {
   if (ids.length === 0) return undefined
@@ -183,6 +205,15 @@ export function moveSelection(ids: ReadonlyArray<string>, currentId: string | nu
   if (index === -1) return delta >= 0 ? ids[0] : ids[ids.length - 1]
   const next = (index + delta + ids.length) % ids.length
   return ids[next]
+}
+
+/**
+ * 多树 viewKey：全部树的稳定摘要拼接，不变则不写 signal 避免无谓重渲。
+ * 单树内容（状态/计数）或树数量（新增/消失一个 run）变化都会改变 key。
+ */
+export function progressesViewKey(progresses: ReadonlyArray<WorkflowProgress>): string {
+  if (progresses.length === 0) return "none"
+  return progresses.map(progressViewKey).join(";")
 }
 
 /** viewKey：稳定字符串摘要，不变则不写 signal 避免无谓重渲（omo viewKey 差分） */

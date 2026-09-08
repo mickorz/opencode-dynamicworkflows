@@ -15,20 +15,22 @@ import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plug
 import type { Renderable } from "@opentui/core"
 import { For, Show, createSignal } from "solid-js"
 import {
+  buildMultiRunRows,
   buildSidebarRows,
+  findSelectedNode,
   findWorkflowMetadata,
   formatDuration,
   formatTokens,
+  headerLine,
   moveSelection,
   parseWorkflowMetadata,
-  pickBestProgress,
-  progressViewKey,
-  selectableNodeIds,
-  sumTokens,
+  progressesViewKey,
+  selectableNodeKeys,
+  selectionKey,
   type WorkflowNode,
   type WorkflowProgress,
 } from "./workflow-store.js"
-import { listSessionSnapshots } from "./run-snapshot-reader.js"
+import { listSessionSnapshots, pickAllProgresses } from "./run-snapshot-reader.js"
 
 const id = "opencode-dynamic-workflows"
 
@@ -66,7 +68,7 @@ function toneColor(
   return theme.textMuted
 }
 
-/** 折叠状态按 session 缓存（重复渲染必须复用信号，不能每次重建——subagents-view 踩坑结论） */
+/** 折叠状态按 会话|run 复合键缓存（多树同显后每棵树独立折叠） */
 const collapsedBySession = new Map<
   string,
   { collapsed: () => boolean; setCollapsed: (next: boolean | ((current: boolean) => boolean)) => void }
@@ -78,10 +80,10 @@ const collapsedBySession = new Map<
  * 跨副本的依赖追踪不生效（Read 一次后永不更新，需求文档 9.3 的教训；
  * subagents-view 因此同样只用 api.event.on 镜像数据到自己 signal）。
  */
-const progressBySession = new Map<string, () => WorkflowProgress | null>()
+const progressBySession = new Map<string, () => WorkflowProgress[]>()
 
-function computeProgress(api: TuiPluginApi, sessionId: string): WorkflowProgress | null {
-  // 双通道合并：镜像快照（B）新鲜则优先，否则 tool 返回值 metadata（C）兑底
+function computeProgresses(api: TuiPluginApi, sessionId: string): WorkflowProgress[] {
+  // 多树合并：镜像快照逐个成树（失联的过滤），无快照时回退 tool 返回值 metadata（C 通道）
   let snapshots: ReturnType<typeof listSessionSnapshots> = []
   try {
     const directory = api.state.session.get(sessionId)?.directory ?? api.state.path.directory
@@ -92,7 +94,7 @@ function computeProgress(api: TuiPluginApi, sessionId: string): WorkflowProgress
   const metadataProgress = parseWorkflowMetadata(
     findWorkflowMetadata(api.state.session.messages(sessionId), (messageID) => api.state.part(messageID)),
   )
-  return pickBestProgress(snapshots, metadataProgress, Date.now())
+  return pickAllProgresses(snapshots, metadataProgress, Date.now())
 }
 
 /** 快照轮询间隔（omo 同款，agent 粒度变化频率下够用） */
@@ -102,15 +104,15 @@ function getOrCreateProgress(
   api: TuiPluginApi,
   sessionId: string,
   onDispose: (fn: () => void) => void,
-): () => WorkflowProgress | null {
+): () => WorkflowProgress[] {
   const cached = progressBySession.get(sessionId)
   if (cached) return cached
 
-  const [progress, setProgress] = createSignal<WorkflowProgress | null>(computeProgress(api, sessionId))
+  const [progress, setProgress] = createSignal<WorkflowProgress[]>(computeProgresses(api, sessionId))
   // viewKey 差分：内容未变不写 signal，避免轮询驱动的无谓重渲
-  let lastKey = progressViewKey(progress())
-  const applyProgress = (next: WorkflowProgress | null) => {
-    const key = progressViewKey(next)
+  let lastKey = progressesViewKey(progress())
+  const applyProgress = (next: WorkflowProgress[]) => {
+    const key = progressesViewKey(next)
     if (key === lastKey) return
     lastKey = key
     setProgress(next)
@@ -127,7 +129,7 @@ function getOrCreateProgress(
     }, 30)
   }
   const recomputeNow = () => {
-    applyProgress(computeProgress(api, sessionId))
+    applyProgress(computeProgresses(api, sessionId))
   }
 
   const offs = [
@@ -154,23 +156,23 @@ function getOrCreateProgress(
 
 function getOrCreateCollapsed(
   sessionId: string,
+  runId: string,
   onDispose: (fn: () => void) => void,
 ): [() => boolean, (next: boolean | ((current: boolean) => boolean)) => void] {
-  const cached = collapsedBySession.get(sessionId)
+  const key = `${sessionId}|${runId}`
+  const cached = collapsedBySession.get(key)
   if (cached) return [cached.collapsed, cached.setCollapsed]
 
   const [collapsed, setCollapsed] = createSignal(false)
-  onDispose(() => collapsedBySession.delete(sessionId))
-  collapsedBySession.set(sessionId, { collapsed, setCollapsed })
+  onDispose(() => {
+    // 清理该会话下所有树的折叠信号（同会话多树共用一次 dispose）
+    const prefix = `${sessionId}|`
+    for (const k of Array.from(collapsedBySession.keys())) {
+      if (k.startsWith(prefix)) collapsedBySession.delete(k)
+    }
+  })
+  collapsedBySession.set(key, { collapsed, setCollapsed })
   return [collapsed, setCollapsed]
-}
-
-function headerLine(progress: WorkflowProgress): string {
-  const suffix =
-    progress.status === "running" && progress.running > 0 ? ` | ${progress.running} running` : ""
-  const tokens = sumTokens(progress)
-  const tokensPart = tokens > 0 ? ` | ${formatTokens(tokens)} tok` : ""
-  return `${progress.name} (${progress.completed}/${progress.total}${suffix})${tokensPart}`
 }
 
 function nodeLine(node: WorkflowNode): string {
@@ -182,69 +184,85 @@ function nodeLine(node: WorkflowNode): string {
   return `${node.label}${durationPart}${tokensPart}${replayed}`
 }
 
-function View(props: { api: TuiPluginApi; session_id: string }) {
+/** 单棵 run 树：标题行折叠开关 + phase 分组节点列表（多树同显，每 run 独立一块） */
+function RunTree(props: {
+  api: TuiPluginApi
+  session_id: string
+  progress: WorkflowProgress
+}) {
   const theme = () => props.api.theme.current
-  const progress = getOrCreateProgress(props.api, props.session_id, props.api.lifecycle.onDispose)
-  const [collapsed, setCollapsed] = getOrCreateCollapsed(props.session_id, props.api.lifecycle.onDispose)
-  const rows = () => {
-    const current = progress()
-    return current ? buildSidebarRows(current) : []
-  }
+  const [collapsed, setCollapsed] = getOrCreateCollapsed(
+    props.session_id,
+    props.progress.runId,
+    props.api.lifecycle.onDispose,
+  )
+  const rows = () => buildSidebarRows(props.progress)
 
   return (
-    <Show when={progress()}>
-      <box>
-        {/* 折叠开关只挂标题行：挂外层时节点点击导航后事件冒泡会把树折起来（返回主会话看到的就是折叠态） */}
-        <box onMouseDown={() => setCollapsed((current) => !current)}>
-          <text fg={theme().text}>
-            <b>{collapsed() ? "▶" : "▼"} Dynamic Workflow</b> {headerLine(progress()!)}
-          </text>
-        </box>
-        <Show when={!collapsed()}>
-          <For each={rows()}>
-            {(row) => {
-              if (row.kind === "phase") {
-                return (
-                  <box paddingLeft={1} paddingTop={1}>
-                    <text fg={theme().textMuted}>{row.title}</text>
-                  </box>
-                )
-              }
-              const meta = getNodeMeta(row.node.status)
+    <box paddingBottom={1}>
+      {/* 折叠开关只挂标题行：挂外层时节点点击导航后事件冒泡会把树折起来 */}
+      <box onMouseDown={() => setCollapsed((current) => !current)}>
+        <text fg={theme().text}>
+          <b>{collapsed() ? "▶" : "▼"}</b> {headerLine(props.progress)}
+        </text>
+      </box>
+      <Show when={!collapsed()}>
+        <For each={rows()}>
+          {(row) => {
+            if (row.kind === "phase") {
               return (
-                <box flexDirection="column">
-                  {/* MVP-2：带 sessionId 的节点可点击进入子会话（sidebar 无键盘逐节点选中机制，鼠标为准；
-                      Enter 导航在 workflow 全屏路由里，需 api.keymap 目标作用域） */}
-                  <box
-                    flexDirection="row"
-                    onMouseDown={row.node.sessionId ? () => props.api.route.navigate("session", { sessionID: row.node.sessionId }) : undefined}
-                  >
+                <box paddingLeft={1} paddingTop={1}>
+                  <text fg={theme().textMuted}>{row.title}</text>
+                </box>
+              )
+            }
+            const meta = getNodeMeta(row.node.status)
+            return (
+              <box flexDirection="column">
+                {/* MVP-2：带 sessionId 的节点可点击进入子会话 */}
+                <box
+                  flexDirection="row"
+                  onMouseDown={row.node.sessionId ? () => props.api.route.navigate("session", { sessionID: row.node.sessionId }) : undefined}
+                >
+                  <box width={2}>
+                    <text fg={toneColor(props.api, meta.tone)}>{meta.icon} </text>
+                  </box>
+                  <box flexGrow={1}>
+                    <text fg={toneColor(props.api, meta.tone)} wrapMode="word">
+                      {nodeLine(row.node)}
+                    </text>
+                  </box>
+                </box>
+                <Show when={row.node.error}>
+                  <box flexDirection="row" paddingLeft={2}>
                     <box width={2}>
-                      <text fg={toneColor(props.api, meta.tone)}>{meta.icon} </text>
+                      <text fg={theme().textMuted}>↳ </text>
                     </box>
                     <box flexGrow={1}>
-                      <text fg={toneColor(props.api, meta.tone)} wrapMode="word">
-                        {nodeLine(row.node)}
+                      <text fg={theme().textMuted} wrapMode="word">
+                        {row.node.error}
                       </text>
                     </box>
                   </box>
-                  <Show when={row.node.error}>
-                    <box flexDirection="row" paddingLeft={2}>
-                      <box width={2}>
-                        <text fg={theme().textMuted}>↳ </text>
-                      </box>
-                      <box flexGrow={1}>
-                        <text fg={theme().textMuted} wrapMode="word">
-                          {row.node.error}
-                        </text>
-                      </box>
-                    </box>
-                  </Show>
-                </box>
-              )
-            }}
-          </For>
-        </Show>
+                </Show>
+              </box>
+            )
+          }}
+        </For>
+      </Show>
+    </box>
+  )
+}
+
+function View(props: { api: TuiPluginApi; session_id: string }) {
+  const progresses = getOrCreateProgress(props.api, props.session_id, props.api.lifecycle.onDispose)
+
+  return (
+    <Show when={progresses().length > 0}>
+      <box>
+        <For each={progresses()}>
+          {(progress) => <RunTree api={props.api} session_id={props.session_id} progress={progress} />}
+        </For>
       </box>
     </Show>
   )
@@ -269,33 +287,28 @@ function navigateBack(api: TuiPluginApi): void {
   api.route.navigate("home")
 }
 
-/** /workflow 全屏路由视图（MVP-3）：j/k 上下选择，Enter 进子会话，Esc 返回。
- *  键位经 focus 作用域层接管：box 可聚焦并抢焦点，绑定只在本元素聚焦时生效，
- *  不与全局/base 模式键冲突（diff-viewer 同款 keymap 机制，外部插件无 useBindings 跨副本） */
+/** /workflow 全屏路由视图（多树同显版）：所有 run 逐树平铺，j/k 跨树上下选择，Enter 进子会话，Esc 返回。
+ *  键位经 focus 作用域层接管；节点行复合选中键 runId 节点id 保证跨树唯一 */
 function RouteView(props: { api: TuiPluginApi; sessionID?: string }) {
   const theme = () => props.api.theme.current
-  const progress = props.sessionID
+  const progresses = props.sessionID
     ? getOrCreateProgress(props.api, props.sessionID, props.api.lifecycle.onDispose)
-    : () => null
-  const rows = () => {
-    const current = progress()
-    return current ? buildSidebarRows(current) : []
-  }
-  const ids = () => selectableNodeIds(rows())
+    : () => []
+  const rows = () => buildMultiRunRows(progresses())
+  const keys = () => selectableNodeKeys(rows())
   // 滚动跟随：行渲染体的 id 登记表 + 滚动容器引用，选中越屏时 scrollChildIntoView
   const rowRenderableIds = new Map<string, string>()
   let scrollBox: { scrollChildIntoView(childId: string): void } | undefined
 
   const move = (delta: number) => {
-    const next = moveSelection(ids(), selectedNode(), delta)
+    const next = moveSelection(keys(), selectedNode(), delta)
     if (next === undefined) return
     setSelectedNode(next)
     const childId = rowRenderableIds.get(next)
     if (childId) scrollBox?.scrollChildIntoView(childId)
   }
   const openSelected = () => {
-    const current = progress()
-    const node = current?.nodes.find((n) => n.id === selectedNode())
+    const node = findSelectedNode(progresses(), selectedNode())
     if (!node?.sessionId) return
     disposeNavLayer?.()
     disposeNavLayer = undefined
@@ -339,16 +352,17 @@ function RouteView(props: { api: TuiPluginApi; sessionID?: string }) {
     >
       <box flexDirection="row" gap={1} paddingBottom={1}>
         <text fg={theme().text}>
-          <b>Workflow</b> {progress()?.name ?? "-"}
+          <b>Workflow</b> {progresses().length > 0 ? `${progresses().length} 个 run` : "-"}
         </text>
-        <Show when={progress()}>
-          <text fg={theme().textMuted}>
-            {progress()!.status} · {progress()!.completed}/{progress()!.total} done
-            {progress()!.running > 0 ? ` · ${progress()!.running} running` : ""}
-            {progress()!.failed > 0 ? ` · ${progress()!.failed} failed` : ""}
-            {sumTokens(progress()!) > 0 ? ` · ${formatTokens(sumTokens(progress()!))} tok` : ""}
-          </text>
-        </Show>
+        <For each={progresses()}>
+          {(p) => (
+            <text fg={theme().textMuted}>
+              {p.name} {p.status} · {p.completed}/{p.total}
+              {p.running > 0 ? ` · ${p.running} running` : ""}
+              {p.failed > 0 ? ` · ${p.failed} failed` : ""}
+            </text>
+          )}
+        </For>
       </box>
       <scrollbox
         flexGrow={1}
@@ -358,22 +372,33 @@ function RouteView(props: { api: TuiPluginApi; sessionID?: string }) {
       >
         <For each={rows()}>
           {(row) => {
-            if (row.kind === "phase") {
+            if (row.kind === "run") {
               return (
                 <box paddingTop={1}>
+                  <text fg={theme().text}>
+                    <b>{row.title}</b>
+                  </text>
+                </box>
+              )
+            }
+            if (row.kind === "phase") {
+              return (
+                <box paddingLeft={2} paddingTop={1}>
                   <text fg={theme().textMuted}>{row.title}</text>
                 </box>
               )
             }
             const meta = getNodeMeta(row.node.status)
-            const selected = selectedNode() === row.node.id
+            const key = selectionKey(row.runId, row.node.id)
+            const selected = selectedNode() === key
             return (
               <box
                 flexDirection="row"
+                paddingLeft={2}
                 backgroundColor={selected ? theme().backgroundPanel : undefined}
                 ref={(el: { id: string }) => {
                   // 登记行渲染体 id，选中越屏时 scrollChildIntoView 跟随
-                  rowRenderableIds.set(row.node.id, el.id)
+                  rowRenderableIds.set(key, el.id)
                 }}
               >
                 <box width={2}>
@@ -391,7 +416,7 @@ function RouteView(props: { api: TuiPluginApi; sessionID?: string }) {
             )
           }}
         </For>
-        <Show when={!progress()}>
+        <Show when={progresses().length === 0}>
           <box paddingTop={1}>
             <text fg={theme().textMuted}>当前不在会话中打开，或该会话还没有 workflow 运行记录</text>
           </box>
@@ -405,17 +430,16 @@ function RouteView(props: { api: TuiPluginApi; sessionID?: string }) {
   )
 }
 
-/** 输入框右侧状态条（session_prompt_right 插槽）：仅运行中的 workflow 显示一行进度摘要 */
+/** 输入框右侧状态条（session_prompt_right 插槽）：所有运行中的 workflow 各占一行进度摘要 */
 function PromptFooterView(props: { api: TuiPluginApi; session_id: string }) {
-  const progress = getOrCreateProgress(props.api, props.session_id, props.api.lifecycle.onDispose)
-  const line = () => {
-    const p = progress()
-    if (!p || p.status !== "running") return null
-    return `◐ workflow ${p.name} ${p.completed}/${p.total}${p.running > 0 ? ` · ${p.running} running` : ""}`
-  }
+  const progresses = getOrCreateProgress(props.api, props.session_id, props.api.lifecycle.onDispose)
+  const lines = () =>
+    progresses()
+      .filter((p) => p.status === "running")
+      .map((p) => `◐ workflow ${p.name} ${p.completed}/${p.total}${p.running > 0 ? ` · ${p.running} running` : ""}`)
   return (
-    <Show when={line()}>
-      <text fg={toneColor(props.api, "warning")}>{line()}</text>
+    <Show when={lines().length > 0}>
+      <For each={lines()}>{(line) => <text fg={toneColor(props.api, "warning")}>{line}</text>}</For>
     </Show>
   )
 }

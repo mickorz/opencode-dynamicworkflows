@@ -122,6 +122,35 @@ export function toProgress(snapshot: RunSnapshotView): WorkflowProgress {
   }
 }
 
+/**
+ * 从 runId 提取创建时间（runId 形如 run-<base36时间戳>[-序号]）。
+ * 展示排序依据：心跳交错会反复改写快照 time，按 time 排序会导致两棵运行中的树不断互换位置；
+ * 创建时间不变，顺序稳定（最新创建在上，旧的在下）。解析失败返回 0 排最后。
+ */
+export function runCreatedAt(runId: string): number {
+  const parsed = Number.parseInt(runId.slice(4), 36)
+  return Number.isNaN(parsed) ? 0 : parsed
+}
+
+/**
+ * 通道合并规则（多树同显版）：不再裁决"只显示哪一个"，每个 run 一棵树同时渲染，
+ * 天然消除双活快照 time 交错导致的横跳：
+ * 1. 快照逐个映射为树；running 且超时未心跳的（失联）过滤不显示
+ * 2. 快照列表为空时回退 C 通道（tool 返回值 metadata，旧会话重开/镜像写失败场景）
+ * 3. 有快照时忽略 metadata（metadata 只是最新一次 tool 调用的终态，快照已覆盖）
+ *
+ * 展示顺序按 run 创建时间降序（最新创建的树在最上），与心跳写入时机无关，位置稳定不互换。
+ */
+export function pickAllProgresses(
+  snapshots: ReadonlyArray<RunSnapshotView>,
+  metadataProgress: WorkflowProgress | null,
+  now: number,
+): WorkflowProgress[] {
+  const alive = snapshots.filter((s) => !isStale(s, now))
+  if (alive.length === 0) return metadataProgress ? [metadataProgress] : []
+  return alive.map(toProgress).sort((a, b) => runCreatedAt(b.runId) - runCreatedAt(a.runId))
+}
+
 function isNodeStatus(value: unknown): value is WorkflowNode["status"] {
   return value === "running" || value === "ok" || value === "failed" || value === "aborted"
 }

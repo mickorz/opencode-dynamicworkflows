@@ -16,7 +16,16 @@ import {
   toProgress,
   type RunSnapshotView,
 } from "../src/tui/run-snapshot-reader.js"
-import { pickBestProgress, progressViewKey, type WorkflowProgress } from "../src/tui/workflow-store.js"
+import {
+  RUN_SNAPSHOT_STALE_MS,
+  isStale,
+  listSessionSnapshots,
+  parseRunSnapshot,
+  pickAllProgresses,
+  toProgress,
+  type RunSnapshotView,
+} from "../src/tui/run-snapshot-reader.js"
+import { progressesViewKey, progressViewKey, type WorkflowProgress } from "../src/tui/workflow-store.js"
 
 function snapshotView(overrides: Partial<RunSnapshotView> & { runId: string }): RunSnapshotView {
   return {
@@ -108,9 +117,9 @@ test("toProgress：字段映射完整", () => {
   assert.equal(p.running, 1)
 })
 
-test("pickBestProgress：新鲜镜像优先（B 大于 C）", () => {
+test("pickAllProgresses：多树同显，新鲜快照各自成树且忽略 metadata（防重复）", () => {
   const meta: WorkflowProgress = {
-    runId: "old",
+    runId: "new",
     name: "workflow",
     status: "completed",
     phases: [],
@@ -120,35 +129,41 @@ test("pickBestProgress：新鲜镜像优先（B 大于 C）", () => {
     failed: 0,
     total: 1,
   }
-  const best = pickBestProgress([snapshotView({ runId: "new", time: 9999 })], meta, 10_000)
-  assert.ok(best)
-  assert.equal(best.runId, "new")
-  assert.equal(best.status, "running")
+  const list = pickAllProgresses([snapshotView({ runId: "new", time: 9999 })], meta, 10_000)
+  assert.equal(list.length, 1)
+  assert.equal(list[0].runId, "new")
+  assert.equal(list[0].status, "running")
 })
 
-test("pickBestProgress：running 快照失联降级 C 通道", () => {
+test("pickAllProgresses：stale running 过滤，快照全空时降级 C 通道", () => {
   const stale = [snapshotView({ runId: "dead", status: "running", time: 0 })]
-  const best = pickBestProgress(stale, null, RUN_SNAPSHOT_STALE_MS + 1)
-  assert.equal(best, null)
-  // C 通道有值则用 C
+  assert.deepEqual(pickAllProgresses(stale, null, RUN_SNAPSHOT_STALE_MS + 1), [])
+  // C 通道有值则兑底成单树
   const meta = { runId: "m" } as WorkflowProgress
-  assert.equal(pickBestProgress(stale, meta, RUN_SNAPSHOT_STALE_MS + 1), meta)
+  assert.deepEqual(pickAllProgresses(stale, meta, RUN_SNAPSHOT_STALE_MS + 1), [meta])
 })
 
-test("pickBestProgress：终态快照永不失联（后台完成后常驻显示）", () => {
+test("pickAllProgresses：终态快照永不失联（后台完成后常驻显示）", () => {
   const terminal = [snapshotView({ runId: "done", status: "completed", time: 0 })]
-  const best = pickBestProgress(terminal, null, 10 ** 9)
-  assert.ok(best)
-  assert.equal(best.runId, "done")
+  const list = pickAllProgresses(terminal, null, 10 ** 9)
+  assert.equal(list.length, 1)
+  assert.equal(list[0].runId, "done")
 })
 
-test("pickBestProgress：多活后台 run 取 time 最新", () => {
+test("pickAllProgresses：双活 run 同时显示（不再二选一裁决，消除横跳）", () => {
   const snaps = [
     snapshotView({ runId: "newer", time: 3000 }),
     snapshotView({ runId: "older", time: 1000 }),
   ]
-  const best = pickBestProgress(snaps, null, 3500)
-  assert.equal(best?.runId, "newer")
+  const list = pickAllProgresses(snaps, null, 3500)
+  assert.equal(list.length, 2)
+  assert.deepEqual(list.map((p) => p.runId), ["newer", "older"])
+  // 失联的老 run 不再显示
+  const withDead = [
+    snapshotView({ runId: "newer", time: 3000 }),
+    snapshotView({ runId: "dead", time: 0 }),
+  ]
+  assert.deepEqual(pickAllProgresses(withDead, null, RUN_SNAPSHOT_STALE_MS + 1).map((p) => p.runId), ["newer"])
 })
 
 test("progressViewKey：关键字段变化才变，未变则相等", () => {
