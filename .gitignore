@@ -19,3 +19,6 @@ Thumbs.db
 .vscode/
 *.tsbuildinfo
 demo-note.txt
+
+# Claude Code 项目规则（本地，不入库；规则单源见 AGENTS.md）
+CLAUDE.md
