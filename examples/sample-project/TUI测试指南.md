@@ -192,8 +192,45 @@ sidebar 没出现 Dynamic Workflow 时按序检查：
 | 5 | TA-02 完成态保持 | 待测 | 含折叠 |
 | 6 | 中止态快照 | 待测 | |
 | 7 | 失败态展示 | 待测 | ✖ 与错误行 |
-| 8 | 后台负向 | 待测 | 不渲染属预期 |
+| 8 | TA-01b 后台实时树 | 待测 | v0.3 起正向 |
 | 9 | 空会话不渲染 | 待测 | |
+| 12 | MVP-2 sidebar 点击进子会话 | 待测 | |
+| 13 | MVP-3 workflow 全屏路由 | 待测 | 键盘导航 |
+
+---
+
+## 12. 用例 12 MVP-2 sidebar 节点点击进子会话（TA-03）
+
+前置：用例 1 已跑过（会话里有 workflow 树）。
+
+步骤：鼠标点击 sidebar 树中某个已完成的 agent 节点行（带耗时的 ● 行）。
+
+判定：
+
+| 检查点 | 预期 |
+|--------|------|
+| 导航 | 进入该 agent 的子会话（标题与节点 label 一致） |
+| 子会话页脚 | 底部显示 subagent footer（Parent 与 Prev 与 Next 可用） |
+| 返回 | footer 的 Parent 链接回主会话 |
+
+说明：运行中（◐）与已完成（●）节点均可点（sessionId 建会话即有）；journal 回放的节点无 sessionId 不可点。sidebar 无逐节点键盘选中机制（宿主限制），键盘导航在用例 13 的全屏路由。
+
+## 13. 用例 13 MVP-3 workflow 全屏路由（TA-04）
+
+前置：在跑过 workflow 的会话内。
+
+步骤：ctrl+p 打开命令面板，选 Open workflow view（或输入 /workflow 触发 slash 命令）。
+
+判定：
+
+| 检查点 | 预期 |
+|--------|------|
+| 打开 | 全屏展示 workflow 树（phase 分组 + 节点行含 tokens 与 Enter 进入标记） |
+| 键盘 | j/k 或 上下键移动 ▸ 选中标记，回绕 |
+| 实时 | 后台或前台 workflow 运行中打开时，树随进度刷新 |
+| Enter | 选中带 sessionId 的节点回车进入子会话 |
+| Esc 或 q | 返回来源路由（会话或首页） |
+| 键冲突 | 路由外 j/k 输入不受影响；prompt 输入正常（focus 作用域层） |
 
 ---
 

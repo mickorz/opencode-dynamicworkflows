@@ -168,6 +168,23 @@ export function pickBestProgress(
   return metadataProgress
 }
 
+/**
+ * 可选中导航目标：节点行中带 sessionId 的（可进子会话）优先，无 sessionId 的也允许选中高亮但不可进入
+ * 返回可选中节点 id 列表（保持展示顺序）
+ */
+export function selectableNodeIds(rows: ReadonlyArray<SidebarRow>): string[] {
+  return rows.filter((row) => row.kind === "node").map((row) => (row.kind === "node" ? row.node.id : ""))
+}
+
+/** 上下移动选中：delta +1 下移 与 -1 上移，越界回绕；空列表返回 undefined */
+export function moveSelection(ids: ReadonlyArray<string>, currentId: string | null, delta: number): string | undefined {
+  if (ids.length === 0) return undefined
+  const index = currentId ? ids.indexOf(currentId) : -1
+  if (index === -1) return delta >= 0 ? ids[0] : ids[ids.length - 1]
+  const next = (index + delta + ids.length) % ids.length
+  return ids[next]
+}
+
 /** viewKey：稳定字符串摘要，不变则不写 signal 避免无谓重渲（omo viewKey 差分） */
 export function progressViewKey(progress: WorkflowProgress | null): string {
   if (!progress) return "none"

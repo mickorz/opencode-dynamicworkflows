@@ -8,7 +8,9 @@ import {
   buildSidebarRows,
   findWorkflowMetadata,
   formatDuration,
+  moveSelection,
   parseWorkflowMetadata,
+  selectableNodeIds,
   type ToolPartLike,
 } from "../src/tui/workflow-store.js"
 
@@ -107,4 +109,25 @@ test("formatDuration：三档展示", () => {
   assert.equal(formatDuration(12300), "12.3s")
   assert.equal(formatDuration(75000), "1m15s")
   assert.equal(formatDuration(undefined), "")
+})
+
+test("selectableNodeIds 与 moveSelection：键盘导航基础（MVP-3）", () => {
+  const p = parseWorkflowMetadata(VALID)!
+  const rows = buildSidebarRows(p)
+  const ids = selectableNodeIds(rows)
+  assert.deepEqual(ids, ["run-x:0", "run-x:1", "run-x:2"]) // phase 标题行不可选
+
+  // 无选中时：正向下取首个，向上取末个
+  assert.equal(moveSelection(ids, null, 1), "run-x:0")
+  assert.equal(moveSelection(ids, null, -1), "run-x:2")
+  // 常规移动
+  assert.equal(moveSelection(ids, "run-x:0", 1), "run-x:1")
+  assert.equal(moveSelection(ids, "run-x:2", -1), "run-x:1")
+  // 越界回绕
+  assert.equal(moveSelection(ids, "run-x:2", 1), "run-x:0")
+  assert.equal(moveSelection(ids, "run-x:0", -1), "run-x:2")
+  // 选中 id 已不在列表（树已刷新）时重新锚定
+  assert.equal(moveSelection(ids, "gone", 1), "run-x:0")
+  // 空列表安全
+  assert.equal(moveSelection([], null, 1), undefined)
 })

@@ -28,6 +28,7 @@
   "devDependencies": {
     "@opencode-ai/plugin": "1.18.27",
     "@opentui/core": "^0.4.5",
+    "@opentui/keymap": "^0.4.5",
     "@types/acorn": "^6.0.0",
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",

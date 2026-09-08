@@ -24,7 +24,7 @@ API 在已安装的 `@opencode-ai/plugin` / `@opencode-ai/sdk` 类型中找不�
 ## TUI 插件（v1 双形态，F-20）
 
 - 本包双 entrypoint：`exports["."]`（server，default export `{ id, server }`）与 `exports["./tui"]`（TUI，default export `{ id, tui }`）；二者经 readV1Plugin 互斥加载。`@opencode-ai/plugin/tui` 是 v1 包内合法导出，不是 v2，不引入 Plugin.define / ctx.storage / session.next.*
-- `src/tui/` 允许 import `@opencode-ai/plugin/tui`、`@opentui/solid`、`solid-js`；禁止 import server 侧 runtime/adapters/tools（TUI 只消费 ToolPart.metadata，不执行 workflow）
+- `src/tui/` 允许 import `@opencode-ai/plugin/tui`、`@opentui/solid`、`solid-js`、`@opentui/core`（仅类型，如 Renderable）；禁止 import server 侧 runtime/adapters/tools（TUI 只消费快照与 metadata，不执行 workflow）
 - 所有 solid-js 用法集中在 `src/tui/plugin.tsx` 单文件（多文件会解析出不同 solid-js 实例，信号失效）；纯数据逻辑拆 ts（如 workflow-store.ts）
 - UI 依赖声明为 dependencies + solid-js 精确 pin（peer 语义会破坏 bootstrap 的 require.resolve 自定位，踩双实例坑）
 - 主 tsconfig 排除 src/tui；TUI 侧用 tsconfig.tui.json 仅 typecheck（无 build，bun 直接加载 TSX 源码）

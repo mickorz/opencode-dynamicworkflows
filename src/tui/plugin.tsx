@@ -12,20 +12,32 @@
  */
 
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
+import type { Renderable } from "@opentui/core"
 import { For, Show, createSignal } from "solid-js"
 import {
   buildSidebarRows,
   findWorkflowMetadata,
   formatDuration,
+  moveSelection,
   parseWorkflowMetadata,
   pickBestProgress,
   progressViewKey,
+  selectableNodeIds,
   type WorkflowNode,
   type WorkflowProgress,
 } from "./workflow-store.js"
 import { listSessionSnapshots } from "./run-snapshot-reader.js"
 
 const id = "opencode-dynamic-workflows"
+
+/** workflow 全屏路由名（MVP-3）：api.route.register + 命令面板打开，Enter 进子会话的键盘导航在本路由内 */
+const WORKFLOW_ROUTE = "opencode-dynamic-workflows.workflow"
+/** 打开路由前的来源路由（Esc 返回用；module 级存单例，路由同时只有一个实例） */
+let workflowReturnRoute: { name: string; params?: Record<string, unknown> } | null = null
+/** 路由内选中节点（solid signal，跨副本闭环在本文件内） */
+const [selectedNode, setSelectedNode] = createSignal<string | null>(null)
+/** 路由键位层 disposer（焦点作用域，target 失焦即失效；离开路由时主动清，防悬挂） */
+let disposeNavLayer: (() => void) | undefined
 
 /** 节点状态图标与主题色调（几何符号非 emoji；照搬 subagents-view 的图标语义） */
 function getNodeMeta(status: WorkflowNode["status"]): { icon: string; tone: "success" | "warning" | "error" | "muted" } {
@@ -192,7 +204,12 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
               const meta = getNodeMeta(row.node.status)
               return (
                 <box flexDirection="column">
-                  <box flexDirection="row">
+                  {/* MVP-2：带 sessionId 的节点可点击进入子会话（sidebar 无键盘逐节点选中机制，鼠标为准；
+                      Enter 导航在 workflow 全屏路由里，需 api.keymap 目标作用域） */}
+                  <box
+                    flexDirection="row"
+                    onMouseDown={row.node.sessionId ? () => props.api.route.navigate("session", { sessionID: row.node.sessionId }) : undefined}
+                  >
                     <box width={2}>
                       <text fg={toneColor(props.api, meta.tone)}>{meta.icon} </text>
                     </box>
@@ -224,6 +241,141 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
   )
 }
 
+/** 全屏路由内节点行：比 sidebar 多展示 tokens 与进入标记 */
+function routeNodeLine(node: WorkflowNode): string {
+  const parts = [nodeLine(node)]
+  if (node.tokens !== undefined) parts.push(`${node.tokens} tok`)
+  if (node.sessionId) parts.push("[Enter 进入]")
+  return parts.join(" · ")
+}
+
+function navigateBack(api: TuiPluginApi): void {
+  disposeNavLayer?.()
+  disposeNavLayer = undefined
+  const back = workflowReturnRoute
+  workflowReturnRoute = null
+  if (back?.name === "session" && typeof back.params?.sessionID === "string") {
+    api.route.navigate("session", { sessionID: back.params.sessionID })
+    return
+  }
+  api.route.navigate("home")
+}
+
+/** /workflow 全屏路由视图（MVP-3）：j/k 上下选择，Enter 进子会话，Esc 返回。
+ *  键位经 focus 作用域层接管：box 可聚焦并抢焦点，绑定只在本元素聚焦时生效，
+ *  不与全局/base 模式键冲突（diff-viewer 同款 keymap 机制，外部插件无 useBindings 跨副本） */
+function RouteView(props: { api: TuiPluginApi; sessionID?: string }) {
+  const theme = () => props.api.theme.current
+  const progress = props.sessionID
+    ? getOrCreateProgress(props.api, props.sessionID, props.api.lifecycle.onDispose)
+    : () => null
+  const rows = () => {
+    const current = progress()
+    return current ? buildSidebarRows(current) : []
+  }
+  const ids = () => selectableNodeIds(rows())
+
+  const move = (delta: number) => {
+    const next = moveSelection(ids(), selectedNode(), delta)
+    if (next !== undefined) setSelectedNode(next)
+  }
+  const openSelected = () => {
+    const current = progress()
+    const node = current?.nodes.find((n) => n.id === selectedNode())
+    if (!node?.sessionId) return
+    disposeNavLayer?.()
+    disposeNavLayer = undefined
+    props.api.route.navigate("session", { sessionID: node.sessionId })
+  }
+
+  return (
+    <box
+      position="absolute"
+      left={0}
+      top={0}
+      width="100%"
+      height="100%"
+      flexDirection="column"
+      backgroundColor={theme().background}
+      paddingTop={1}
+      paddingLeft={2}
+      paddingRight={2}
+      ref={(el: Renderable) => {
+        // 抢焦点 + 注册 focus 作用域键位层（进入路由即接管键盘）
+        el.focusable = true
+        el.focus()
+        disposeNavLayer?.()
+        disposeNavLayer = props.api.keymap.registerLayer({
+          target: el,
+          targetMode: "focus",
+          commands: [
+            { name: "workflow.nav.up", run: () => move(-1) },
+            { name: "workflow.nav.down", run: () => move(1) },
+            { name: "workflow.nav.open", run: () => openSelected() },
+            { name: "workflow.nav.back", run: () => navigateBack(props.api) },
+          ],
+          bindings: [
+            { key: "up,k", cmd: "workflow.nav.up", desc: "Previous agent" },
+            { key: "down,j", cmd: "workflow.nav.down", desc: "Next agent" },
+            { key: "enter", cmd: "workflow.nav.open", desc: "Open agent session" },
+            { key: "escape,q", cmd: "workflow.nav.back", desc: "Back" },
+          ],
+        })
+      }}
+    >
+      <box flexDirection="row" gap={1} paddingBottom={1}>
+        <text fg={theme().text}>
+          <b>Workflow</b> {progress()?.name ?? "-"}
+        </text>
+        <Show when={progress()}>
+          <text fg={theme().textMuted}>
+            {progress()!.status} · {progress()!.completed}/{progress()!.total} done
+            {progress()!.running > 0 ? ` · ${progress()!.running} running` : ""}
+            {progress()!.failed > 0 ? ` · ${progress()!.failed} failed` : ""}
+          </text>
+        </Show>
+      </box>
+      <For each={rows()}>
+        {(row) => {
+          if (row.kind === "phase") {
+            return (
+              <box paddingTop={1}>
+                <text fg={theme().textMuted}>{row.title}</text>
+              </box>
+            )
+          }
+          const meta = getNodeMeta(row.node.status)
+          const selected = selectedNode() === row.node.id
+          return (
+            <box flexDirection="row" backgroundColor={selected ? theme().backgroundPanel : undefined}>
+              <box width={2}>
+                <text fg={selected ? theme().text : theme().textMuted}>{selected ? "▸ " : "  "}</text>
+              </box>
+              <box width={2}>
+                <text fg={toneColor(props.api, meta.tone)}>{meta.icon} </text>
+              </box>
+              <box flexGrow={1}>
+                <text fg={toneColor(props.api, meta.tone)} wrapMode="word">
+                  {routeNodeLine(row.node)}
+                </text>
+              </box>
+            </box>
+          )
+        }}
+      </For>
+      <Show when={!progress()}>
+        <box paddingTop={1}>
+          <text fg={theme().textMuted}>当前不在会话中打开，或该会话还没有 workflow 运行记录</text>
+        </box>
+      </Show>
+      <box flexGrow={1} />
+      <box paddingTop={1}>
+        <text fg={theme().textMuted}>j/k 上下选择 · Enter 进入子会话 · Esc 返回</text>
+      </box>
+    </box>
+  )
+}
+
 const tui: TuiPlugin = async (api) => {
   api.slots.register({
     order: 350, // 内置 LSP(300) 之后、Todo(400) 之前
@@ -232,6 +384,38 @@ const tui: TuiPlugin = async (api) => {
         return <View api={api} session_id={props.session_id} />
       },
     },
+  })
+
+  // MVP-3：workflow 全屏路由 + 命令面板入口（无绑定的命令层，不占任何全局键）
+  api.route.register([
+    {
+      name: WORKFLOW_ROUTE,
+      render: ({ params }) => (
+        <RouteView api={api} sessionID={typeof params?.sessionID === "string" ? params.sessionID : undefined} />
+      ),
+    },
+  ])
+  api.keymap.registerLayer({
+    commands: [
+      {
+        name: "workflow.view.open",
+        title: "Open workflow view",
+        slashName: "workflow",
+        category: "Workflow",
+        namespace: "palette",
+        run() {
+          const current = api.route.current
+          const sessionID = current.name === "session" ? current.params?.sessionID : undefined
+          workflowReturnRoute =
+            current.name === "session"
+              ? { name: "session", params: current.params as Record<string, unknown> | undefined }
+              : current.name === "home"
+                ? { name: "home" }
+                : null
+          api.route.navigate(WORKFLOW_ROUTE, sessionID ? { sessionID } : undefined)
+        },
+      },
+    ],
   })
 }
 
