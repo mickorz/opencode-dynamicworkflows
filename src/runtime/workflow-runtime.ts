@@ -266,6 +266,10 @@ export async function runWorkflow<T = unknown>(
                 record.tokens = (record.tokens ?? 0) + (usage.total ?? 0)
                 record.cost = (record.cost ?? 0) + (usage.cost ?? 0)
               },
+              onSessionCreated: (sessionId) => {
+                record.sessionId = sessionId
+                options.onAgentUpdate?.(record)
+              },
             }
             const value = await withTimeout(agentRunner.run(effectivePrompt, runOptions), timeout, label, () =>
               attemptController.abort(),

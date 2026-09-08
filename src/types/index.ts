@@ -28,6 +28,8 @@ export interface AgentRecord {
   /** resume 时从 journal 免费回放（未真实调 LLM） */
   replayed?: boolean
   model?: string
+  /** 本次调用的子会话 ID（adapter 建会话后立即回填；F-20 TUI 进子会话用；journal 回放的 agent 无此字段） */
+  sessionId?: string
 }
 
 /** workflow 脚本 meta 信封 */

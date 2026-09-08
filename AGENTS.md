@@ -21,6 +21,15 @@ API 在已安装的 `@opencode-ai/plugin` / `@opencode-ai/sdk` 类型中找不�
 - 禁止使用 v2 API：`Plugin.define`、`@opencode-ai/plugin/v2/*` 导入、`ctx.storage`、`session.next.*` 事件
 - 禁止 v1/v2 混用
 
+## TUI 插件（v1 双形态，F-20）
+
+- 本包双 entrypoint：`exports["."]`（server，default export `{ id, server }`）与 `exports["./tui"]`（TUI，default export `{ id, tui }`）；二者经 readV1Plugin 互斥加载。`@opencode-ai/plugin/tui` 是 v1 包内合法导出，不是 v2，不引入 Plugin.define / ctx.storage / session.next.*
+- `src/tui/` 允许 import `@opencode-ai/plugin/tui`、`@opentui/solid`、`solid-js`；禁止 import server 侧 runtime/adapters/tools（TUI 只消费 ToolPart.metadata，不执行 workflow）
+- 所有 solid-js 用法集中在 `src/tui/plugin.tsx` 单文件（多文件会解析出不同 solid-js 实例，信号失效）；纯数据逻辑拆 ts（如 workflow-store.ts）
+- UI 依赖声明为 dependencies + solid-js 精确 pin（peer 语义会破坏 bootstrap 的 require.resolve 自定位，踩双实例坑）
+- 主 tsconfig 排除 src/tui；TUI 侧用 tsconfig.tui.json 仅 typecheck（无 build，bun 直接加载 TSX 源码）
+- `ctx.metadata` 仅在 tool 执行期内推送；tool 返回后闭包过期，晚到推送会把 part 从 completed 翻回 running（session/prompt.ts:333-341 与 399-411 的闭包差异）。终态必须随 tool 返回值携带（result.metadata 覆盖 state）
+
 ## 已核实 API 事实（防止跑偏，均有本地源码证据）
 
 1. structured output 的 prompt body 字段名是 **`format`**（非 outputFormat），枚举 `"text" | "json_schema"`，结构化结果落在响应 `info.structured`（session/prompt.ts:1499-1521、schema/src/v1/session.ts:65-79）
@@ -35,7 +44,7 @@ API 在已安装的 `@opencode-ai/plugin` / `@opencode-ai/sdk` 类型中找不�
 
 ## 架构约束
 
-- OpenCode 特定 API 只允许出现在 `src/adapters/`、`src/plugin/`、`src/tools/`
+- OpenCode 特定 API 只允许出现在 `src/adapters/`、`src/plugin/`、`src/tools/`、`src/tui/`（后两者为 F-20 双形态扩展，见上文 TUI 插件节）
 - `src/runtime/` **禁止** import `@opencode-ai/plugin` / `@opencode-ai/sdk` / OpenCode client —— Runtime 必须宿主无关
 - 正确链路：`runtime → AgentSessionRunner 接口 → OpenCodeSessionAdapter → client.session.*`
 - 错误示例：`runtime 里直接调 ctx.client.session.create()`

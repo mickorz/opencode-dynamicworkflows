@@ -4,8 +4,11 @@ import { OpenCodeSessionAdapter } from "../adapters/opencode-session-adapter.js"
 import { JournalStore } from "../persistence/journal.js"
 import { loadModelTiers } from "../agent/model-tiers.js"
 import { renderWorkflowResult } from "./render.js"
+import { buildProgressMetadata, type WorkflowProgressStatus } from "./workflow-progress.js"
+import { buildRunSnapshot, cleanupRunSnapshots, RUN_SNAPSHOT_HEARTBEAT_MS, tryWriteRunSnapshot } from "./run-snapshot.js"
+import { parseWorkflowScript } from "../runtime/vm.js"
 import { BackgroundRunManager } from "./background-runs.js"
-import type { JournalEntry } from "../types/index.js"
+import type { JournalEntry, AgentRecord } from "../types/index.js"
 
 const DESCRIPTION = [
   "运行动态工作流：执行一段 JavaScript 编排脚本，通过 agent() 将任务分发给子代理（独立会话）并行执行，",
@@ -86,6 +89,32 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
         }
       }
       let journaledRunId: string | undefined
+      // F-20 实时通道：runId 提前生成，脚本名宽松解析（仅展示用）
+      const runId = input.resumeFromRunId ?? `run-${Date.now().toString(36)}`
+      let workflowName: string | undefined
+      try {
+        workflowName = parseWorkflowScript(script).meta.name
+      } catch {
+        // 脚本非法的规范错误由 runWorkflow 抛出；此处只取展示名
+      }
+      // 镜像通道（TUI实时通道优化方案）：onAgentUpdate 维护 records 并写运行快照，TUI 每秒轮询渲染实时树。
+      // 执行期 context.metadata 推送经实证不产生事件（需求文档 9.6/9.8），不再调用；
+      // 完成态仍走 tool 返回值 metadata（下方 return，C 通道兜底）。
+      cleanupRunSnapshots(context.directory, context.sessionID)
+      const progressRecords: AgentRecord[] = []
+      const writeTerminalSnapshot = (records: ReadonlyArray<AgentRecord>, status: WorkflowProgressStatus) => {
+        tryWriteRunSnapshot(
+          context.directory,
+          buildRunSnapshot({
+            runId,
+            parentSessionId: context.sessionID,
+            name: workflowName,
+            status,
+            records,
+            time: Date.now(),
+          }),
+        )
+      }
       const modelTiers = loadModelTiers({ projectDir: context.directory })
       const resolveTier = (tier: string) => modelTiers[tier]
       // checkpoint 人工确认通道：ToolContext.ask 的允许/拒绝映射为 true/false（拒绝不抛错，脚本可分支处理）
@@ -130,6 +159,9 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
       if (context.abort.aborted) runController.abort()
       else context.abort.addEventListener("abort", onAbort)
 
+      // 心跳：agent 状态迁移间隔可达数十秒（并行期无迁移），补时间戳防 TUI 误判失联
+      const heartbeat = setInterval(() => writeTerminalSnapshot(progressRecords, "running"), RUN_SNAPSHOT_HEARTBEAT_MS)
+
       try {
         const result = await runWorkflow(script, {
           agent: adapter,
@@ -142,26 +174,53 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
           resolveTier,
           confirm,
           cwd: context.directory,
-          runId: input.resumeFromRunId,
+          runId,
           resumeJournal,
           onAgentJournal,
+          onAgentUpdate: (record) => {
+            const index = progressRecords.findIndex((r) => r.id === record.id)
+            if (index >= 0) progressRecords[index] = record
+            else progressRecords.push(record)
+            writeTerminalSnapshot(progressRecords, "running")
+          },
         })
         // 结构化降级可观测性：附在日志尾部（P1-2）
         for (const note of degradeNotes) result.logs.push(note)
-        return renderWorkflowResult(result)
+        // 完成态双落盘：镜像快照（B 通道终态）与 tool 返回值 metadata（C 通道兜底，
+        // prompt.ts 会用 result.metadata 覆盖 state，不带的话旧会话重开时 sidebar 树消失）
+        writeTerminalSnapshot(result.agents, "completed")
+        const rendered = renderWorkflowResult(result)
+        return {
+          ...rendered,
+          metadata: {
+            ...rendered.metadata,
+            ...buildProgressMetadata({ runId, name: workflowName, status: "completed", records: result.agents }),
+          },
+        }
       } catch (error) {
         if (runController.signal.aborted || (error instanceof Error && /abort/i.test(error.message))) {
           // 用户中断：返回已完成的进度摘要而非抛错（平台会把 tool part 标记为 interrupted）
           const resumeHint = journaledRunId
             ? `\n已完成的 agent 已记入 journal，续跑请传 resumeFromRunId="${journaledRunId}"。`
             : ""
+          writeTerminalSnapshot(progressRecords, "aborted")
           return {
             title: "workflow",
             output: `工作流被用户中断：${error instanceof Error ? error.message : String(error)}${resumeHint}`,
+            // 中断也带终态快照：sidebar 显示中止态而非永久 running
+            metadata: buildProgressMetadata({
+              runId,
+              name: workflowName,
+              status: "aborted",
+              records: progressRecords,
+            }),
           }
         }
+        // 失败终态：异常上抛前写一次终态快照，TUI 不至于永久显示 running
+        writeTerminalSnapshot(progressRecords, "failed")
         throw error
       } finally {
+        clearInterval(heartbeat)
         context.abort.removeEventListener("abort", onAbort)
       }
     },

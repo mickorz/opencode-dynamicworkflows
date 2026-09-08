@@ -223,7 +223,7 @@ test("status 进度含进行中 agent：running 计入分母（修复进度永�
         concurrency: 3,
       },
       makeToolContext(dir),
-    )) as { metadata: { runId: string } }
+    )) as unknown as { metadata: { runId: string } }
     runId = started.metadata.runId
 
     // 3 个子会话都派发并挂起

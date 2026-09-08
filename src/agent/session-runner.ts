@@ -30,6 +30,8 @@ export interface AgentRunOptions {
   directory?: string
   /** Adapter 从 prompt 响应提取用量后回调 */
   onUsage?: (usage: AgentUsage) => void
+  /** Adapter 建完子会话后立即回调（F-20：running 态就能拿到 sessionId 供 TUI 导航） */
+  onSessionCreated?: (sessionId: string) => void
 }
 
 /** 最小 runner 接口：Runtime 只认这个形状 */

@@ -24,6 +24,12 @@ import { OpenCodeSessionAdapter } from "../adapters/opencode-session-adapter.js"
 import { JournalStore } from "../persistence/journal.js"
 import { loadModelTiers } from "../agent/model-tiers.js"
 import { renderWorkflowResult } from "./render.js"
+import {
+  buildRunSnapshot,
+  cleanupRunSnapshots,
+  RUN_SNAPSHOT_HEARTBEAT_MS,
+  tryWriteRunSnapshot,
+} from "./run-snapshot.js"
 import type { AgentRecord } from "../types/index.js"
 
 export type BackgroundRunStatus = "running" | "completed" | "failed" | "aborted"
@@ -79,6 +85,8 @@ export class BackgroundRunManager {
       records: [],
       logs: [],
     }
+    // 镜像通道（TUI实时通道优化方案）：新 run 启动前清理同会话终态快照
+    cleanupRunSnapshots(deps.directory, deps.parentSessionId)
     const controller = new AbortController()
     this.runs.set(runId, { info, controller })
     this.prune()
@@ -95,6 +103,20 @@ export class BackgroundRunManager {
     info: BackgroundRunInfo,
     controller: AbortController,
   ): Promise<void> {
+    // 镜像通道：后台 run 唯一的可视化来源（无 tool 返回值 metadata），实时与终态都写这里
+    const writeSnapshot = (status: BackgroundRunStatus) => {
+      tryWriteRunSnapshot(
+        deps.directory,
+        buildRunSnapshot({
+          runId: info.runId,
+          parentSessionId: deps.parentSessionId,
+          name: info.name,
+          status,
+          records: info.records,
+          time: Date.now(),
+        }),
+      )
+    }
     const degradeNotes: string[] = []
     const adapter = new OpenCodeSessionAdapter({
       client: deps.client,
@@ -108,6 +130,8 @@ export class BackgroundRunManager {
     const journalStore = new JournalStore(deps.directory)
     const modelTiers = loadModelTiers({ projectDir: deps.directory })
 
+    // 心跳：agent 状态迁移间隔可达数十秒（并行期无迁移），补时间戳防 TUI 误判失联
+    const heartbeat = setInterval(() => writeSnapshot("running"), RUN_SNAPSHOT_HEARTBEAT_MS)
     try {
       const result = await runWorkflow(input.script, {
         agent: adapter,
@@ -135,10 +159,12 @@ export class BackgroundRunManager {
           const index = info.records.findIndex((r) => r.id === record.id)
           if (index >= 0) info.records[index] = record
           else info.records.push(record)
+          writeSnapshot("running")
         },
       })
       info.status = "completed"
       info.logs.push(...result.logs, ...degradeNotes)
+      writeSnapshot("completed")
 
       // 结果回传：渲染文本作为一条消息发回主会话，Main Agent 接力汇报
       const rendered = renderWorkflowResult(result)
@@ -166,6 +192,7 @@ export class BackgroundRunManager {
         `后台工作流${info.status === "aborted" ? "被停止" : "失败"}：${info.error}。已完成的 agent 已记入 journal，可传 resumeFromRunId="${info.runId}" 续跑。`,
       )
       // 失败也回传主会话（用户需要知道）
+      writeSnapshot(info.status)
       try {
         info.delivered = true
         await deps.client.session.prompt({
@@ -178,6 +205,7 @@ export class BackgroundRunManager {
         // 主会话可能已关闭；状态仍可在 workflow_control 里查到
       }
     } finally {
+      clearInterval(heartbeat)
       info.endedAt = Date.now()
     }
   }

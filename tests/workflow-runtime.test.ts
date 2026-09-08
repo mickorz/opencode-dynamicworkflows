@@ -300,3 +300,29 @@ await parallel([() => agent('a'), () => agent('b')])`,
     /校验失败/,
   )
 })
+
+test("onSessionCreated 在 running 态回填 sessionId 并触发 onAgentUpdate（F-20）", async () => {
+  const updates: Array<{ status: string; sessionId?: string }> = []
+  const runner: AgentSessionRunner = {
+    async run(prompt, options) {
+      // 模拟 adapter：建会话后立即回传
+      options?.onSessionCreated?.(`sess-${prompt}`)
+      return `echo:${prompt}`
+    },
+  }
+  const result = await runWorkflow(
+    `export const meta = { name: 'sessionid' }
+return await agent('task-a')`,
+    {
+      agent: runner,
+      onAgentUpdate: (record) => updates.push({ status: record.status, sessionId: record.sessionId }),
+    },
+  )
+  // running 态就有 sessionId（TUI 可在运行中进入子会话围观），终态记录同样保留
+  assert.deepEqual(updates, [
+    { status: "running", sessionId: undefined },
+    { status: "running", sessionId: "sess-task-a" },
+    { status: "ok", sessionId: "sess-task-a" },
+  ])
+  assert.equal(result.agents[0].sessionId, "sess-task-a")
+})

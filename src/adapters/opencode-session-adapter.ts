@@ -116,6 +116,8 @@ export class OpenCodeSessionAdapter implements AgentSessionRunner {
       throw new Error(`session create 失败: ${JSON.stringify(created.error)}`)
     }
     const sessionId = created.data.id
+    // 建会话即回传：runtime 据此在 running 态就把 sessionId 写进 AgentRecord（F-20）
+    options?.onSessionCreated?.(sessionId)
 
     // abort 级联：signal 触发时取消这个子会话（照抄 task.ts 的接线范式，简化为单会话粒度）
     const abortSession = () => {

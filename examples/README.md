@@ -5,6 +5,8 @@
 ```
 examples/sample-project/          # 测试工程（在这里启动 OpenCode，一切自包含）
 ├─ opencode.json                  # 已配好 plugin 与 skills.paths（相对路径指向上级仓库）
+├─ tui.json                       # TUI 侧插件配置（F-20：sidebar 实时树，与 opencode.json 分离）
+├─ TUI测试指南.md                 # F-20 MVP-1 前台通道验收指南
 ├─ docs/                          # 10 个标准验收集 mdx（拷贝自 OpenCode 官方文档，MIT）
 └─ scripts/                       # 可直接让 Main Agent 读取执行的 workflow 脚本
    ├─ smoke-test.js               # 冒烟：3 个 agent
@@ -14,7 +16,9 @@ examples/sample-project/          # 测试工程（在这里启动 OpenCode，�
    ├─ quality-dsl-test.js         # P1 质量 DSL：judgePanel + verify + checkpoint
    ├─ tier-fallback-test.js       # P1 tier 回退告警演示
    ├─ worktree-test.js            # P1 worktree 隔离演示
-   └─ background-test.js          # P2 后台运行演示（配合 background: true）
+   ├─ background-test.js          # P2 后台运行演示（配合 background: true）
+   ├─ tui-progress-test.js        # F-20 实时树验收：4 并行 + 1 汇总（前台）
+   └─ tui-failure-test.js         # F-20 失败态验收：全部立即超时
 ```
 
 ## 使用步骤

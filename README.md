@@ -39,6 +39,16 @@ npm run build
 
 > `plugin` 指向本仓库根目录（读 `dist/index.js`）；`skills.paths` 把 workflow-authoring skill 挂进 OpenCode（skill 同时会成为一个 command），Main Agent 写脚本前会按需加载。
 
+TUI 侧（sidebar 实时 workflow 树，F-20）需要另配 `tui.json`（全局 `~/.config/opencode/tui.json` 或项目级，与 opencode.json 分离，重启后生效）：
+
+```json
+{
+  "plugin": ["<克隆目录的绝对路径>"]
+}
+```
+
+> 同一包路径，TUI 进程经 `exports["./tui"]` 加载 `src/tui/index.tsx`（bun 直接读 TSX 源码，无需 build）。配置后 ctrl+p → Plugins 应看到 `opencode-dynamic-workflows` 在 TUI 侧 active。前台 workflow 运行期间 sidebar 出现 Dynamic Workflow 实时树。
+
 ## 验证安装
 
 在 OpenCode 中对 Main Agent 说"用 workflow 并行分析 XX 目录下 10 个文件并汇总"，确认：

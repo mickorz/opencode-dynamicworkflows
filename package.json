@@ -5,19 +5,29 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./tui": "./src/tui/index.tsx"
+  },
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p tsconfig.tui.json",
     "test": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
-    "acorn": "^8.16.0"
+    "@opentui/solid": "^0.4.5",
+    "acorn": "^8.16.0",
+    "solid-js": "1.9.12"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": "1.18.27"
   },
   "devDependencies": {
     "@opencode-ai/plugin": "1.18.27",
+    "@opentui/core": "^0.4.5",
     "@types/acorn": "^6.0.0",
     "@types/node": "^22.0.0",
     "tsx": "^4.19.0",
