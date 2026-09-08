@@ -187,10 +187,13 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
 
   return (
     <Show when={progress()}>
-      <box onMouseDown={() => setCollapsed((current) => !current)}>
-        <text fg={theme().text}>
-          <b>{collapsed() ? "▶" : "▼"} Dynamic Workflow</b> {headerLine(progress()!)}
-        </text>
+      <box>
+        {/* 折叠开关只挂标题行：挂外层时节点点击导航后事件冒泡会把树折起来（返回主会话看到的就是折叠态） */}
+        <box onMouseDown={() => setCollapsed((current) => !current)}>
+          <text fg={theme().text}>
+            <b>{collapsed() ? "▶" : "▼"} Dynamic Workflow</b> {headerLine(progress()!)}
+          </text>
+        </box>
         <Show when={!collapsed()}>
           <For each={rows()}>
             {(row) => {
