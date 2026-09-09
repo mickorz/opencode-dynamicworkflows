@@ -148,7 +148,7 @@ export function mergePluginEntry(path: string, entry: string): boolean {
 /**
  * 从配置中移除本插件相关条目：
  * plugin 数组中匹配 isPluginEntry 的元素；skills.paths 中匹配 isSkillPathEntry 的元素。
- * skills.paths 清空后保留空数组（最小侵入，不动用户结构）。返回是否发生了修改。
+ * 数组清空后连键一起移除（避免留下 plugin: [] 空壳，配合 isShellConfig 整文件删除）。返回是否发生了修改。
  */
 export function removePluginEntries(path: string): boolean {
   const loaded = readJsonc(path)
@@ -161,7 +161,8 @@ export function removePluginEntries(path: string): boolean {
   if (Array.isArray(plugin)) {
     const next = plugin.filter((item) => !isPluginEntry(item))
     if (next.length !== plugin.length) {
-      text = applyEdits(text, modify(text, ["plugin"], next, { formattingOptions: FORMAT }))
+      // modify 传 undefined 即删除该属性
+      text = applyEdits(text, modify(text, ["plugin"], next.length > 0 ? next : undefined, { formattingOptions: FORMAT }))
       changed = true
     }
   }
@@ -171,13 +172,35 @@ export function removePluginEntries(path: string): boolean {
   if (Array.isArray(paths)) {
     const next = paths.filter((item) => !isSkillPathEntry(item))
     if (next.length !== paths.length) {
-      text = applyEdits(text, modify(text, ["skills", "paths"], next, { formattingOptions: FORMAT }))
+      text = applyEdits(text, modify(text, ["skills", "paths"], next.length > 0 ? next : undefined, { formattingOptions: FORMAT }))
       changed = true
     }
   }
 
   if (!changed) return false
   return writeWithBackup(path, original, text)
+}
+
+/**
+ * 配置移除条目后是否只剩空壳（$schema 与空数组/空对象）。
+ * 安装器从零创建的配置（如 tui.json）卸载后会退化成这种骨架，留着只会困惑，卸载流程据此整文件删除。
+ */
+export function isShellConfig(path: string): boolean {
+  const loaded = readJsonc(path)
+  if (!loaded) return false
+  return Object.keys(loaded.data).every((key) => {
+    if (key === "$schema") return true
+    const value = loaded.data[key]
+    if (Array.isArray(value)) return value.length === 0
+    if (value !== null && typeof value === "object") return Object.keys(value).length === 0
+    return false
+  })
+}
+
+/** 整体删除配置文件与其 .bak 备份（不存在则静默跳过） */
+export function removeConfigWithBackup(path: string): void {
+  rmSync(path, { force: true })
+  rmSync(`${path}.bak`, { force: true })
 }
 
 function ensureLoaded(path: string): LoadedConfig {

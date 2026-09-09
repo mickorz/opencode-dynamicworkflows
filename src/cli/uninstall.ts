@@ -4,11 +4,14 @@
  * 流程（方案第 4 节，用户核心需求）：
  * 检测三种安装方式与 skill 拷贝的存在性 → 零种提示退出 / 一种直接选中 /
  * 多种 multiselect 勾选（hint 展示命中证据）→ 确认 → 逐项移除配置条目
+ * → 空壳配置（安装器从零创建的骨架）整文件删除，本次改动过的配置 .bak 一并清理
  * → 清理对应 skill 拷贝目录（逐个 confirm，防用户本地改动丢失）
- * → 清理遗留 skills.paths → locked 追加询问是否 npm uninstall
+ * → locked 模式直接 npm uninstall（与安装的 npm install 对称，卸载即卸干净）
+ * → 清理遗留 skills.paths
  */
 
 import { spawnSync } from "node:child_process"
+import { rmSync } from "node:fs"
 import * as p from "@clack/prompts"
 
 import {
@@ -17,9 +20,11 @@ import {
   globalOpenCodeJsonPath,
   globalTuiJsonPath,
   globalSkillsTargetDir,
+  isShellConfig,
   projectOpenCodeJsonPath,
   projectTuiJsonPath,
   projectSkillsTargetDir,
+  removeConfigWithBackup,
   removePluginEntries,
   removeSkillTarget,
   skillTargets,
@@ -104,9 +109,9 @@ export async function runUninstall(): Promise<void> {
     planLines.push(`清理 skill  ${item.skillBaseDir}/{workflow-authoring,workflow-optimize}`)
   }
   if (selected.some((item) => item.kind === "locked")) {
-    planLines.push(`可选    npm uninstall ${PKG_NAME}（稍后询问）`)
+    planLines.push(`执行    npm uninstall ${PKG_NAME}（清理 package.json 依赖与 node_modules）`)
   }
-  p.note(planLines.join("\n"), "将执行以下卸载（配置文件会留 .bak 备份）")
+  p.note(planLines.join("\n"), "将执行以下卸载")
 
   if (!unwrap(await p.confirm({ message: "开始卸载" }))) {
     p.outro("已取消")
@@ -127,8 +132,27 @@ export async function runUninstall(): Promise<void> {
       }
     }
     s.start("移除配置条目")
-    for (const file of configFiles) removePluginEntries(file)
-    s.stop(`已处理 ${configFiles.size} 个配置文件（含遗留 skills.paths 清理）`)
+    const changedFiles: string[] = []
+    for (const file of configFiles) {
+      if (removePluginEntries(file)) changedFiles.push(file)
+    }
+    // 空壳配置（只剩 $schema 骨架，安装器从零创建的）整文件删除；本次改动过的文件 .bak 一并清理，还原安装前状态
+    const shellRemoved: string[] = []
+    for (const file of changedFiles) {
+      if (isShellConfig(file)) {
+        removeConfigWithBackup(file)
+        shellRemoved.push(file)
+      } else {
+        rmSync(`${file}.bak`, { force: true })
+      }
+    }
+    s.stop(
+      changedFiles.length === 0
+        ? "配置条目无需变更"
+        : shellRemoved.length > 0
+          ? `已清理 ${changedFiles.length} 个配置文件，其中 ${shellRemoved.length} 个空壳配置已整文件删除`
+          : `已清理 ${changedFiles.length} 个配置文件（含遗留 skills.paths 清理）`,
+    )
 
     // 2. skill 目录清理（逐个 confirm，防用户本地改动丢失）
     for (const item of selected) {
@@ -150,20 +174,12 @@ export async function runUninstall(): Promise<void> {
       }
     }
 
-    // 3. 锁定模式：询问是否顺带删除项目依赖
+    // 3. 锁定模式：npm uninstall（与安装的 npm install 对称，不再询问；失败时 node_modules 仍在，重跑卸载器会再次检测到）
     if (selected.some((item) => item.kind === "locked")) {
-      const alsoNpm = unwrap(
-        await p.confirm({
-          message: `顺带执行 npm uninstall ${PKG_NAME}（从项目 node_modules 删除）`,
-          initialValue: false,
-        }),
-      )
-      if (alsoNpm) {
-        s.start("npm uninstall")
-        const res = spawnSync(`npm uninstall ${PKG_NAME}`, { cwd, stdio: "inherit", shell: true })
-        if (res.status !== 0) throw new Error("npm uninstall 失败，可稍后手动执行")
-        s.stop("项目依赖已移除")
-      }
+      s.start("npm uninstall")
+      const res = spawnSync(`npm uninstall ${PKG_NAME}`, { cwd, stdio: "inherit", shell: true })
+      if (res.status !== 0) throw new Error("npm uninstall 失败，可稍后手动执行")
+      s.stop("已从 package.json 与 node_modules 移除依赖")
     }
   } catch (error) {
     s.stop("卸载失败")

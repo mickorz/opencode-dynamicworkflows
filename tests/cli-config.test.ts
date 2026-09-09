@@ -15,8 +15,10 @@ import {
   PKG_IN_NODE_MODULES,
   PLUGIN_SPEC_LOCAL,
   isPluginEntry,
+  isShellConfig,
   isSkillPathEntry,
   mergePluginEntry,
+  removeConfigWithBackup,
   removePluginEntries,
   detectInstalled,
   copySkill,
@@ -137,6 +139,46 @@ test("用例9 skill 拷贝到临时目录验证目录树完整", () => {
 
   assert.equal(skillTargetExists(authoring), true)
   assert.ok(existsSync(join(authoring.destDir, "examples", "a.js")))
+})
+
+test("卸载残留修复 清空后连键删除且空壳配置可整文件删除", () => {
+  // 模拟安装器从零创建的 tui.json：只有我们写入的 plugin 条目
+  mergePluginEntry(tuiJson(), PKG_NAME)
+  assert.equal(removePluginEntries(tuiJson()), true)
+  const data = JSON.parse(readFileSync(tuiJson(), "utf8"))
+  // plugin 条目清空后键整体消失，不留 plugin: [] 空壳
+  assert.equal("plugin" in data, false)
+  assert.equal(isShellConfig(tuiJson()), true)
+  // .bak 备份已由移除动作生成，整文件删除时连 .bak 一起清掉
+  assert.equal(existsSync(`${tuiJson()}.bak`), true)
+  removeConfigWithBackup(tuiJson())
+  assert.equal(existsSync(tuiJson()), false)
+  assert.equal(existsSync(`${tuiJson()}.bak`), false)
+})
+
+test("卸载残留修复 有用户内容的配置不判为空壳且保留 skills 空对象场景", () => {
+  // 用户自己的 opencode.json 有其他内容，卸载后仅删条目，文件保留且不判空壳
+  writeFileSync(
+    openCodeJson(),
+    JSON.stringify({ $schema: "https://opencode.ai/config.json", model: "gpt-4o", plugin: [PKG_NAME] }),
+    "utf8",
+  )
+  removePluginEntries(openCodeJson())
+  const data = JSON.parse(readFileSync(openCodeJson(), "utf8"))
+  assert.equal(data.model, "gpt-4o")
+  assert.equal("plugin" in data, false)
+  assert.equal(isShellConfig(openCodeJson()), false)
+
+  // skills.paths 被清空时连 paths 键消失；skills 对象为空时也算空壳（仅空对象值）
+  writeFileSync(
+    tuiJson(),
+    JSON.stringify({ $schema: "https://opencode.ai/config.json", skills: { paths: [`node_modules/${PKG_NAME}/skills`] } }),
+    "utf8",
+  )
+  removePluginEntries(tuiJson())
+  const data2 = JSON.parse(readFileSync(tuiJson(), "utf8"))
+  assert.equal(data2.skills.paths, undefined)
+  assert.equal(isShellConfig(tuiJson()), true)
 })
 
 test("补充 detectInstalled 识别包名 锁定 全局三种方式", () => {

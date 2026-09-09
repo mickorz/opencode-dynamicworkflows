@@ -1,6 +1,6 @@
 {
   "name": "@mickorz/opencode-dynamic-workflows",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "OpenCode 动态工作流插件：Main Agent 生成 JS Workflow，Runtime 并行调度子会话，仅返回汇总结果",
   "type": "module",
   "license": "MIT",
@@ -30,7 +30,6 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.8.0",
-    "@mickorz/opencode-dynamic-workflows": "^0.1.0",
     "@opentui/solid": "^0.4.5",
     "acorn": "^8.16.0",
     "jsonc-parser": "^3.3.1",
