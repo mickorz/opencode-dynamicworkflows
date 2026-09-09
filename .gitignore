@@ -9,6 +9,11 @@ Docs/
 # workflow 运行时产物（journal、运行状态）
 .opencode-workflows/
 
+# 手工验收工程的运行时状态与本地测试脚本（不入库）
+examples/sample-project/.opencode/
+examples/sample-project/.xflow/
+examples/sample-project/scripts/spec-clarify-workflow*
+
 # 日志与系统文件
 *.log
 .DS_Store
