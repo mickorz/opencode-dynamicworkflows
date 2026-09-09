@@ -17,7 +17,23 @@ OpenCode 动态工作流插件：Main Agent 生成一段 JavaScript 编排脚本
 
 ## 安装
 
-无需手动安装。OpenCode 启动时自动从 npm 拉包并缓存到 `~/.cache/opencode/packages/`，只需在配置里声明包名（见下）。手动 `npm install @mickorz/opencode-dynamic-workflows` 仅在需要引用包内 skills 路径时才有必要。
+### 一条命令（推荐）
+
+```powershell
+npx @mickorz/opencode-dynamic-workflows install
+```
+
+交互式选择安装方式（全局 / 当前项目 / 锁定版本），自动完成配置合并与 skill 拷贝，原配置留 .bak 备份。配套命令：
+
+```powershell
+npx @mickorz/opencode-dynamic-workflows update      # 插件本体与 skill 升级到最新
+npx @mickorz/opencode-dynamic-workflows uninstall   # 交互式卸载（先检测存在项再勾选）
+npx @mickorz/opencode-dynamic-workflows doctor      # 环境排查
+```
+
+### 手动配置（供了解原理或 CLI 不可用时）
+
+无需手动安装包：OpenCode 启动时自动从 npm 拉包并缓存到 `~/.cache/opencode/packages/`，只需在配置里声明包名（见下）。手动 `npm install @mickorz/opencode-dynamic-workflows` 仅在需要引用包内 skills 路径时才有必要。
 
 ## 配置
 

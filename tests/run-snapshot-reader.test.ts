@@ -13,14 +13,6 @@ import {
   isStale,
   listSessionSnapshots,
   parseRunSnapshot,
-  toProgress,
-  type RunSnapshotView,
-} from "../src/tui/run-snapshot-reader.js"
-import {
-  RUN_SNAPSHOT_STALE_MS,
-  isStale,
-  listSessionSnapshots,
-  parseRunSnapshot,
   pickAllProgresses,
   toProgress,
   type RunSnapshotView,
