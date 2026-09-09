@@ -1,0 +1,43 @@
+# 打 v* tag 自动发布到 npm
+#
+# 发布流程（本地三步）：
+#   1. 改代码并 commit
+#   2. npm version patch（自动改版本号 + 提交 + 打 tag，如 v0.2.2）
+#   3. git push --follow-tags（tag 推上去即触发本流水线）
+#
+# 前置配置（一次性）：GitHub 仓库 Settings → Secrets and variables → Actions
+# 新增 secret NPM_TOKEN，值为 npmjs.com 的 Access Token（Automation 类型，CI 发布可绕过 2FA）
+
+name: publish
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      # 防手滑：tag 与 package.json 版本不一致直接失败，不发错版本
+      - name: 校验 tag 与 package.json 版本一致
+        run: test "${GITHUB_REF_NAME#v}" = "$(node -p "require('./package.json').version")"
+
+      - run: npm run typecheck
+
+      - run: npm test
+
+      - name: 发布到 npm
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
