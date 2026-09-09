@@ -2,167 +2,118 @@
 
 OpenCode 动态工作流插件：Main Agent 生成一段 JavaScript 编排脚本，由 Runtime 在 VM 沙箱中执行，通过 `agent() / parallel() / pipeline()` 将任务分发给大量独立子会话并行处理，脚本内汇总后仅把最终结果返回主上下文——解决大批量并行任务的主上下文污染问题。
 
-参考并移植自 [pi-dynamic-workflows](https://github.com/QuintinShaw/pi-dynamic-workflows)（MIT），底层适配 OpenCode v1 插件 API（`@opencode-ai/plugin` 1.18.27 锁定）。
+参考并移植自 [pi-dynamic-workflows](https://github.com/QuintinShaw/pi-dynamic-workflows)（MIT），底层适配 OpenCode v1 插件 API。
 
-## 功能（v0.1 最小闭环）
+## 30 秒了解
 
-- `workflow` 自定义 tool：接受 JS 脚本，返回结果 + 每个 agent 的单行摘要与 token 用量（metadata）
-- VM 沙箱：确定性护栏（禁 `Date.now()` / `Math.random()` / `new Date()` / import / require）
-- DSL：`agent(prompt, opts)` / `parallel(thunks)` / `pipeline(items, ...stages)` / `phase(title)` / `log(msg)` / `args`
-- 后台运行：`background: true` 立即返回 runId，完成后结果自动回传会话；`workflow_control` 工具查进度/停止
-- 原生结构化输出：`agent(prompt, { schema })` 直接走 OpenCode `format: json_schema`
-- 并发控制：缺省 `CPU核数-2`，钳制上限 16；`maxAgents` 缺省 1000
-- 超时 / 重试 / abort 级联（Esc 中断主会话会取消所有在飞子会话）
-- 分析类 agent 缺省用内置只读 `explore` 子代理
+**问题**：让 AI 并行分析 20 个文件时，20 个子任务的过程和结果会全部涌入主会话上下文，很快挤爆窗口、拖慢后续对话。
+
+**方案**：你用自然语言提需求 → Main Agent 自动生成一段编排脚本 → 插件在沙箱里执行它，把任务分发给几十个独立子会话并行跑 → 主会话只收到一份汇总结果 + 每个子任务的耗时与 token 统计。运行期间 TUI 侧边栏还有实时进度树：
+
+![TUI 实时工作流树](assets/tui_workflowtree.png)
+
+**你不需要会写代码**。编排脚本由 Main Agent 按内置 skill 自动生成；想深入时再参考 [workflow-authoring DSL 参考](https://github.com/mickorz/opencode-dynamicworkflows/blob/main/skills/workflow-authoring/references/runtime.md)。
+
+## 前提条件
+
+1. **OpenCode v1 已安装**，且配置了可用的 provider/模型（能正常对话）。未安装见 [OpenCode 官方文档](https://opencode.ai/docs/)。
+2. **Node.js 18+ 与 npm**：仅运行安装器（npx）和 npm 操作时需要；插件本体由 OpenCode 内置运行时加载，不依赖本机 Node。
+3. Windows 用户请在 **PowerShell 或 cmd** 中运行 npx 命令（git-bash 下 npm 的 bin 转发有兼容问题）。
 
 ## 安装
 
-### 一条命令（推荐）
+一条命令（在任意目录运行，交互式完成配置合并与 skill 安装，原配置自动留 .bak 备份）：
 
 ```powershell
 npx @mickorz/opencode-dynamic-workflows install
 ```
 
-交互式选择安装方式（全局 / 当前项目 / 锁定版本），自动完成配置合并与 skill 拷贝，原配置留 .bak 备份。配套命令：
+安装完成后**重启 OpenCode** 生效。三种安装方式（全局 / 当前项目 / 锁定版本）的详细说明见 [docs/configuration.md](docs/configuration.md)。
+
+配套命令：
 
 ```powershell
-npx @mickorz/opencode-dynamic-workflows update      # 插件本体与 skill 升级到最新
-npx @mickorz/opencode-dynamic-workflows uninstall   # 交互式卸载（先检测存在项再勾选）
-npx @mickorz/opencode-dynamic-workflows doctor      # 环境排查
+npx @mickorz/opencode-dynamic-workflows update      # 升级到最新
+npx @mickorz/opencode-dynamic-workflows uninstall   # 交互式卸载
+npx @mickorz/opencode-dynamic-workflows doctor      # 环境排查（只读）
 ```
 
-### 手动配置（供了解原理或 CLI 不可用时）
+## 5 分钟快速开始
 
-无需手动安装包：OpenCode 启动时自动从 npm 拉包并缓存到 `~/.cache/opencode/packages/`，只需在配置里声明包名（见下）。手动 `npm install @mickorz/opencode-dynamic-workflows` 仅在需要引用包内 skills 路径时才有必要。
+**第 1 步：验证安装。** 重启 OpenCode 后，对 Main Agent 说：
 
-## 配置
-
-分全局与项目级两层，二选一或叠加（同包同版只加载一次，不冲突）。改完配置需重启 OpenCode。
-
-### 方式一：全局配置（推荐，一次配置所有项目生效）
-
-`~/.config/opencode/opencode.json`（server 侧）：
-
-```json
-{
-  "plugin": ["@mickorz/opencode-dynamic-workflows"]
-}
+```
+你有哪些工具？
 ```
 
-`~/.config/opencode/tui.json`（TUI 侧，与 opencode.json 分离，不会自动继承，必须独立配置）：
+工具列表里应出现 `workflow`（问"你有哪些 skills"应看到 `workflow-authoring`）。也可以运行 `npx @mickorz/opencode-dynamic-workflows doctor` 查看环境检查清单。
 
-```json
-{
-  "plugin": ["@mickorz/opencode-dynamic-workflows"]
-}
+**第 2 步：跑第一个工作流。** 对 Main Agent 说（原样粘贴）：
+
+```
+用 workflow 工具执行以下脚本，原样执行不要改动：
+
+export const meta = { name: 'smoke_test', description: '最小冒烟：3 个 agent' }
+
+phase('Scan')
+const info = await agent('列出你当前目录下的文件，只输出前 10 行')
+
+phase('Echo')
+const results = await parallel([
+  () => agent('用一句话说明什么是工作流编排'),
+  () => agent('用一句话说明什么是确定性重放'),
+])
+return { info, results }
 ```
 
-两个文件都配好后，任何工程目录启动 opencode 即生效，无需在项目里做任何事。
+**第 3 步：看懂结果。** 工具返回大致如下（数值因模型而异）：
 
-### 方式二：项目级配置（发给同事 / 不想全局生效）
+```
+工作流 smoke_test 完成：3 个 agent，耗时 11.6s，共 612 tokens（runId: run-xxxxxxx）
+阶段: Scan > Echo
 
-目标项目根目录两个文件：
+agent 摘要:
+  [成功] <任务名> (Scan) 120 tok ($0.0012)
+  [成功] <任务名> (Echo) 96 tok ($0.0009)
+  [成功] <任务名> (Echo) 88 tok ($0.0008)
 
-`opencode.json`：
-
-```json
-{
-  "plugin": ["@mickorz/opencode-dynamic-workflows"],
-  "skills": {
-    "paths": ["node_modules/@mickorz/opencode-dynamic-workflows/skills"]
-  }
-}
+## 结果
+{ "info": "...", "results": ["...", "..."] }
 ```
 
-`tui.json`（与 opencode.json 同目录）：
+三个 agent 全部 `[成功]`、`## 结果` 里有完整 JSON，即跑通。也可以直接说自然语言让 Main Agent 自己生成脚本，例如：
 
-```json
-{
-  "plugin": ["@mickorz/opencode-dynamic-workflows"]
-}
+```
+用 workflow 并行分析 docs 目录下所有 markdown 文件，然后汇总成一份要点清单
 ```
 
-> `plugin` 指向包名（server 侧读包内 `dist/index.js`）；项目级 `skills.paths` 需要先在项目里 `npm install @mickorz/opencode-dynamic-workflows`，把 workflow-authoring skill 挂进 OpenCode（skill 同时会成为一个 command），Main Agent 写脚本前会按需加载。`skills.paths` 相对路径基准是 OpenCode 启动目录。
+## 核心概念
 
-> TUI 进程经 `exports["./tui"]` 加载 `src/tui/index.tsx`（bun 直接读 TSX 源码，无需 build）。配置后 ctrl+p → Plugins 应看到插件在 TUI 侧 active。前台 workflow 运行期间 sidebar 出现 Dynamic Workflow 实时树。
+- **子会话隔离**：每个 agent 是独立子会话，父会话内用 subagent 导航可查看各自完整过程；主会话只有汇总。
+- **缺省只读**：`agent()` 默认用只读的 explore 子代理；需要写文件的任务显式传 `agentType: 'general'`。
+- **后台与续跑**：脚本参数 `background: true` 立即返回 runId 不阻塞对话；中断后 `resumeFromRunId` 可断点续跑，已完成的 agent 不再重复消耗 token。
+- **质量助手**：`verify`（对抗式验证）/ `judgePanel`（评审团选优）/ `retry`（有界重试）/ `checkpoint`（人工确认点）。
 
-### 方式三：项目 node_modules 引用（版本随项目锁定，团队协作推荐）
+## 功能一览
 
-先把包装进项目依赖（版本写入 package.json，随 git 提交，团队成员 npm install 后即用，不依赖 OpenCode 全局缓存）：
+- `workflow` 自定义 tool + `workflow_control` 控制 tool（status / stop）
+- VM 沙箱确定性护栏（禁 `Date.now()` / `Math.random()` / import / require，可确定性重放）
+- DSL：`agent / parallel / pipeline / phase / log / args` + 质量助手
+- 原生结构化输出（`schema` 走 OpenCode `format: json_schema`）、并发控制（缺省 CPU 核数-2、上限 16）、超时/重试/abort 级联、git worktree 隔离、journal 断点续跑、后台运行
 
-```bash
-cd E:/WorkProjects/xc-flow
-npm install @mickorz/opencode-dynamic-workflows
-```
+各功能用法见 [docs/how-to-guides.md](docs/how-to-guides.md)。
 
-然后配置里不写包名，写相对路径引用项目 node_modules 里的包（`./` 开头的路径按配置文件所在目录解析）：
+## 文档地图
 
-`opencode.json`：
-
-```json
-{
-  "plugin": ["./node_modules/@mickorz/opencode-dynamic-workflows"],
-  "skills": {
-    "paths": ["node_modules/@mickorz/opencode-dynamic-workflows/skills"]
-  }
-}
-```
-
-`tui.json`（与 opencode.json 同目录）：
-
-```json
-{
-  "plugin": ["./node_modules/@mickorz/opencode-dynamic-workflows"]
-}
-```
-
-升级走 npm：`npm update @mickorz/opencode-dynamic-workflows`，无需清 OpenCode 缓存。三种方式对比：
-
-| 方式 | 生效范围 | 版本管理 | 适用场景 |
-|------|---------|---------|---------|
-| 一：全局配置 | 所有项目 | 全局缓存，删缓存升级 | 个人机器统一用最新 |
-| 二：项目级包名 | 单项目 | 全局缓存（同上） | 仅个别项目启用 |
-| 三：项目 node_modules 引用 | 单项目 | 项目 package.json 锁定 | 团队协作、离线/内网、版本一致性要求高 |
-
-### 升级插件版本
-
-删除包缓存后重启，OpenCode 会重新拉取最新版：
-
-```powershell
-Remove-Item -Recurse -Force $env:USERPROFILE\.cache\opencode\packages\@mickorz
-```
-
-### 排查
-
-- 插件没装上：OpenCode 启动时自动装 npm 插件，失败不阻塞启动（静默跳过）。按序检查：
-  1. `npm view @mickorz/opencode-dynamic-workflows version` 能看到版本（新发版的 metadata 可能被 CDN 缓存 404 几分钟）
-  2. `dir $env:USERPROFILE\.cache\opencode\packages\@mickorz\opencode-dynamic-workflows\node_modules\@mickorz\opencode-dynamic-workflows` 包文件是否齐全（1.18.29 实际安装位置是 `packages/` 而非文档写的 `node_modules/`）
-  3. TUI 加载链路看 Temp vendor 目录：`dir $env:TEMP\opencode-dynamic-workflows-vendor-<版本>\`，`src\` 下 3 个实现文件 + `node_modules` junction 都在才算通过
-- 日志：`$env:USERPROFILE\.local\share\opencode\log\opencode.log`（大文件注意取尾部）
-
-## 验证安装
-
-在 OpenCode 中对 Main Agent 说"用 workflow 并行分析 XX 目录下 10 个文件并汇总"，确认：
-
-1. workflow tool 被调用且生成合法脚本（meta 信封）
-2. 子会话挂在当前会话下（父会话内可用 subagent 导航查看）
-3. 主会话只收到汇总结果与 agent 摘要，无子会话完整上下文
-
-## 开发
-
-```bash
-npm run typecheck   # tsc --noEmit
-npm test            # node:test + tsx（18 个用例，fake runner 注入，不调真实 LLM）
-npm run build       # 产出 dist/
-```
-
-本地联调：在 `examples/sample-project/` 启动 OpenCode，其 opencode.json / tui.json 以相对路径 `"../.."` 指向仓库根，改 server 侧代码后需重新 build，TUI 侧重启即生效。
-
-架构约束（详见 AGENTS.md）：`src/runtime/` 宿主无关，OpenCode SDK 只允许出现在 `src/adapters/`，测试在 `AgentSessionRunner` 注入缝上打 fake。
-
-## 阶段规划
-
-v0.1 为最小闭环（P0）。后续：journal/resume、model tier 分层、verify/judgePanel/retry/checkpoint、worktree 隔离、workflow_control、后台执行。详见 `Docs/01_需求与规划/opencode-dynamic-workflows需求文档.md`。
+| 文档 | 内容 |
+|------|------|
+| [docs/getting-started.md](docs/getting-started.md) | 从 0 到第一个工作流的完整教程 |
+| [docs/configuration.md](docs/configuration.md) | 三种安装方式、配置字段、升级与卸载 |
+| [docs/troubleshooting.md](docs/troubleshooting.md) | 常见问题排查 |
+| [docs/how-to-guides.md](docs/how-to-guides.md) | 后台运行、断点续跑、质量 DSL、worktree 隔离 |
+| [docs/testing.md](docs/testing.md) | 安装与运行验收清单 |
+| [docs/development.md](docs/development.md) | 贡献者指南（架构、测试、本地联调、发布） |
+| [workflow-authoring DSL 参考](https://github.com/mickorz/opencode-dynamicworkflows/blob/main/skills/workflow-authoring/references/runtime.md) | 全部 DSL API 的权威细节 |
 
 ## License
 

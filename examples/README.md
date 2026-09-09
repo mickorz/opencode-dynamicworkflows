@@ -35,7 +35,7 @@ examples/sample-project/          # 测试工程（在这里启动 OpenCode，�
    验收与结构化测试同理换成 `scripts/acceptance-10docs.js`、`scripts/schema-test.js`
 5. 中断验证（A-08）：验收脚本分析进行中按 Esc，确认子会话全部停止
 
-完整检查点清单见 `Docs/03_测试指南/测试指南.md`（Docs 目录仅本地存在；其内嵌的脚本内容与本目录 scripts/ 一致）。
+完整检查点清单见仓库内 `docs/testing.md`（随 git 分发，内嵌脚本内容与本目录 scripts/ 一致）。
 
 ### 路径解析说明（已对照 OpenCode 源码验证）
 

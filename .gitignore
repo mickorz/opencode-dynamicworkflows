@@ -2,17 +2,29 @@
 node_modules/
 dist/
 
-# 本仓库的参考源码与文档（不入插件仓库版本库）
+# 本仓库的参考源码（不入插件仓库版本库）
 thirdparties/
-Docs/
+
+# Docs 目录默认本地化（作者工作区，规划/设计/测试/参考均不入库）。
+# 注意：Windows 文件系统不区分大小写，公开用户文档目录与本地工作区共用一个物理目录；
+# 下方 ! 条目显式放行的用户文档随仓库发布（GitHub 上呈现为 docs/ 目录）。
+Docs/*
+!Docs/getting-started.md
+!Docs/configuration.md
+!Docs/troubleshooting.md
+!Docs/how-to-guides.md
+!Docs/testing.md
+!Docs/development.md
 
 # workflow 运行时产物（journal、运行状态）
 .opencode-workflows/
 
-# 手工验收工程的运行时状态与本地测试脚本（不入库）
+# 手工验收工程的运行时状态与本地测试脚本（不入库）；docs/ 下仅 10 个 mdx 验收语料入库（examples 自包含承诺），spec 笔记等本地文档忽略
 examples/sample-project/.opencode/
 examples/sample-project/.xflow/
 examples/sample-project/scripts/spec-clarify-workflow*
+examples/sample-project/docs/*
+!examples/sample-project/docs/*.mdx
 
 # 日志与系统文件
 *.log
