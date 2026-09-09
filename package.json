@@ -1,8 +1,15 @@
 {
-  "name": "opencode-dynamic-workflows",
-  "version": "0.1.0",
+  "name": "@mickorz/opencode-dynamic-workflows",
+  "version": "0.1.2",
   "description": "OpenCode 动态工作流插件：Main Agent 生成 JS Workflow，Runtime 并行调度子会话，仅返回汇总结果",
   "type": "module",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "src/tui",
+    "skills",
+    "README.md"
+  ],
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -13,13 +20,17 @@
     "./tui": "./src/tui/index.tsx"
   },
   "scripts": {
+    "prepublishOnly": "npm run build",
     "build": "tsc",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json && tsc --noEmit -p tsconfig.tui.json",
     "test": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
+    "@clack/prompts": "^1.8.0",
+    "@mickorz/opencode-dynamic-workflows": "^0.1.0",
     "@opentui/solid": "^0.4.5",
     "acorn": "^8.16.0",
+    "jsonc-parser": "^3.3.1",
     "solid-js": "1.9.12"
   },
   "peerDependencies": {

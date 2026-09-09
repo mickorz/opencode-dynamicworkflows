@@ -15,39 +15,114 @@ OpenCode 动态工作流插件：Main Agent 生成一段 JavaScript 编排脚本
 - 超时 / 重试 / abort 级联（Esc 中断主会话会取消所有在飞子会话）
 - 分析类 agent 缺省用内置只读 `explore` 子代理
 
-## 安装（公司内部 git 仓库）
+## 安装
 
-```bash
-git clone <公司git地址> opencode-dynamic-workflows
-cd opencode-dynamic-workflows
-npm install
-npm run build
-```
+无需手动安装。OpenCode 启动时自动从 npm 拉包并缓存到 `~/.cache/opencode/packages/`，只需在配置里声明包名（见下）。手动 `npm install @mickorz/opencode-dynamic-workflows` 仅在需要引用包内 skills 路径时才有必要。
 
 ## 配置
 
-在项目或全局 `opencode.json` 中：
+分全局与项目级两层，二选一或叠加（同包同版只加载一次，不冲突）。改完配置需重启 OpenCode。
+
+### 方式一：全局配置（推荐，一次配置所有项目生效）
+
+`~/.config/opencode/opencode.json`（server 侧）：
 
 ```json
 {
-  "plugin": ["<克隆目录的绝对路径>"],
+  "plugin": ["@mickorz/opencode-dynamic-workflows"]
+}
+```
+
+`~/.config/opencode/tui.json`（TUI 侧，与 opencode.json 分离，不会自动继承，必须独立配置）：
+
+```json
+{
+  "plugin": ["@mickorz/opencode-dynamic-workflows"]
+}
+```
+
+两个文件都配好后，任何工程目录启动 opencode 即生效，无需在项目里做任何事。
+
+### 方式二：项目级配置（发给同事 / 不想全局生效）
+
+目标项目根目录两个文件：
+
+`opencode.json`：
+
+```json
+{
+  "plugin": ["@mickorz/opencode-dynamic-workflows"],
   "skills": {
-    "paths": ["<克隆目录的绝对路径>/skills"]
+    "paths": ["node_modules/@mickorz/opencode-dynamic-workflows/skills"]
   }
 }
 ```
 
-> `plugin` 指向本仓库根目录（读 `dist/index.js`）；`skills.paths` 把 workflow-authoring skill 挂进 OpenCode（skill 同时会成为一个 command），Main Agent 写脚本前会按需加载。
-
-TUI 侧（sidebar 实时 workflow 树，F-20）需要另配 `tui.json`（全局 `~/.config/opencode/tui.json` 或项目级，与 opencode.json 分离，重启后生效）：
+`tui.json`（与 opencode.json 同目录）：
 
 ```json
 {
-  "plugin": ["<克隆目录的绝对路径>"]
+  "plugin": ["@mickorz/opencode-dynamic-workflows"]
 }
 ```
 
-> 同一包路径，TUI 进程经 `exports["./tui"]` 加载 `src/tui/index.tsx`（bun 直接读 TSX 源码，无需 build）。配置后 ctrl+p → Plugins 应看到 `opencode-dynamic-workflows` 在 TUI 侧 active。前台 workflow 运行期间 sidebar 出现 Dynamic Workflow 实时树。
+> `plugin` 指向包名（server 侧读包内 `dist/index.js`）；项目级 `skills.paths` 需要先在项目里 `npm install @mickorz/opencode-dynamic-workflows`，把 workflow-authoring skill 挂进 OpenCode（skill 同时会成为一个 command），Main Agent 写脚本前会按需加载。`skills.paths` 相对路径基准是 OpenCode 启动目录。
+
+> TUI 进程经 `exports["./tui"]` 加载 `src/tui/index.tsx`（bun 直接读 TSX 源码，无需 build）。配置后 ctrl+p → Plugins 应看到插件在 TUI 侧 active。前台 workflow 运行期间 sidebar 出现 Dynamic Workflow 实时树。
+
+### 方式三：项目 node_modules 引用（版本随项目锁定，团队协作推荐）
+
+先把包装进项目依赖（版本写入 package.json，随 git 提交，团队成员 npm install 后即用，不依赖 OpenCode 全局缓存）：
+
+```bash
+cd E:/WorkProjects/xc-flow
+npm install @mickorz/opencode-dynamic-workflows
+```
+
+然后配置里不写包名，写相对路径引用项目 node_modules 里的包（`./` 开头的路径按配置文件所在目录解析）：
+
+`opencode.json`：
+
+```json
+{
+  "plugin": ["./node_modules/@mickorz/opencode-dynamic-workflows"],
+  "skills": {
+    "paths": ["node_modules/@mickorz/opencode-dynamic-workflows/skills"]
+  }
+}
+```
+
+`tui.json`（与 opencode.json 同目录）：
+
+```json
+{
+  "plugin": ["./node_modules/@mickorz/opencode-dynamic-workflows"]
+}
+```
+
+升级走 npm：`npm update @mickorz/opencode-dynamic-workflows`，无需清 OpenCode 缓存。三种方式对比：
+
+| 方式 | 生效范围 | 版本管理 | 适用场景 |
+|------|---------|---------|---------|
+| 一：全局配置 | 所有项目 | 全局缓存，删缓存升级 | 个人机器统一用最新 |
+| 二：项目级包名 | 单项目 | 全局缓存（同上） | 仅个别项目启用 |
+| 三：项目 node_modules 引用 | 单项目 | 项目 package.json 锁定 | 团队协作、离线/内网、版本一致性要求高 |
+
+### 升级插件版本
+
+删除包缓存后重启，OpenCode 会重新拉取最新版：
+
+```powershell
+Remove-Item -Recurse -Force $env:USERPROFILE\.cache\opencode\packages\@mickorz
+```
+
+### 排查
+
+- 插件没装上：OpenCode 启动时自动装 npm 插件，失败不阻塞启动（静默跳过）。按序检查：
+  1. `npm view @mickorz/opencode-dynamic-workflows version` 能看到版本（新发版的 metadata 可能被 CDN 缓存 404 几分钟）
+  2. `dir $env:USERPROFILE\.cache\opencode\packages\@mickorz\opencode-dynamic-workflows\node_modules\@mickorz\opencode-dynamic-workflows` 包文件是否齐全（1.18.29 实际安装位置是 `packages/` 而非文档写的 `node_modules/`）
+  3. TUI 加载链路看 Temp vendor 目录：`dir $env:TEMP\opencode-dynamic-workflows-vendor-<版本>\`，`src\` 下 3 个实现文件 + `node_modules` junction 都在才算通过
+- 日志：`$env:USERPROFILE\.local\share\opencode\log\opencode.log`（大文件注意取尾部）
 
 ## 验证安装
 
@@ -64,6 +139,8 @@ npm run typecheck   # tsc --noEmit
 npm test            # node:test + tsx（18 个用例，fake runner 注入，不调真实 LLM）
 npm run build       # 产出 dist/
 ```
+
+本地联调：在 `examples/sample-project/` 启动 OpenCode，其 opencode.json / tui.json 以相对路径 `"../.."` 指向仓库根，改 server 侧代码后需重新 build，TUI 侧重启即生效。
 
 架构约束（详见 AGENTS.md）：`src/runtime/` 宿主无关，OpenCode SDK 只允许出现在 `src/adapters/`，测试在 `AgentSessionRunner` 注入缝上打 fake。
 
