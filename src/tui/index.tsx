@@ -63,8 +63,10 @@ function isInsideNodeModules(path: string): boolean {
   return path.split(/[\\/]/).includes("node_modules")
 }
 
-/** 需要一起逃逸出 node_modules 的实现文件（保持相对 import 可用） */
-const IMPLEMENTATION_FILES = ["plugin.tsx", "workflow-store.ts"]
+/** 需要一起逃逸出 node_modules 的实现文件（保持相对 import 可用）
+ *  注意：必须列出 plugin.tsx 的全部本地依赖文件，漏一个就会在 vendor 目录里
+ *  解析不到对应模块，TUI 插件静默加载失败（npm 安装方式才触发，路径安装不走这里） */
+const IMPLEMENTATION_FILES = ["plugin.tsx", "workflow-store.ts", "run-snapshot-reader.ts"]
 
 function vendorImplementationOutsideNodeModules(packageRoot: string, version: string): string {
   const vendorDir = join(tmpdir(), `opencode-dynamic-workflows-vendor-${version}`)
@@ -76,20 +78,22 @@ function vendorImplementationOutsideNodeModules(packageRoot: string, version: st
     writeFileSync(join(vendorSrcDir, file), readFileSync(join(srcDir, file)))
   }
 
-  // 软链回包自身依赖（solid-js/@opentui 等装在包的同级），复制体仍能正常解析依赖。
-  // 旧软链可能是正确（同父目录可复用）、过期（指向已删除的其他副本）或断链：
-  // readlinkSync 三种都能暴露，替换而非静默沿用。
+  // 链回包装依赖的真实 node_modules。bun 安装结构：<wrapper>/node_modules/<pkg>，
+  // 包自身在 node_modules/@scope/name，依赖（solid-js/@opentui 等）在包上两级的 node_modules。
+  // 用 junction：Windows 无管理员权限建不了 symlink，junction 不需要特权；POSIX 上 type 参数被忽略。
   const vendorNodeModules = join(vendorDir, "node_modules")
-  const desiredTarget = dirname(packageRoot)
+  const desiredTarget = dirname(dirname(packageRoot))
   let currentTarget: string | undefined
   try {
-    currentTarget = readlinkSync(vendorNodeModules)
+    // Windows junction 的 readlink 可能返回 \\?\ 前缀路径，归一化后比较，避免每次重复重建
+    const raw = readlinkSync(vendorNodeModules)
+    currentTarget = raw.startsWith("\\\\?\\") ? raw.slice(4) : raw
   } catch {
     currentTarget = undefined
   }
   if (currentTarget !== desiredTarget) {
-    rmSync(vendorNodeModules, { force: true })
-    symlinkSync(desiredTarget, vendorNodeModules)
+    rmSync(vendorNodeModules, { force: true, recursive: true })
+    symlinkSync(desiredTarget, vendorNodeModules, "junction")
   }
 
   return join(vendorSrcDir, "plugin.tsx")
