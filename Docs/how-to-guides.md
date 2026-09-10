@@ -1,6 +1,63 @@
-# 进阶用法：后台运行、断点续跑、质量 DSL、worktree 隔离
+# 进阶用法：模型编排、schema 结构化、后台运行、断点续跑、质量 DSL、worktree 隔离
 
-> 四个独立场景，按需取用。DSL 全部参数与语义的权威细节见 [workflow-authoring DSL 参考](https://github.com/mickorz/opencode-dynamicworkflows/blob/main/skills/workflow-authoring/references/runtime.md)。
+> 六个独立场景，按需取用。DSL 全部参数与语义的权威细节见 [workflow-authoring DSL 参考](https://github.com/mickorz/opencode-dynamicworkflows/blob/main/skills/workflow-authoring/references/runtime.md)。
+
+## 使用不同模型编排（model / tier）
+
+**场景**：不同子任务难度不同——分类、摘要、格式转换用便宜模型，核心生成（DSL、代码、评审）用强模型，省钱又保质量。
+
+```javascript
+// 方式一：显式指定模型，必须是 "provider/modelId" 完整格式
+const outline = await agent('生成大纲', { model: 'openai/gpt-4o-mini' })
+
+// 方式二：先配 model-tiers.json，脚本里只写层级名（推荐，换模型不改脚本）
+const draft = await agent('写正文', { tier: 'big' })
+```
+
+tier 配置文件（JSON）——全局 `~/.config/opencode/workflows/model-tiers.json`，项目 `.opencode-workflows/model-tiers.json`（同名键覆盖全局）：
+
+```json
+{
+  "tiers": {
+    "small": "openai/gpt-4o-mini",
+    "big": "anthropic/claude-sonnet-4-6"
+  }
+}
+```
+
+要点：
+
+- `model` 必须带 provider 前缀，裸 `modelId` 会直接报错 `agent model 必须是 provider/modelId 格式`
+- 优先级：显式 `model` > `tier` > 会话默认模型
+- tier 名自定义（small/medium/big 只是惯用名）；未配置的 tier 回退会话默认模型并打一条告警（不中断）
+- 分工经验：大量廉价杂活（分类/摘要/格式检查）用小模型，少量关键生成用强模型；两者都用 schema 约束返回时互不影响
+
+## schema 结构化返回
+
+**场景**：编排代码要按字段消费结果（`if (result.ok)`、`result.files`），不要模型自由发挥后再自己 `JSON.parse`。
+
+```javascript
+const SCHEMA = {
+  type: 'object',
+  properties: {
+    ok: { type: 'boolean' },
+    summary: { type: 'string' },
+    risks: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['ok', 'summary'],
+}
+
+const result = await agent('分析这个模块的风险', { schema: SCHEMA })
+if (!result.ok) return '分析失败：' + (result.summary ?? '')
+```
+
+要点：
+
+- 返回值形态：带 `schema` 返回 JSON 对象（字段直接访问），不带返回 string——同一脚本混用两种调用时注意判型
+- `required` 填编排真正依赖的字段；输出经服务端校验，缺失必填字段视为失败，进入与普通 agent 相同的 retry/failed 流程
+- 实现机制：走 OpenCode 原生结构化输出（`format: json_schema`）；网关不支持时自动降级（prompt 要求 JSON + 本地宽松解析 + 必填校验），脚本无需感知
+- 已知现象：schema agent 的子会话正文可能为空（结果在 StructuredOutput 工具调用里，不在正文）——正常，不是故障，见 [troubleshooting](troubleshooting.md)
+- 与质量 DSL 组合：输出格式不稳定时 `retry(() => agent(prompt, { schema }), { until: r => r && r.ok })`
 
 ## 后台运行长任务
 

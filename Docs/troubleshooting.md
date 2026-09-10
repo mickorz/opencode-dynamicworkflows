@@ -46,6 +46,15 @@
 - 可恢复失败（网络/超时/限流）重试耗尽后该 agent 返回 null，不抛错——重跑一次即可；频繁出现加 `agentRetries: 2` 参数（上限 3）
 - 单个 agent 想失败即终止，不要放进 `parallel`，直接 `await agent(...)`
 
+**agent 报 `agent model 必须是 provider/modelId 格式`**
+
+- `model` 参数必须是完整 `"provider/modelId"`（如 `openai/gpt-4o-mini`），裸 `modelId` 会被拒绝
+- 不知道 provider 前缀：看 `opencode.json` 里 `model` 字段的写法，照抄前缀
+
+**log 出现 `tier "xxx" 未配置，回退会话默认模型`**
+
+- tier 名没在配置文件里：全局 `~/.config/opencode/workflows/model-tiers.json` 或项目 `.opencode-workflows/model-tiers.json` 加上对应键（不中断运行，只是回退默认模型）
+
 **schema 模式 agent 直接失败（provider_bad_request / 400）**
 
 - 结构化输出依赖模型支持 tool_choice required；部分网关/模型不支持（实测某些 OpenAI 兼容网关返回 400）
@@ -71,6 +80,7 @@
 | 子会话不在会话列表里 | 平台过滤了子会话；从父会话的 subagent 导航进入 |
 | Main Agent 回复只说"见上方 JSON 输出" | 综合结果在工具返回的 `## 结果` JSON 块里；想展开就说"把结果里的总览完整复述出来" |
 | agent 摘要状态为 `[缓存]` | 结果来自上次运行的 journal 回放（断点续跑/重跑未变部分），未消耗 token |
+| 带 schema 的节点，点击进子会话正文是空白 | 结构化输出的正常形态：结果在 StructuredOutput 工具调用里，不在 assistant 正文。workflow 返回值与 journal 里的结果完整无损，以它们为准 |
 | 结果 JSON 末尾有"结果过大已截断" | 工具输出有 50KB 平台预算；完整结构仍在 metadata 中 |
 
 ## 仍然解决不了

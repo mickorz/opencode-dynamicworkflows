@@ -18,6 +18,7 @@ meta 之后是普通 async 脚本体，顶层可用 `await` 与 `return`。
 分发一个子代理（独立会话）。缺省 agent 为 explore（只读：读文件/grep/搜索），写文件类任务传 `{ agentType: 'general' }`。
 
 - 返回：文本结果（string）或 schema 模式下的 JSON 对象
+- `model`：`"provider/modelId"` 完整格式（裸 modelId 报错）；`tier`：层级名（small/medium/big 或自定义），经 `model-tiers.json` 解析，优先级低于 `model`；两者都不传用会话默认模型
 - 可恢复失败（网络/超时）重试耗尽后返回 `null`，不抛错
 - 不可恢复失败（脚本校验错、agent 超限）直接抛错终止整个 run
 

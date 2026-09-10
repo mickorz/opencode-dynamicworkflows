@@ -87,6 +87,20 @@ agent 摘要:
 用 workflow 并行分析 docs 目录下所有 markdown 文件，然后汇总成一份要点清单
 ```
 
+**进阶一步：指定模型与结构化返回。** 子任务可指定模型（换成你配置里可用的），并用 schema 约束返回格式：
+
+```
+用 workflow 工具执行以下脚本，原样执行不要改动：
+
+export const meta = { name: 'model_schema_demo', description: '指定模型 + schema 约束返回' }
+
+const SCHEMA = { type: 'object', properties: { ok: { type: 'boolean' }, summary: { type: 'string' } }, required: ['ok', 'summary'] }
+const r = await agent('读取当前目录下的 package.json，用一句话总结它的作用', { model: 'openai/gpt-4o-mini', schema: SCHEMA })
+return r
+```
+
+`r` 直接是 JSON 对象（`r.ok`、`r.summary` 可直接访问），不用自己解析文本。更多见 [how-to-guides](docs/how-to-guides.md) 的「使用不同模型编排」与「schema 结构化返回」两章。
+
 ## 核心概念
 
 - **子会话隔离**：每个 agent 是独立子会话，父会话内用 subagent 导航可查看各自完整过程；主会话只有汇总。
@@ -110,11 +124,11 @@ agent 摘要:
 | [docs/getting-started.md](docs/getting-started.md) | 从 0 到第一个工作流的完整教程 |
 | [docs/configuration.md](docs/configuration.md) | 三种安装方式、配置字段、升级与卸载 |
 | [docs/troubleshooting.md](docs/troubleshooting.md) | 常见问题排查 |
-| [docs/how-to-guides.md](docs/how-to-guides.md) | 后台运行、断点续跑、质量 DSL、worktree 隔离 |
+| [docs/how-to-guides.md](docs/how-to-guides.md) | 模型编排、schema 结构化、后台运行、断点续跑、质量 DSL、worktree 隔离 |
 | [docs/testing.md](docs/testing.md) | 安装与运行验收清单 |
 | [docs/development.md](docs/development.md) | 贡献者指南（架构、测试、本地联调、发布） |
 | [workflow-authoring DSL 参考](https://github.com/mickorz/opencode-dynamicworkflows/blob/main/skills/workflow-authoring/references/runtime.md) | 全部 DSL API 的权威细节 |
 
 ## License
 
-MIT（沿用 pi-dynamic-workflows）
+MIT
