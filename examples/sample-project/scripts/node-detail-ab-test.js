@@ -3,7 +3,7 @@
 //       Node Detail 视图中有正确的展示位，且四处数据一致
 // 覆盖：T01 默认模型+schema / T02 默认模型+text；换模型重跑即 T03/T04
 // 用法：在 examples/sample-project 目录启动 OpenCode 后，对 Main Agent 说：
-//       "读取 scripts/node-detail-ab-test.js 的内容，用 workflow 工具原样执行，不要改动脚本"
+//       "用 workflow 工具执行 scripts/node-detail-ab-test.js，scriptPath 传该路径，不要粘贴脚本内容"
 //       换模型跑 T03/T04 时追加一句：
 //       "args 传 {\"model\": \"provider/modelId\"}"
 

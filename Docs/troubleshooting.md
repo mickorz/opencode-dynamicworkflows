@@ -41,6 +41,13 @@
 - 沙箱禁止 `import` / `require` / `Date.now()` / `Math.random()` / `new Date()`（确定性重放要求）
 - 时间戳、随机值改为通过 workflow 工具的 `args` 参数注入，脚本内用全局 `args` 读取
 
+**改完脚本重跑，结果像是旧逻辑**
+
+- 根因：script 原文参数需经 Main Agent 上下文，上一轮 Read 的旧内容可能被复用
+- 解法：改用 scriptPath 传文件路径（服务端执行时读盘，必然是磁盘当前版）：
+  `用 workflow 工具执行 scripts/xxx.js，scriptPath 传该路径`
+- script 原文参数仍兼容；两个都传或都缺会报错提醒
+
 **agent 报 `agent "x" 超时 (ms)`**
 
 - 单 agent 调大或省略 `timeoutMs`（省略且未设 run 级缺省则不设硬超时）；run 级调 `agentTimeoutMs` 入参

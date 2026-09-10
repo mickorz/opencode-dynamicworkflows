@@ -1,6 +1,6 @@
 // P2 后台运行演示：background 参数 + workflow_control 控制
-// 用法：让 Main Agent 原样执行本脚本（脚本会作为 background: true 的 workflow 调用提交）
-// 提示词：读取 scripts/background-test.js 的内容，用 workflow 工具原样执行并传 background: true
+// 用法：让 Main Agent 用 workflow 工具执行本脚本（scriptPath 传本文件路径）（脚本会作为 background: true 的 workflow 调用提交）
+// 提示词：用 workflow 工具执行 scripts/background-test.js，scriptPath 传该路径，并传 background: true
 
 export const meta = { name: 'bg_demo', description: 'P2 后台运行演示：3 个 agent 扇出' }
 

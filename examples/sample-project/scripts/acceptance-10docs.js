@@ -1,6 +1,6 @@
 // 标准验收脚本（A-01/A-02/A-03）：10 个文档并行分析
 // 语料：examples/sample-project/docs 下 10 个 OpenCode 官方文档 mdx
-// 用法：在 examples/sample-project 目录启动 OpenCode 后，让 Main Agent 原样执行本脚本
+// 用法：在 examples/sample-project 目录启动 OpenCode 后，让 Main Agent 用 workflow 工具执行本脚本（scriptPath 传本文件路径）
 
 export const meta = { name: 'acceptance_10docs', description: '标准验收：10 个文档并行分析' }
 

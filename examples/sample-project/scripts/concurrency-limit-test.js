@@ -5,8 +5,8 @@
 //   - 缺省值：CPU 核数 - 2
 //
 // 用法：在 examples/sample-project 目录启动 OpenCode 后，对 Main Agent 说：
-//   "读取 scripts/concurrency-limit-test.js 的内容，用 workflow 工具原样执行，
-//    concurrency 传 8（换成你想验证的值），不要改动脚本"
+//   "用 workflow 工具执行 scripts/concurrency-limit-test.js，scriptPath 传该路径，
+//    concurrency 传 8（换成你想验证的值），不要粘贴脚本内容"
 //
 // 读数方法（三选一）：
 //   1. 总耗时对比法：同一脚本分别用 concurrency=1/4/8/16 各跑一次，

@@ -4,7 +4,7 @@
  * 执行流程：
  *  runWorkflow(script, options)
  *   -> parseWorkflowScript 校验 meta 信封 + 剥离
- *   -> 注入运行时全局：agent / parallel / pipeline / phase / log / args / console
+ *   -> 注入运行时全局：agent / parallel / pipeline / phase / log / args / setConcurrency / console
  *   -> runScriptInVm（DETERMINISM_PRELUDE + body）
  *        -> agent() 依次经过：abort 检查 -> maxAgents 配额 -> limiter 排队
  *             -> withTimeout 包装 -> 可恢复错误重试 -> AgentSessionRunner.run（注入缝）
@@ -119,10 +119,28 @@ export async function runWorkflow<T = unknown>(
   const runId = options.runId ?? `run-${started.toString(36)}`
   const baseCwd = options.cwd ?? process.cwd()
   const agentRunner = options.agent
-  const concurrency = normalizeConcurrency(
+  let concurrency = normalizeConcurrency(
     options.concurrency ?? Math.max(1, (globalThis.navigator?.hardwareConcurrency ?? 8) - 2),
   )
   const limiter = createLimiter(concurrency)
+
+  // 脚本内动态调节并发上限（需求文档：动态并发控制 方案 A）：
+  // 非法值报错；超过 MAX_CONCURRENCY 钳到 16 并记日志；变更写入 run 日志可观测
+  const setConcurrency = (value: unknown) => {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 1 || Math.floor(value) !== value) {
+      throw new WorkflowError(
+        `setConcurrency 需要正整数，收到 ${String(value)}`,
+        WorkflowErrorCode.SCRIPT_VALIDATION_ERROR,
+        { recoverable: false },
+      )
+    }
+    const next = Math.min(MAX_CONCURRENCY, value)
+    if (next !== concurrency) {
+      log(`并发上限调整为 ${next}（原 ${concurrency}）`)
+      concurrency = next
+      limiter.setLimit(next)
+    }
+  }
 
   const state: RuntimeState = {
     logs: [],
@@ -599,6 +617,7 @@ export async function runWorkflow<T = unknown>(
     phase,
     log,
     args: options.args,
+    setConcurrency,
     verify,
     judgePanel,
     retry,

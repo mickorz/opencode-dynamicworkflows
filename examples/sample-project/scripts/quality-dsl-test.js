@@ -1,5 +1,5 @@
 // P1 质量 DSL 演示：judgePanel 评审团 + verify 对抗验证 + checkpoint 人工确认
-// 用法：让 Main Agent 原样执行本脚本；checkpoint 处会弹权限确认（允许=true / 拒绝=false）
+// 用法：让 Main Agent 用 workflow 工具执行本脚本（scriptPath 传本文件路径）；checkpoint 处会弹权限确认（允许=true / 拒绝=false）
 
 export const meta = { name: 'quality_demo', description: 'P1 质量 DSL：judgePanel + verify + checkpoint' }
 

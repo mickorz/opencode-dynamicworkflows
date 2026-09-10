@@ -2,7 +2,7 @@
 // 设计意图：A 树（multi-tree-a）完成后本脚本仍在运行，用于验证"完成树与运行树并存"
 // 以及"后台 run 完成回传期间快照保持终态不再复活为 running"
 // 用法：在 examples/sample-project 目录启动 OpenCode 后，对 Main Agent 说：
-//       "读取 scripts/multi-tree-b.js 的内容，用 workflow 工具原样执行并传 background: true，不要改动脚本"
+//       "用 workflow 工具执行 scripts/multi-tree-b.js，scriptPath 传该路径并传 background: true，不要粘贴脚本内容"
 
 export const meta = { name: 'multi_tree_b', description: '多树同显验收 B 树：两轮 2 并行' }
 

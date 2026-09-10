@@ -7,6 +7,7 @@ import { renderWorkflowResult } from "./render.js"
 import { buildProgressMetadata, type WorkflowProgressStatus } from "./workflow-progress.js"
 import { buildRunSnapshot, cleanupRunSnapshots, RUN_SNAPSHOT_HEARTBEAT_MS, tryWriteRunSnapshot } from "./run-snapshot.js"
 import { parseWorkflowScript } from "../runtime/vm.js"
+import { resolveScriptText } from "./script-source.js"
 import { BackgroundRunManager } from "./background-runs.js"
 import type { JournalEntry, AgentRecord, AgentExecutionRecord } from "../types/index.js"
 
@@ -14,7 +15,7 @@ const DESCRIPTION = [
   "运行动态工作流：执行一段 JavaScript 编排脚本，通过 agent() 将任务分发给子代理（独立会话）并行执行，",
   "parallel()/pipeline() 组合调度，脚本内变量汇总后仅返回最终结果，避免大量子代理上下文污染主会话。",
   "适用形态：全仓检查、独立并行调研、多视角评审、扇出汇总。编写脚本前先加载 workflow-authoring skill。",
-  "脚本规则：首条语句 export const meta = { name, description }；可用全局 agent/parallel/pipeline/phase/log/args/verify/judgePanel/retry/checkpoint；",
+  "脚本规则：首条语句 export const meta = { name, description }；可用全局 agent/parallel/pipeline/phase/log/args/setConcurrency/verify/judgePanel/retry/checkpoint；",
   "禁止 import/require/Date.now()/Math.random()/new Date()；agent() 至少调用一次。",
   "agent() 缺省用只读的 explore 子代理，写文件类任务显式传 { agentType: 'general' }。",
 ].join("")
@@ -24,8 +25,11 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
     description: DESCRIPTION,
 
     args: {
-      script: tool.schema.string().describe(
-        "JavaScript 工作流脚本原文，无 markdown 围栏。首条语句必须是 export const meta = { name: 'short_snake_case', description: '...' }。可用全局：agent(prompt, opts) / parallel(函数数组) / pipeline(items, ...stages) / phase(title) / log(msg) / args。详见 workflow-authoring skill。",
+      script: tool.schema.string().optional().describe(
+        "JavaScript 工作流脚本原文，无 markdown 围栏。首条语句必须是 export const meta = { name: 'short_snake_case', description: '...' }。可用全局：agent(prompt, opts) / parallel(函数数组) / pipeline(items, ...stages) / phase(title) / log(msg) / args / setConcurrency(n)。详见 workflow-authoring skill。",
+      ),
+      scriptPath: tool.schema.string().optional().describe(
+        "脚本文件路径（相对项目目录或绝对路径），服务端执行时读盘拿最新内容；与 script 二选一。执行 scripts 目录里的示例脚本时优先用它，避免粘贴原文导致的陈旧缓存与改写失真。",
       ),
       args: tool.schema.record(tool.schema.string(), tool.schema.any()).optional().describe(
         "暴露给脚本的全局 args 对象（JSON）。",
@@ -43,10 +47,20 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
     },
 
     async execute(input, context) {
-      const script = normalizeWorkflowScript(input.script)
-      if (!script) {
-        return { title: "workflow", output: "workflow 需要 script 字符串参数" }
+      let script: string
+      try {
+        script = resolveScriptText(input, context.directory)
+      } catch (error) {
+        return {
+          title: "workflow",
+          output: `workflow 参数错误：${error instanceof Error ? error.message : String(error)}`,
+        }
       }
+      const normalized = normalizeWorkflowScript(script)
+      if (!normalized) {
+        return { title: "workflow", output: "workflow 需要 script（脚本原文）或 scriptPath（文件路径）参数" }
+      }
+      script = normalized
 
       // 后台路径（P2-2）：立即返回 runId，结果完成后回传主会话
       if (input.background) {

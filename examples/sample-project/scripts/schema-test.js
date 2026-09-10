@@ -1,5 +1,5 @@
 // 结构化输出验证脚本（A-07 + R-07 观察点）
-// 用法：在 examples/sample-project 目录启动 OpenCode 后，让 Main Agent 原样执行本脚本
+// 用法：在 examples/sample-project 目录启动 OpenCode 后，让 Main Agent 用 workflow 工具执行本脚本（scriptPath 传本文件路径）
 
 export const meta = { name: 'schema_test', description: '结构化输出验证' }
 
