@@ -66,6 +66,9 @@ const rs = await parallel([
 return rs.length`,
     {
       agent: runner,
+      // 显式并发：缺省是 CPU核数-2，CI 双核/四核机上 3 个 agent 无法同时进 gate，
+      // 「等待三个都进入 running 再乱序释放」的时序假设会落空
+      concurrency: 3,
       runId: "run-ooo",
       onAgentUpdate: (record) => {
         const list = updatesByLabel.get(record.label) ?? []
