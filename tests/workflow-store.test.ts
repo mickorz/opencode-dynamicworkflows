@@ -7,6 +7,7 @@ import assert from "node:assert/strict"
 import {
   buildSidebarRows,
   buildMultiRunRows,
+  findSelectedRunNode,
   findWorkflowMetadata,
   formatDuration,
   formatTokens,
@@ -156,4 +157,51 @@ test("sumTokens：全部节点 token 合计，缺省按 0", () => {
     ],
   })!
   assert.equal(sumTokens(p), 10_076)
+})
+
+// ---- Node Inspector 扩展 ----
+
+test("parseWorkflowMetadata：提取 Node Inspector 新字段；老形状无新字段不回归", () => {
+  const p = parseWorkflowMetadata({
+    runId: "r",
+    agents: [
+      {
+        id: "r:0", label: "新节点", status: "ok",
+        executionId: "r:0:2", attempt: 2, outputType: "structured",
+        outputPreview: "{\n  \"ok\": true\n}", inputTokens: 30, outputTokens: 20,
+      },
+      { id: "r:1", label: "老节点", status: "running" },
+    ],
+  })!
+  const [fresh, legacy] = p.nodes
+  assert.equal(fresh.executionId, "r:0:2")
+  assert.equal(fresh.attempt, 2)
+  assert.equal(fresh.outputType, "structured")
+  assert.equal(fresh.outputPreview, '{\n  "ok": true\n}')
+  assert.equal(fresh.inputTokens, 30)
+  assert.equal(fresh.outputTokens, 20)
+  // 老形状：新字段 undefined，不崩
+  assert.equal(legacy.executionId, undefined)
+  assert.equal(legacy.outputType, undefined)
+  assert.equal(legacy.outputPreview, undefined)
+  // 坏形状字段被清洗（outputType 非法枚举丢弃）
+  const dirty = parseWorkflowMetadata({
+    runId: "r",
+    agents: [{ id: "r:0", label: "x", status: "ok", outputType: "weird", attempt: "two" }],
+  })!
+  assert.equal(dirty.nodes[0].outputType, undefined)
+  assert.equal(dirty.nodes[0].attempt, undefined)
+})
+
+test("findSelectedRunNode：跨树命中并携带所属 runId", () => {
+  const a = parseWorkflowMetadata({ runId: "run-a", agents: [{ id: "run-a:0", label: "x", status: "ok" }] })!
+  const b = parseWorkflowMetadata({ runId: "run-b", agents: [{ id: "run-b:0", label: "y", status: "ok" }] })!
+  const progresses = [a, b]
+  const found = findSelectedRunNode(progresses, "run-b:run-b:0")
+  assert.ok(found)
+  assert.equal(found!.runId, "run-b")
+  assert.equal(found!.node.label, "y")
+  assert.equal(findSelectedRunNode(progresses, "run-a:run-a:0")!.runId, "run-a")
+  assert.equal(findSelectedRunNode(progresses, null), undefined)
+  assert.equal(findSelectedRunNode(progresses, "不存在"), undefined)
 })

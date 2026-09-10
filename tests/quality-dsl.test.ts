@@ -6,6 +6,7 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { runWorkflow } from "../src/runtime/workflow-runtime.js"
 import type { AgentSessionRunner, AgentRunOptions } from "../src/agent/session-runner.js"
+import { textResult, structuredResult } from "./helpers.js"
 
 /** schema 型 fake：按 prompt 前缀返回固定结构化结果 */
 function schemaAgent(map: Array<{ match: string; result: unknown }>): {
@@ -17,9 +18,9 @@ function schemaAgent(map: Array<{ match: string; result: unknown }>): {
     async run(prompt, options) {
       calls.push({ prompt, options })
       for (const entry of map) {
-        if (prompt.includes(entry.match)) return entry.result
+        if (prompt.includes(entry.match)) return structuredResult(entry.result)
       }
-      return {}
+      return structuredResult({})
     },
   }
   return { runner, calls }
@@ -50,7 +51,7 @@ test("verify：一真一假，threshold 1 -> real=false", async () => {
   const runner: AgentSessionRunner = {
     async run() {
       n++
-      return { real: n === 1, reason: "" }
+      return structuredResult({ real: n === 1, reason: "" })
     },
   }
   const result = await runWorkflow(
@@ -65,7 +66,7 @@ test("verify：reviewer 失败塌缩为弃权票，不计入 total", async () =>
   const runner: AgentSessionRunner = {
     async run(prompt) {
       if (prompt.includes("Adversarially")) throw new Error("评审失败")
-      return "unused"
+      return textResult("unused")
     },
   }
   const result = await runWorkflow(
@@ -83,7 +84,7 @@ test("judgePanel：多候选多评审，返回最高均分与原始 index；null
   const runner: AgentSessionRunner = {
     async run(prompt) {
       const high = prompt.includes("GOOD_CANDIDATE")
-      return { score: high ? 0.9 : 0.4, reason: "" }
+      return structuredResult({ score: high ? 0.9 : 0.4, reason: "" })
     },
   }
   const result = await runWorkflow(
@@ -106,7 +107,7 @@ test("retry：until 通过即停；耗尽返回最后一次结果", async () => 
   const runner: AgentSessionRunner = {
     async run() {
       calls++
-      return { v: calls }
+      return structuredResult({ v: calls })
     },
   }
   const result = await runWorkflow(
@@ -123,7 +124,7 @@ return a`,
   const runner2: AgentSessionRunner = {
     async run() {
       calls2++
-      return calls2
+      return structuredResult(calls2)
     },
   }
   const result2 = await runWorkflow(
@@ -141,7 +142,7 @@ return [ok, await agent('干活')]`
   const asked: string[] = []
   const journal = new Map()
   const first = await runWorkflow(script, {
-    agent: { run: async () => "done" } as AgentSessionRunner,
+    agent: { run: async () => textResult("done") },
     confirm: async (p) => {
       asked.push(p)
       return true
@@ -161,9 +162,9 @@ return [ok, await agent('干活')]`
     agent: {
       run: async () => {
         liveCalls++
-        return "done"
+        return textResult("done")
       },
-    } as AgentSessionRunner,
+    },
     confirm: async (p) => {
       asked2.push(p)
       return false
@@ -180,7 +181,7 @@ test("checkpoint：无 confirm 通道时 headless abort 抛错；缺省 default 
   await assert.rejects(
     runWorkflow(
       `export const meta = { name: 'c2' }\nawait checkpoint('必须人工', { headless: 'abort' })`,
-      { agent: { run: async () => "x" } as AgentSessionRunner },
+      { agent: { run: async () => textResult("x") } },
     ),
     /headless/,
   )
@@ -188,7 +189,7 @@ test("checkpoint：无 confirm 通道时 headless abort 抛错；缺省 default 
   const journal = new Map()
   const result = await runWorkflow(
     `export const meta = { name: 'c3' }\nreturn await checkpoint('默认继续')`,
-    { agent: { run: async () => "x" } as AgentSessionRunner, onAgentJournal: (e) => journal.set(e.key, e) },
+    { agent: { run: async () => textResult("x") }, onAgentJournal: (e) => journal.set(e.key, e) },
   )
   assert.equal(result.result, true, "缺省 default 为 true")
   assert.equal(journal.size, 1, "checkpoint 结果进 journal")

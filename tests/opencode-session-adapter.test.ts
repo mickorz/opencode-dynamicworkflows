@@ -82,7 +82,7 @@ test("文本路径：拼接 text parts 并回传用量", async () => {
   const usages: unknown[] = []
   const adapter = new OpenCodeSessionAdapter({ client })
   const result = await adapter.run("分析", { label: "t", onUsage: (u) => usages.push(u) })
-  assert.equal(result, "第一段\n第二段")
+  assert.deepEqual(result, { type: "text", value: "第一段\n第二段", sessionId: "sess-1" })
   assert.deepEqual(usages, [{ input: 10, output: 5, total: 16 }])
 })
 
@@ -90,7 +90,7 @@ test("原生结构化路径：info.structured 直接返回", async () => {
   const client = makeClient({ onFormatPresent: "ok", plainResponse: () => ({ info: {}, parts: [] }) })
   const adapter = new OpenCodeSessionAdapter({ client })
   const result = await adapter.run("分析", { schema: SCHEMA })
-  assert.deepEqual(result, { native: true })
+  assert.deepEqual(result, { type: "structured", value: { native: true }, sessionId: "sess-1" })
 })
 
 test("400 触发降级：二次请求去 format，围栏 JSON 解析成功且必填校验通过", async () => {
@@ -107,7 +107,8 @@ test("400 触发降级：二次请求去 format，围栏 JSON 解析成功且必
   const adapter = new OpenCodeSessionAdapter({ client, onStructuredDegrade: (info) => degrades.push(info) })
   const result = await adapter.run("总结", { label: "结构化分析", schema: SCHEMA })
 
-  assert.deepEqual(result, { topic: "配置", keyFields: ["plugin"] })
+  // 降级解析出的 JSON 同样属 structured 分支（FR-2 统一结果）
+  assert.deepEqual(result, { type: "structured", value: { topic: "配置", keyFields: ["plugin"] }, sessionId: "sess-1" })
   assert.equal(prompts.length, 2, "应发生两次 prompt（原生失败 + 降级重试）")
   assert.ok(prompts[0].format, "第一次带 format")
   assert.equal("format" in prompts[1], false, "降级请求不带 format")
@@ -127,7 +128,7 @@ test("降级后模型返回裸 JSON 文本（无围栏）也能解析", async ()
   })
   const adapter = new OpenCodeSessionAdapter({ client })
   const result = await adapter.run("x", { schema: SCHEMA })
-  assert.deepEqual(result, { topic: "裸", keyFields: [] })
+  assert.deepEqual(result, { type: "structured", value: { topic: "裸", keyFields: [] }, sessionId: "sess-1" })
 })
 
 test("降级解析失败：抛出含原始错误与模型输出的异常", async () => {
@@ -186,7 +187,7 @@ test("info.error（200 + provider error）同样触发降级", async () => {
   const degrades: unknown[] = []
   const adapter = new OpenCodeSessionAdapter({ client, onStructuredDegrade: () => degrades.push(1) })
   const result = await adapter.run("x", { schema: SCHEMA })
-  assert.deepEqual(result, { topic: "t", keyFields: ["k"] })
+  assert.deepEqual(result, { type: "structured", value: { topic: "t", keyFields: ["k"] }, sessionId: "sess-1" })
   assert.equal(degrades.length, 1)
 })
 

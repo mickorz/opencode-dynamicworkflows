@@ -9,6 +9,7 @@
  *        -> 结构化结果取 info.structured；文本结果取 parts 中 type=text 的 text
  *   -> options.onUsage(info.tokens)                              用量回传（F-07 metadata 的 token 数）
  *   -> options.signal abort -> client.session.abort(...)         级联取消（task.ts:321-357 范式）
+ *   -> 出口统一包装 AgentExecutionResult（FR-2：type/text|structured + sessionId；仅 runtime 内部消费）
  *
  * schema 400 降级（P1-2，R-07）：
  *  网关不支持 json_schema（表现为 HTTP 400 / invalid_parameter，OpenCode 的
@@ -20,7 +21,7 @@
  */
 
 import type { PluginInput } from "@opencode-ai/plugin"
-import type { AgentRunOptions, AgentSessionRunner } from "../agent/session-runner.js"
+import type { AgentExecutionResult, AgentRunOptions, AgentSessionRunner } from "../agent/session-runner.js"
 
 export interface OpenCodeSessionAdapterOptions {
   /** 插件 context 提供的 SDK client */
@@ -105,7 +106,7 @@ export class OpenCodeSessionAdapter implements AgentSessionRunner {
     this.onStructuredDegrade = options.onStructuredDegrade
   }
 
-  async run(prompt: string, options?: AgentRunOptions): Promise<unknown> {
+  async run(prompt: string, options?: AgentRunOptions): Promise<AgentExecutionResult> {
     const created = await this.client.session.create({
       body: {
         parentID: this.parentSessionId,
@@ -136,24 +137,31 @@ export class OpenCodeSessionAdapter implements AgentSessionRunner {
       // model 必须是 "provider/modelId"（OpenCode 惯例，如 anthropic/claude-sonnet-4-6）
       const model = parseModelSpec(options?.model)
 
+      // 出口统一包装 AgentExecutionResult（FR-2）：schema 三路出口均为 structured
+      // （含降级 JSON 解析与 info.structured ?? null 的合法 null），无 schema 出口为 text。
+      // 该类型仅 runtime 内部消费，脚本侧 agent() 仍直接拿 value。
       if (options?.schema) {
         // 已确认不支持时跳过原生尝试，直接降级（消除每次必败的 400 噪音）
         if (this.formatUnsupported) {
           const label = options.label ?? prompt.slice(0, 30)
           this.onStructuredDegrade?.({ label, reason: "网关已知不支持 json_schema（本 run 内首次探测已确认）" })
-          return await this.promptDegradedJson(sessionId, prompt, model, options, new Error("format unsupported (cached)"))
+          const value = await this.promptDegradedJson(sessionId, prompt, model, options, new Error("format unsupported (cached)"))
+          return { type: "structured", value, sessionId }
         }
         try {
-          return await this.promptStructured(sessionId, prompt, model, options)
+          const value = await this.promptStructured(sessionId, prompt, model, options)
+          return { type: "structured", value, sessionId }
         } catch (error) {
           if (!isSchemaUnsupported(error)) throw error
           this.formatUnsupported = true
           const label = options.label ?? prompt.slice(0, 30)
           this.onStructuredDegrade?.({ label, reason: summarizeError(error) })
-          return await this.promptDegradedJson(sessionId, prompt, model, options, error)
+          const value = await this.promptDegradedJson(sessionId, prompt, model, options, error)
+          return { type: "structured", value, sessionId }
         }
       }
-      return await this.promptText(sessionId, prompt, model, options)
+      const value = await this.promptText(sessionId, prompt, model, options)
+      return { type: "text", value, sessionId }
     } finally {
       signal?.removeEventListener("abort", abortSession)
     }
@@ -225,7 +233,7 @@ export class OpenCodeSessionAdapter implements AgentSessionRunner {
     prompt: string,
     model: { providerID: string; modelID: string } | undefined,
     options?: AgentRunOptions,
-  ): Promise<unknown> {
+  ): Promise<string> {
     const message = await this.execPrompt(
       sessionId,
       {

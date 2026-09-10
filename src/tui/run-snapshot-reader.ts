@@ -60,6 +60,12 @@ export function parseRunSnapshot(raw: unknown): RunSnapshotView | null {
       error: typeof n.error === "string" ? n.error : undefined,
       replayed: n.replayed === true,
       model: typeof n.model === "string" ? n.model : undefined,
+      executionId: typeof n.executionId === "string" ? n.executionId : undefined,
+      attempt: typeof n.attempt === "number" ? n.attempt : undefined,
+      outputType: n.outputType === "text" || n.outputType === "structured" ? n.outputType : undefined,
+      outputPreview: typeof n.outputPreview === "string" ? n.outputPreview : undefined,
+      inputTokens: typeof n.inputTokens === "number" ? n.inputTokens : undefined,
+      outputTokens: typeof n.outputTokens === "number" ? n.outputTokens : undefined,
     })
   }
   if (nodes.length === 0) return null

@@ -1,5 +1,5 @@
 /**
- * worktree 隔离测试（P1-5，跑真实 git，照搬 Pi worktree.test.ts 套路）
+ * worktree 隔离测试（P1-5，跑真实 git）
  */
 
 import test from "node:test"
@@ -11,6 +11,7 @@ import { execFileSync } from "node:child_process"
 import { createWorktree, removeWorktree } from "../src/isolation/worktree.js"
 import { runWorkflow } from "../src/runtime/workflow-runtime.js"
 import type { AgentSessionRunner, AgentRunOptions } from "../src/agent/session-runner.js"
+import { textResult } from "./helpers.js"
 
 /** 造一个带一次提交的临时 git 仓库 */
 function makeGitRepo(): string {
@@ -73,7 +74,7 @@ test("runtime：isolation worktree 的 agent 收到含工作目录的 prompt 与
     const runner: AgentSessionRunner = {
       async run(prompt, options) {
         seen.push({ prompt, directory: options?.directory })
-        return "ok"
+        return textResult("ok")
       },
     }
     const result = await runWorkflow(
@@ -102,7 +103,7 @@ test("runtime：无 isolation 的 agent 不注入工作目录也不传 directory
     const runner: AgentSessionRunner = {
       async run(prompt, options) {
         seen.push({ prompt, directory: options?.directory })
-        return "ok"
+        return textResult("ok")
       },
     }
     await runWorkflow(`export const meta = { name: 'wt2' }\nreturn await agent('x')`, {
@@ -123,7 +124,7 @@ test("runtime：非 git 目录中 isolation 降级并记录日志", async () => 
     const runner: AgentSessionRunner = {
       async run(_p, options) {
         seen.push(options?.directory)
-        return "ok"
+        return textResult("ok")
       },
     }
     const result = await runWorkflow(

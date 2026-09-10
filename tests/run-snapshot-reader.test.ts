@@ -166,3 +166,40 @@ test("progressViewKey：关键字段变化才变，未变则相等", () => {
   assert.notEqual(progressViewKey(toProgress(a)), progressViewKey(toProgress(changed)))
   assert.equal(progressViewKey(null), "none")
 })
+
+// ---- Node Inspector 扩展 ----
+
+test("parseRunSnapshot：提取 Node Inspector 新字段；老快照无新字段不回归", () => {
+  const fresh = parseRunSnapshot({
+    version: 1,
+    runId: "run-n",
+    parentSessionId: "ses_p",
+    time: 1234,
+    agents: [
+      {
+        id: "run-n:0", label: "新节点", status: "ok",
+        executionId: "run-n:0:1", attempt: 1, outputType: "structured",
+        outputPreview: "预览文本", inputTokens: 11, outputTokens: 22,
+      },
+    ],
+  })!
+  const node = fresh.nodes[0]
+  assert.equal(node.executionId, "run-n:0:1")
+  assert.equal(node.attempt, 1)
+  assert.equal(node.outputType, "structured")
+  assert.equal(node.outputPreview, "预览文本")
+  assert.equal(node.inputTokens, 11)
+  assert.equal(node.outputTokens, 22)
+
+  // 老快照（无新字段）：undefined 不崩；坏形状字段被清洗
+  const legacy = parseRunSnapshot({
+    version: 1,
+    runId: "run-o",
+    parentSessionId: "ses_p",
+    time: 1234,
+    agents: [{ id: "run-o:0", label: "老节点", status: "ok", outputType: 42, attempt: "一" }],
+  })!
+  assert.equal(legacy.nodes[0].executionId, undefined)
+  assert.equal(legacy.nodes[0].outputType, undefined)
+  assert.equal(legacy.nodes[0].attempt, undefined)
+})

@@ -6,18 +6,18 @@
  * 跨文件分散 solid 用法会解析出不同 solid-js 实例，信号跨文件失效）。
  * 数据提取与行组装在 workflow-store.ts（纯 ts）。
  *
- * 骨架照搬 opencode-subagents-view（MIT）的 plugin.tsx：
+ * 骨架要点：
  *  - 折叠信号按 session 缓存于模块级 Map，重复渲染复用而非重建
  *  - sidebar_content 插槽 order:350（内置 LSP=300 之后、Todo=400 之前）
  */
 
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
 import type { Renderable } from "@opentui/core"
-import { For, Show, createSignal } from "solid-js"
+import { For, Show, createEffect, createSignal } from "solid-js"
 import {
   buildMultiRunRows,
   buildSidebarRows,
-  findSelectedNode,
+  findSelectedRunNode,
   findWorkflowMetadata,
   formatDuration,
   formatTokens,
@@ -31,11 +31,15 @@ import {
   type WorkflowProgress,
 } from "./workflow-store.js"
 import { listSessionSnapshots, pickAllProgresses } from "./run-snapshot-reader.js"
+import { parseJournalFile, readJournalRaw, type JournalEntryView } from "./journal-reader.js"
+import { resolveResultState, truncateUtf8ByBytes } from "./result-view.js"
 
 const id = "opencode-dynamic-workflows"
 
 /** workflow 全屏路由名（MVP-3）：api.route.register + 命令面板打开，Enter 进子会话的键盘导航在本路由内 */
 const WORKFLOW_ROUTE = "opencode-dynamic-workflows.workflow"
+/** 节点详情全屏路由名（Node Inspector）：展示该节点的 result（journal 内容 + 快照状态） */
+const NODE_DETAIL_ROUTE = "opencode-dynamic-workflows.node"
 /** 打开路由前的来源路由（Esc 返回用；module 级存单例，路由同时只有一个实例） */
 let workflowReturnRoute: { name: string; params?: Record<string, unknown> } | null = null
 /** 路由内选中节点（solid signal，跨副本闭环在本文件内） */
@@ -43,7 +47,7 @@ const [selectedNode, setSelectedNode] = createSignal<string | null>(null)
 /** 路由键位层 disposer（焦点作用域，target 失焦即失效；离开路由时主动清，防悬挂） */
 let disposeNavLayer: (() => void) | undefined
 
-/** 节点状态图标与主题色调（几何符号非 emoji；照搬 subagents-view 的图标语义） */
+/** 节点状态图标与主题色调（几何符号非 emoji） */
 function getNodeMeta(status: WorkflowNode["status"]): { icon: string; tone: "success" | "warning" | "error" | "muted" } {
   switch (status) {
     case "ok":
@@ -77,8 +81,8 @@ const collapsedBySession = new Map<
 /**
  * 进度信号按 session 缓存：宿主事件驱动重算 + 自己的 signal。
  * 不能在组件里直接读 api.state（宿主 solid store）——我们跑在自己的 solid-js 副本里，
- * 跨副本的依赖追踪不生效（Read 一次后永不更新，需求文档 9.3 的教训；
- * subagents-view 因此同样只用 api.event.on 镜像数据到自己 signal）。
+ * 跨副本的依赖追踪不生效（Read 一次后永不更新，需求文档 9.3 的教训），
+ * 因此只用 api.event.on 镜像数据到自己 signal。
  */
 const progressBySession = new Map<string, () => WorkflowProgress[]>()
 
@@ -219,10 +223,18 @@ function RunTree(props: {
             const meta = getNodeMeta(row.node.status)
             return (
               <box flexDirection="column">
-                {/* MVP-2：带 sessionId 的节点可点击进入子会话 */}
+                {/* Node Inspector：点击进节点详情视图（含 result 展示）；子会话经详情内 Open Session 进入。
+                    running 态也可进入（sessionId 尚未回填时同样允许） */}
                 <box
                   flexDirection="row"
-                  onMouseDown={row.node.sessionId ? () => props.api.route.navigate("session", { sessionID: row.node.sessionId }) : undefined}
+                  onMouseDown={() =>
+                    props.api.route.navigate(NODE_DETAIL_ROUTE, {
+                      sessionID: props.session_id,
+                      runId: props.progress.runId,
+                      nodeId: row.node.id,
+                      returnRoute: { name: "session", params: { sessionID: props.session_id } },
+                    })
+                  }
                 >
                   <box width={2}>
                     <text fg={toneColor(props.api, meta.tone)}>{meta.icon} </text>
@@ -271,7 +283,7 @@ function View(props: { api: TuiPluginApi; session_id: string }) {
 /** 全屏路由内节点行：比 sidebar 多展示 tokens 与进入标记 */
 function routeNodeLine(node: WorkflowNode): string {
   const parts = [nodeLine(node)]
-  if (node.sessionId) parts.push("[Enter 进入]")
+  parts.push("[Enter 详情]")
   return parts.join(" · ")
 }
 
@@ -308,11 +320,17 @@ function RouteView(props: { api: TuiPluginApi; sessionID?: string }) {
     if (childId) scrollBox?.scrollChildIntoView(childId)
   }
   const openSelected = () => {
-    const node = findSelectedNode(progresses(), selectedNode())
-    if (!node?.sessionId) return
+    // Node Inspector：Enter 进节点详情（含 result 展示），子会话经详情内 Open Session 进入
+    const found = findSelectedRunNode(progresses(), selectedNode())
+    if (!found) return
     disposeNavLayer?.()
     disposeNavLayer = undefined
-    props.api.route.navigate("session", { sessionID: node.sessionId })
+    props.api.route.navigate(NODE_DETAIL_ROUTE, {
+      sessionID: props.sessionID,
+      runId: found.runId,
+      nodeId: found.node.id,
+      returnRoute: { name: WORKFLOW_ROUTE, params: { sessionID: props.sessionID } },
+    })
   }
 
   return (
@@ -424,8 +442,261 @@ function RouteView(props: { api: TuiPluginApi; sessionID?: string }) {
       </scrollbox>
       <box flexGrow={1} />
       <box paddingTop={1}>
-        <text fg={theme().textMuted}>j/k 上下选择 · Enter 进入子会话 · Esc 返回</text>
+        <text fg={theme().textMuted}>j/k 上下选择 · Enter 节点详情 · Esc 返回</text>
       </box>
+    </box>
+  )
+}
+
+/**
+ * 节点详情全屏视图（Node Inspector，FR-4）：展示单个 workflow 节点的执行元数据与 result。
+ * 数据双通道：节点状态走快照信号（复用 getOrCreateProgress 的 1s 轮询，完成后自动刷新）；
+ * result 内容走 journal 文件按需读取（挂载即读 + 轮询 diff 守卫 + 状态翻转立即重读）。
+ * 快照被新 run 清理时（终态快照有生命周期），header 由 journal entry 元数据回填。
+ * 键位：Enter/o 打开子会话（Open Session，sessionId 取自节点）· Esc/q 返回来源路由。
+ */
+function NodeDetailView(props: {
+  api: TuiPluginApi
+  sessionID?: string
+  runId?: string
+  nodeId?: string
+  returnRoute?: { name: string; params?: Record<string, unknown> }
+}) {
+  const theme = () => props.api.theme.current
+  const progresses = props.sessionID
+    ? getOrCreateProgress(props.api, props.sessionID, props.api.lifecycle.onDispose)
+    : () => []
+
+  // ---- journal 内容通道 ----
+  const [entry, setEntry] = createSignal<JournalEntryView | null>(null)
+  let lastRaw: string | null = null
+  const reloadJournal = () => {
+    if (!props.runId || !props.nodeId) return
+    let directory: string | undefined
+    try {
+      directory = props.sessionID
+        ? props.api.state.session.get(props.sessionID)?.directory ?? props.api.state.path.directory
+        : props.api.state.path.directory
+    } catch {
+      return
+    }
+    if (!directory) return
+    // diff 守卫：原文未变不重解析（大 journal 每秒成本 = 一次读文件 + 字符串比较）
+    const raw = readJournalRaw(directory, props.runId)
+    if (raw === null || raw === lastRaw) return
+    lastRaw = raw
+    setEntry(parseJournalFile(raw)?.get(props.nodeId) ?? null)
+  }
+  reloadJournal()
+  const journalPoll = setInterval(reloadJournal, POLL_INTERVAL_MS)
+  props.api.lifecycle.onDispose(() => clearInterval(journalPoll))
+
+  // ---- 节点视图：快照优先，快照消失时由 journal 元数据合成（历史 run 的 result 仍可看）----
+  const node = (): WorkflowNode | null => {
+    if (!props.runId || !props.nodeId) return null
+    for (const progress of progresses()) {
+      if (progress.runId !== props.runId) continue
+      for (const n of progress.nodes) {
+        if (n.id === props.nodeId) return n
+      }
+    }
+    return null
+  }
+  const view = (): WorkflowNode | null => {
+    const n = node()
+    if (n) return n
+    const e = entry()
+    if (!e) return null
+    return {
+      id: props.nodeId ?? "",
+      label: e.label ?? props.nodeId ?? "",
+      phase: e.phase,
+      // journal 有 entry 说明该节点成功写入过结果
+      status: "ok",
+      model: e.model,
+      sessionId: e.sessionId,
+      durationMs: e.durationMs,
+      executionId: e.executionId,
+      attempt: e.attempt,
+      outputType: e.outputType === "text" || e.outputType === "structured" ? e.outputType : undefined,
+      inputTokens: e.usage?.inputTokens,
+      outputTokens: e.usage?.outputTokens,
+    }
+  }
+  // 节点状态翻转（running -> ok/failed）时立即重读 journal：结果即时可见，不等下一轮询
+  createEffect(() => {
+    node()?.status
+    reloadJournal()
+  })
+
+  // ---- Result 展示状态（空态三分 + 正文）----
+  const resultState = () =>
+    resolveResultState({
+      status: view()?.status ?? "running",
+      error: view()?.error,
+      entry: entry(),
+      preview: view()?.outputPreview,
+    })
+
+  // ---- 操作 ----
+  const openSession = () => {
+    const sessionId = view()?.sessionId
+    if (!sessionId) return
+    disposeNavLayer?.()
+    disposeNavLayer = undefined
+    props.api.route.navigate("session", { sessionID: sessionId })
+  }
+  const backFromDetail = () => {
+    disposeNavLayer?.()
+    disposeNavLayer = undefined
+    const back = props.returnRoute
+    if (back) {
+      props.api.route.navigate(back.name, back.params)
+      return
+    }
+    props.api.route.navigate("home")
+  }
+
+  const headerMeta = () => getNodeMeta(view()?.status ?? "running")
+  const agentTypeLine = () => {
+    const e = entry()
+    return e?.agentType ?? "explore"
+  }
+  const promptPreview = () => {
+    const prompt = entry()?.prompt
+    if (!prompt) return undefined
+    const truncated = truncateUtf8ByBytes(prompt, 512)
+    return truncated.length < prompt.length ? `${truncated}...` : truncated
+  }
+
+  return (
+    <box
+      position="absolute"
+      left={0}
+      top={0}
+      width="100%"
+      height="100%"
+      flexDirection="column"
+      backgroundColor={theme().background}
+      paddingTop={1}
+      paddingLeft={2}
+      paddingRight={2}
+      ref={(el: Renderable) => {
+        // 抢焦点 + 注册 focus 作用域键位层（进入路由即接管键盘）
+        el.focusable = true
+        el.focus()
+        disposeNavLayer?.()
+        disposeNavLayer = props.api.keymap.registerLayer({
+          target: el,
+          targetMode: "focus",
+          commands: [
+            { name: "workflow.node.open", run: () => openSession() },
+            { name: "workflow.node.back", run: () => backFromDetail() },
+          ],
+          bindings: [
+            { key: "enter,o", cmd: "workflow.node.open", desc: "Open agent session" },
+            { key: "escape,q", cmd: "workflow.node.back", desc: "Back" },
+          ],
+        })
+      }}
+    >
+      <Show
+        when={view()}
+        fallback={
+          <box paddingTop={1}>
+            <text fg={theme().textMuted}>
+              找不到该节点的数据（快照与 journal 均无记录），参数可能有误或运行数据已被清理
+            </text>
+          </box>
+        }
+      >
+        {(current: () => WorkflowNode) => (
+          <>
+            {/* Header 区：label 与状态 */}
+            <box flexDirection="row" gap={1} paddingBottom={1}>
+              <text fg={toneColor(props.api, headerMeta().tone)}>
+                {headerMeta().icon} <b>{current().label}</b>
+              </text>
+              <text fg={toneColor(props.api, headerMeta().tone)}>{current().status}</text>
+              <Show when={(current().attempt ?? 1) > 1}>
+                <text fg={theme().textMuted}>第 {current().attempt} 次执行</text>
+              </Show>
+              <Show when={current().replayed}>
+                <text fg={theme().textMuted}>缓存回放</text>
+              </Show>
+            </box>
+            {/* Header 区：执行元数据 */}
+            <box flexDirection="row" gap={1}>
+              <text fg={theme().textMuted}>
+                agent {agentTypeLine()}
+                {current().model ? ` · ${current().model}` : ""}
+                {current().durationMs !== undefined ? ` · ${formatDuration(current().durationMs)}` : ""}
+                {current().tokens !== undefined ? ` · ${formatTokens(current().tokens)} tok` : ""}
+                {current().inputTokens !== undefined || current().outputTokens !== undefined
+                  ? ` (in ${formatTokens(current().inputTokens)} / out ${formatTokens(current().outputTokens)})`
+                  : ""}
+              </text>
+            </box>
+            {/* Header 区：标识符 */}
+            <box flexDirection="row" gap={1}>
+              <text fg={theme().textMuted}>
+                {current().sessionId ? `session ${current().sessionId}` : "session -"}
+                {" · "}run {props.runId ?? "-"}
+                {current().executionId ? ` · exec ${current().executionId}` : ""}
+              </text>
+            </box>
+            <Show when={promptPreview()}>
+              {(prompt: () => string) => (
+                <box paddingLeft={1} paddingTop={1}>
+                  <text fg={theme().textMuted} wrapMode="word">
+                    prompt: {prompt()}
+                  </text>
+                </box>
+              )}
+            </Show>
+            {/* Result 区 */}
+            <scrollbox flexGrow={1} paddingTop={1}>
+              {(() => {
+                const state = resultState()
+                if (state.state === "error") {
+                  return <text fg={theme().error} wrapMode="word">Error: {state.message}</text>
+                }
+                if (state.state === "pending") {
+                  return <text fg={theme().warning}>No result yet</text>
+                }
+                if (state.state === "empty") {
+                  return <text fg={theme().textMuted}>No result returned</text>
+                }
+                return (
+                  <box flexDirection="column">
+                    <Show when={state.source === "preview"}>
+                      <box paddingBottom={1}>
+                        <text fg={theme().textMuted}>（快照预览，journal 未写入完整结果）</text>
+                      </box>
+                    </Show>
+                    <text fg={theme().text} wrapMode="word">
+                      {state.view.body}
+                    </text>
+                    <Show when={state.view.truncated}>
+                      <box paddingTop={1}>
+                        <text fg={theme().warning}>
+                          Result truncated, original size: {(state.view.originalBytes / 1024).toFixed(1)} KB
+                        </text>
+                      </box>
+                    </Show>
+                  </box>
+                )
+              })()}
+            </scrollbox>
+            {/* 操作区：键位提示 */}
+            <box paddingTop={1}>
+              <text fg={theme().textMuted}>
+                {view()?.sessionId ? "Enter/o Open Session · " : ""}Esc/q 返回 · 滚轮滚动正文
+              </text>
+            </box>
+          </>
+        )}
+      </Show>
     </box>
   )
 }
@@ -458,11 +729,26 @@ const tui: TuiPlugin = async (api) => {
   })
 
   // MVP-3：workflow 全屏路由 + 命令面板入口（无绑定的命令层，不占任何全局键）
+  // Node Inspector：节点详情路由（params 携 runId/nodeId/returnRoute，从 sidebar 点击或列表 Enter 进入）
   api.route.register([
     {
       name: WORKFLOW_ROUTE,
       render: ({ params }) => (
         <RouteView api={api} sessionID={typeof params?.sessionID === "string" ? params.sessionID : undefined} />
+      ),
+    },
+    {
+      name: NODE_DETAIL_ROUTE,
+      render: ({ params }) => (
+        <NodeDetailView
+          api={api}
+          sessionID={typeof params?.sessionID === "string" ? params.sessionID : undefined}
+          runId={typeof params?.runId === "string" ? params.runId : undefined}
+          nodeId={typeof params?.nodeId === "string" ? params.nodeId : undefined}
+          returnRoute={
+            params?.returnRoute as { name: string; params?: Record<string, unknown> } | undefined
+          }
+        />
       ),
     },
   ])

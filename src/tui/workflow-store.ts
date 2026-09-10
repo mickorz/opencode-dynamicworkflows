@@ -24,6 +24,16 @@ export interface WorkflowNode {
   error?: string
   replayed?: boolean
   model?: string
+  // ---- Node Inspector 扩展（全部可选；老快照/metadata 无这些字段，解析为 undefined）----
+  /** 最新一次真实执行的标识（runId:callIndex:attempt） */
+  executionId?: string
+  /** 最后一次尝试的序号（1 起算） */
+  attempt?: number
+  outputType?: "text" | "structured"
+  /** 结果 2KB 截断预览（已脱敏）；完整内容在 journal，Node Detail 兜底用 */
+  outputPreview?: string
+  inputTokens?: number
+  outputTokens?: number
 }
 
 export interface WorkflowProgress {
@@ -66,6 +76,12 @@ export function parseWorkflowMetadata(raw: unknown): WorkflowProgress | null {
       error: typeof n.error === "string" ? n.error : undefined,
       replayed: n.replayed === true,
       model: typeof n.model === "string" ? n.model : undefined,
+      executionId: typeof n.executionId === "string" ? n.executionId : undefined,
+      attempt: typeof n.attempt === "number" ? n.attempt : undefined,
+      outputType: n.outputType === "text" || n.outputType === "structured" ? n.outputType : undefined,
+      outputPreview: typeof n.outputPreview === "string" ? n.outputPreview : undefined,
+      inputTokens: typeof n.inputTokens === "number" ? n.inputTokens : undefined,
+      outputTokens: typeof n.outputTokens === "number" ? n.outputTokens : undefined,
     })
   }
   if (nodes.length === 0) return null
@@ -180,18 +196,26 @@ export function selectableNodeKeys(rows: ReadonlyArray<MultiRunRow>): string[] {
   return rows.filter((row) => row.kind === "node").map((row) => selectionKey(row.runId, row.node.id))
 }
 
+/** 按选中键在多树中找节点（含所属 runId，Node Detail 导航需要）；找不到返回 undefined */
+export function findSelectedRunNode(
+  progresses: ReadonlyArray<WorkflowProgress>,
+  key: string | null,
+): { runId: string; node: WorkflowNode } | undefined {
+  if (!key) return undefined
+  for (const progress of progresses) {
+    for (const node of progress.nodes) {
+      if (selectionKey(progress.runId, node.id) === key) return { runId: progress.runId, node }
+    }
+  }
+  return undefined
+}
+
 /** 按选中键在多树中找节点；找不到返回 undefined */
 export function findSelectedNode(
   progresses: ReadonlyArray<WorkflowProgress>,
   key: string | null,
 ): WorkflowNode | undefined {
-  if (!key) return undefined
-  for (const progress of progresses) {
-    for (const node of progress.nodes) {
-      if (selectionKey(progress.runId, node.id) === key) return node
-    }
-  }
-  return undefined
+  return findSelectedRunNode(progresses, key)?.node
 }
 
 /**

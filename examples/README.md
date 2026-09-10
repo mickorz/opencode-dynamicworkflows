@@ -7,6 +7,7 @@ examples/sample-project/          # 测试工程（在这里启动 OpenCode，�
 ├─ opencode.json                  # 已配好 plugin 与 skills.paths（相对路径指向上级仓库）
 ├─ tui.json                       # TUI 侧插件配置（F-20：sidebar 实时树，与 opencode.json 分离）
 ├─ TUI测试指南.md                 # F-20 MVP-1 前台通道验收指南
+├─ NodeDetail测试指南.md          # Node Inspector 节点详情验收指南（T01~T12）
 ├─ docs/                          # 10 个标准验收集 mdx（拷贝自 OpenCode 官方文档，MIT）
 └─ scripts/                       # 可直接让 Main Agent 读取执行的 workflow 脚本
    ├─ smoke-test.js               # 冒烟：3 个 agent
@@ -18,7 +19,14 @@ examples/sample-project/          # 测试工程（在这里启动 OpenCode，�
    ├─ worktree-test.js            # P1 worktree 隔离演示
    ├─ background-test.js          # P2 后台运行演示（配合 background: true）
    ├─ tui-progress-test.js        # F-20 实时树验收：4 并行 + 1 汇总（前台）
-   └─ tui-failure-test.js         # F-20 失败态验收：全部立即超时
+   ├─ tui-failure-test.js         # F-20 失败态验收：全部立即超时
+   ├─ node-detail-ab-test.js      # Node Inspector 黄金回归：schema 与 text 双路径（T01 到 T04）
+   ├─ node-detail-large-result-test.js   # Node Inspector 大结果截断（T05）
+   ├─ node-detail-parallel-labels-test.js # Node Inspector 20 并行同 label（T06）
+   ├─ node-detail-out-of-order-test.js   # Node Inspector 乱序完成（T07）
+   ├─ node-detail-failed-test.js         # Node Inspector 失败态 Error UI（T08）
+   ├─ node-detail-running-click-test.js  # Node Inspector 运行中点击与 Open Session（T09 与 T11）
+   └─ node-detail-retry-test.js          # Node Inspector 重试多 execution（T12）
 ```
 
 ## 使用步骤
@@ -33,6 +41,7 @@ examples/sample-project/          # 测试工程（在这里启动 OpenCode，�
    ```
 
    验收与结构化测试同理换成 `scripts/acceptance-10docs.js`、`scripts/schema-test.js`
+   Node Inspector 全部用例的步骤与判定见本目录 `sample-project/NodeDetail测试指南.md`
 5. 中断验证（A-08）：验收脚本分析进行中按 Esc，确认子会话全部停止
 
 完整检查点清单见仓库内 `docs/testing.md`（随 git 分发，内嵌脚本内容与本目录 scripts/ 一致）。

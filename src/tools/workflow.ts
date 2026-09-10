@@ -8,7 +8,7 @@ import { buildProgressMetadata, type WorkflowProgressStatus } from "./workflow-p
 import { buildRunSnapshot, cleanupRunSnapshots, RUN_SNAPSHOT_HEARTBEAT_MS, tryWriteRunSnapshot } from "./run-snapshot.js"
 import { parseWorkflowScript } from "../runtime/vm.js"
 import { BackgroundRunManager } from "./background-runs.js"
-import type { JournalEntry, AgentRecord } from "../types/index.js"
+import type { JournalEntry, AgentRecord, AgentExecutionRecord } from "../types/index.js"
 
 const DESCRIPTION = [
   "运行动态工作流：执行一段 JavaScript 编排脚本，通过 agent() 将任务分发给子代理（独立会话）并行执行，",
@@ -134,13 +134,19 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
       const onAgentJournal = (entry: JournalEntry & { key: string }) => {
         journaledRunId = entry.key.slice(0, entry.key.indexOf(":"))
         try {
-          journalStore.append(journaledRunId, entry.key, {
-            hash: entry.hash,
-            result: entry.result,
-            model: entry.model,
-          })
+          // 整条 entry 直通（Node Inspector 展示元数据随 JournalEntry 扩展字段自动落盘）
+          const { key, ...entryBody } = entry
+          journalStore.append(journaledRunId, key, entryBody)
         } catch {
           // 落盘失败不阻断运行（journal 仅影响回放优化）
+        }
+      }
+      // 失败/中止 attempt 的执行历史（FR-7）：只写 executions，绝不影响 resume
+      const onAgentExecution = (payload: { key: string; execution: AgentExecutionRecord }) => {
+        try {
+          journalStore.recordExecution(runId, payload.key, payload.execution)
+        } catch {
+          // 同上：落盘失败不阻断
         }
       }
 
@@ -177,6 +183,7 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
           runId,
           resumeJournal,
           onAgentJournal,
+          onAgentExecution,
           onAgentUpdate: (record) => {
             const index = progressRecords.findIndex((r) => r.id === record.id)
             if (index >= 0) progressRecords[index] = record
@@ -229,7 +236,7 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
 
 
 
-/** 剥离可能的 markdown 围栏（照搬 Pi normalizeWorkflowScript） */
+/** 剥离可能的 markdown 围栏 */
 function normalizeWorkflowScript(script: string): string {
   let text = script.trim()
   const fence = text.match(/^```(?:js|javascript)?\s*\n([\s\S]*?)\n```$/i)

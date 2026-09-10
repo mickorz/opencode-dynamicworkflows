@@ -1,6 +1,5 @@
 /**
  * AgentSessionRunner —— Runtime 与 OpenCode 之间的最小注入缝
- *（与 pi-dynamic-workflows 的 WorkflowAgentRunner 同构，workflow.ts:166-168）
  *
  * 依赖方向：
  *  src/runtime/（禁止 import opencode 包）
@@ -34,7 +33,16 @@ export interface AgentRunOptions {
   onSessionCreated?: (sessionId: string) => void
 }
 
+/**
+ * Adapter 统一执行结果（FR-2，Node Inspector）：
+ * text / structured 两分支 + 子会话 ID。
+ * 仅在 runtime 内部流转给节点记录与 journal；对 workflow 脚本的 agent() 仍直接返回 value。
+ */
+export type AgentExecutionResult =
+  | { type: "text"; value: string; sessionId: string }
+  | { type: "structured"; value: unknown; sessionId: string }
+
 /** 最小 runner 接口：Runtime 只认这个形状 */
 export interface AgentSessionRunner {
-  run(prompt: string, options?: AgentRunOptions): Promise<unknown>
+  run(prompt: string, options?: AgentRunOptions): Promise<AgentExecutionResult>
 }

@@ -17,6 +17,7 @@ import path from "node:path"
 import { runWorkflow } from "../src/runtime/workflow-runtime.js"
 import { loadModelTiers } from "../src/agent/model-tiers.js"
 import type { AgentSessionRunner, AgentRunOptions } from "../src/agent/session-runner.js"
+import { textResult } from "./helpers.js"
 
 test("loadModelTiers：全局 + 项目 overlay，项目同名键覆盖", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wf-tiers-"))
@@ -46,7 +47,7 @@ test("tier 解析为具体 model 传给 runner", async () => {
   const runner: AgentSessionRunner = {
     async run(_prompt, options) {
       seen.push(options)
-      return "ok"
+      return textResult("ok")
     },
   }
   const result = await runWorkflow(`export const meta = { name: 'tier1' }\nreturn await agent('x', { tier: 'small' })`, {
@@ -62,7 +63,7 @@ test("优先级：显式 model 覆盖 tier", async () => {
   const runner: AgentSessionRunner = {
     async run(_prompt, options) {
       seen.push(options)
-      return "ok"
+      return textResult("ok")
     },
   }
   await runWorkflow(
@@ -77,7 +78,7 @@ test("未配置 tier：不传 model 回退会话默认，且每 tier 只告警�
   const runner: AgentSessionRunner = {
     async run(_prompt, options) {
       seen.push(options)
-      return "ok"
+      return textResult("ok")
     },
   }
   const result = await runWorkflow(
@@ -95,7 +96,7 @@ test("tier 参与哈希：换 tier 后缓存失效重跑", async () => {
   const scriptB = `export const meta = { name: 'tier4' }\nreturn await agent('x', { tier: 'big' })`
   const journal = new Map()
   const first = await runWorkflow(scriptA, {
-    agent: { run: async () => "a" } as AgentSessionRunner,
+    agent: { run: async () => textResult("a") },
     resolveTier: () => "openai/gpt-4o-mini",
     onAgentJournal: (e) => journal.set(e.key, e),
   })
@@ -105,9 +106,9 @@ test("tier 参与哈希：换 tier 后缓存失效重跑", async () => {
     agent: {
       run: async () => {
         liveCalls++
-        return "b"
+        return textResult("b")
       },
-    } as AgentSessionRunner,
+    },
     resolveTier: () => "anthropic/opus-4",
     runId: first.runId,
     resumeJournal: journal,

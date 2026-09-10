@@ -1,5 +1,5 @@
 /**
- * Workflow Runtime —— 宿主无关的编排核心（移植自 pi-dynamic-workflows src/workflow.ts，v0.1 精简面）
+ * Workflow Runtime —— 宿主无关的编排核心（v0.1 精简面）
  *
  * 执行流程：
  *  runWorkflow(script, options)
@@ -21,7 +21,14 @@ import { parseWorkflowScript, runScriptInVm } from "./vm.js"
 import { WorkflowError, WorkflowErrorCode, wrapError } from "./errors.js"
 import { createWorktree, removeWorktree, type WorktreeInfo } from "../isolation/worktree.js"
 import type { AgentSessionRunner, AgentRunOptions } from "../agent/session-runner.js"
-import type { AgentRecord, AgentUsage, JournalEntry, WorkflowRunResult } from "../types/index.js"
+import type {
+  AgentRecord,
+  AgentExecutionRecord,
+  AgentUsage,
+  JournalEntry,
+  WorkflowRunResult,
+} from "../types/index.js"
+import { buildOutputPreview, truncatePromptForJournal } from "./agent-result.js"
 import { createHash } from "node:crypto"
 
 /** 运行时最大并发（与 Claude Code / Pi 一致） */
@@ -77,6 +84,8 @@ export interface WorkflowRunOptions {
   cwd?: string
   /** agent 记录到达终态（ok/failed/aborted，含缓存回放）时回调（P2 后台进度用） */
   onAgentUpdate?: (record: AgentRecord) => void
+  /** 每个 attempt 到达失败/中止终态时回调（FR-7 执行历史）；payload 绝不携带 hash/result，落盘不影响 resume */
+  onAgentExecution?: (payload: { key: string; execution: AgentExecutionRecord }) => void
 }
 
 /** checkpoint() 的可选项（P1-4，仅确认型：OpenCode 无自由文本 UI 通道） */
@@ -95,7 +104,7 @@ interface RuntimeState {
   callSeq: number
   /** 已告警过的未配置 tier（每 run 每 tier 只告警一次） */
   warnedTiers: Set<string>
-  /** 首个未命中 journal 的 callIndex；其后所有调用一律 live 重跑（最长未变前缀语义，照搬 Pi） */
+  /** 首个未命中 journal 的 callIndex；其后所有调用一律 live 重跑（最长未变前缀语义） */
   firstMiss: number
 }
 
@@ -218,6 +227,12 @@ export async function runWorkflow<T = unknown>(
       record.status = "ok"
       record.replayed = true
       record.model = cached.model
+      // Node Inspector 元数据恢复：老 journal 无这些字段时为 undefined，读端容忍
+      record.executionId = cached.executionId
+      record.attempt = cached.attempt
+      if (cached.outputType === "text" || cached.outputType === "structured") {
+        record.outputType = cached.outputType
+      }
       options.onAgentUpdate?.(record)
       return cached.result
     }
@@ -253,6 +268,36 @@ export async function runWorkflow<T = unknown>(
           const attemptController = new AbortController()
           const onRunAbort = () => attemptController.abort()
           options.signal?.addEventListener("abort", onRunAbort)
+          // 本次执行的标识与计时（FR-1：nodeId=runId:callIndex，executionId 追加 attempt 维度）
+          const attemptStarted = Date.now()
+          const executionId = `${runId}:${callIndex}:${attempt}`
+          // usage 基线：record 上的拆分计数跨 attempt 累计，差值即本次执行用量
+          const usageBaseIn = record.inputTokens ?? 0
+          const usageBaseOut = record.outputTokens ?? 0
+          const attemptUsage = () => ({
+            inputTokens: (record.inputTokens ?? 0) - usageBaseIn,
+            outputTokens: (record.outputTokens ?? 0) - usageBaseOut,
+          })
+          /** 失败/中止 attempt 的执行记录发射（FR-7）；成功路径不发，读端以 journal entry 本体为最新执行。
+           *  同时把 executionId/attempt 回填 record：失败节点也要能在 Node Detail 显示尝试次数 */
+          const emitExecution = (status: "failed" | "aborted", error?: string) => {
+            record.executionId = executionId
+            record.attempt = attempt
+            options.onAgentExecution?.({
+              key: deltaKey,
+              execution: {
+                executionId,
+                attempt,
+                status,
+                label,
+                sessionId: record.sessionId,
+                error,
+                startedAt: attemptStarted,
+                durationMs: Date.now() - attemptStarted,
+                usage: attemptUsage(),
+              },
+            })
+          }
           try {
             const runOptions: AgentRunOptions = {
               label,
@@ -265,28 +310,55 @@ export async function runWorkflow<T = unknown>(
               onUsage: (usage: AgentUsage) => {
                 record.tokens = (record.tokens ?? 0) + (usage.total ?? 0)
                 record.cost = (record.cost ?? 0) + (usage.cost ?? 0)
+                record.inputTokens = (record.inputTokens ?? 0) + (usage.input ?? 0)
+                record.outputTokens = (record.outputTokens ?? 0) + (usage.output ?? 0)
               },
               onSessionCreated: (sessionId) => {
                 record.sessionId = sessionId
                 options.onAgentUpdate?.(record)
               },
             }
-            const value = await withTimeout(agentRunner.run(effectivePrompt, runOptions), timeout, label, () =>
+            const execution = await withTimeout(agentRunner.run(effectivePrompt, runOptions), timeout, label, () =>
               attemptController.abort(),
             )
+            const value = execution.value
             record.status = "ok"
             record.durationMs = Date.now() - agentStarted
             record.model = modelSpec
+            // Node Inspector 元数据（FR-1/FR-3）：sessionId 以本次执行结果为准
+            record.executionId = executionId
+            record.attempt = attempt
+            record.sessionId = execution.sessionId
+            record.outputType = execution.type
+            record.outputPreview = buildOutputPreview(execution.value)
             options.onAgentUpdate?.(record)
-            // 成功且非空结果写入 journal 回调；失败/null/空文本不进（与 Pi 一致）
+            // 成功且非空结果写入 journal 回调；失败/null/空文本不进（与 Pi 一致）。
+            // 载荷为整条 JournalEntry（展示元数据随扩展字段直通落盘）；prompt 用原始脚本入参（非 worktree 拼接版）
             if (!isEmptyTextResult(value, scriptOptions.schema)) {
-              options.onAgentJournal?.({ key: deltaKey, hash: callHash, result: value, model: modelSpec })
+              options.onAgentJournal?.({
+                key: deltaKey,
+                hash: callHash,
+                result: value,
+                model: modelSpec,
+                label,
+                phase: assignedPhase,
+                agentType: scriptOptions.agentType,
+                sessionId: execution.sessionId,
+                prompt: truncatePromptForJournal(prompt),
+                outputType: execution.type,
+                executionId,
+                attempt,
+                startedAt: attemptStarted,
+                durationMs: Date.now() - attemptStarted,
+                usage: attemptUsage(),
+              })
             }
             return value
           } catch (error) {
             if (isAborted()) {
               record.status = "aborted"
               record.durationMs = Date.now() - agentStarted
+              emitExecution("aborted")
               options.onAgentUpdate?.(record)
               throw wrapError(error)
             }
@@ -295,6 +367,7 @@ export async function runWorkflow<T = unknown>(
               record.status = "failed"
               record.error = workflowError.message
               record.durationMs = Date.now() - agentStarted
+              emitExecution("failed", workflowError.message)
               options.onAgentUpdate?.(record)
               throw workflowError
             }
@@ -302,10 +375,12 @@ export async function runWorkflow<T = unknown>(
               record.status = "failed"
               record.error = workflowError.message
               record.durationMs = Date.now() - agentStarted
+              emitExecution("failed", workflowError.message)
               options.onAgentUpdate?.(record)
               log(`agent "${label}" ${maxAttempts} 次尝试后失败: ${workflowError.code} ${workflowError.message}`)
               return null
             }
+            emitExecution("failed", workflowError.message)
             log(`agent "${label}" 第 ${attempt} 次尝试失败，重试: ${workflowError.message}`)
           } finally {
             options.signal?.removeEventListener("abort", onRunAbort)
@@ -378,7 +453,7 @@ export async function runWorkflow<T = unknown>(
     error: (m: unknown) => log(`[error] ${String(m)}`),
   }
 
-  // ── 质量与控制 DSL（P1-4，移植自 Pi；纯构建在 agent()/parallel() 之上，callSeq 稳定、resume 安全） ──
+  // ── 质量与控制 DSL（P1-4，纯构建在 agent()/parallel() 之上，callSeq 稳定、resume 安全） ──
 
   const VERIFY_SCHEMA: Record<string, unknown> = {
     type: "object",
@@ -400,7 +475,7 @@ export async function runWorkflow<T = unknown>(
     return count
   }
 
-  /** 对抗式评审：多个 reviewer 尝试反驳 item，投票达阈值判真（照搬 Pi verify） */
+  /** 对抗式评审：多个 reviewer 尝试反驳 item，投票达阈值判真 */
   const verify = async (
     item: unknown,
     opts: { reviewers?: number; threshold?: number; lens?: string | string[] } = {},
@@ -428,7 +503,7 @@ export async function runWorkflow<T = unknown>(
     }
   }
 
-  /** 评审团：多个 judge 按指标给每个候选打分，返回最高均分（照搬 Pi judgePanel） */
+  /** 评审团：多个 judge 按指标给每个候选打分，返回最高均分 */
   const judgePanel = async (
     attempts: unknown[],
     opts: { judges?: number; rubric?: string } = {},
@@ -464,7 +539,7 @@ export async function runWorkflow<T = unknown>(
     return best
   }
 
-  /** 有界重试糖（照搬 Pi retry）：直到 until 通过或耗尽，返回最后一次结果（不抛错） */
+  /** 有界重试糖：直到 until 通过或耗尽，返回最后一次结果（不抛错） */
   const retry = async (
     thunk: (attempt: number) => Promise<unknown> | unknown,
     opts: { attempts?: number; until?: (r: unknown) => boolean } = {},
@@ -559,7 +634,7 @@ export async function runWorkflow<T = unknown>(
   }
 }
 
-/** 带超时的 Promise 竞争；onTimeout 在拒绝生效前触发，用于取消底层工作（照搬 Pi withTimeout） */
+/** 带超时的 Promise 竞争；onTimeout 在拒绝生效前触发，用于取消底层工作 */
 async function withTimeout<T>(
   promise: Promise<T>,
   ms: number | null,
@@ -599,7 +674,7 @@ function normalizeConcurrency(value: unknown): number {
 }
 
 /**
- * agent 调用的稳定身份哈希（P1-1，照搬 Pi hashAgentCall 思路）。
+ * agent 调用的稳定身份哈希（P1-1）。
  * 身份面 = prompt / model spec / tier / phase / agentType / schema，sha256 后十六进制。
  * 注意：model/tier 只取脚本声明的 spec（与 Pi 一致，resolveTier 解析结果不进哈希，换 tier 配置不破缓存）。
  */

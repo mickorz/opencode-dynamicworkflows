@@ -1,5 +1,5 @@
 /**
- * ./tui entrypoint bootstrap（照搬 opencode-subagents-view MIT 的 tui.tsx，改中文注释）
+ * ./tui entrypoint bootstrap
  *
  * 本文件刻意不静态 import solid-js / @opentui/solid，也不含插件逻辑；
  * 实现在 src/tui/plugin.tsx。两个坑的规避都在本模块加载路径上，
@@ -66,7 +66,13 @@ function isInsideNodeModules(path: string): boolean {
 /** 需要一起逃逸出 node_modules 的实现文件（保持相对 import 可用）
  *  注意：必须列出 plugin.tsx 的全部本地依赖文件，漏一个就会在 vendor 目录里
  *  解析不到对应模块，TUI 插件静默加载失败（npm 安装方式才触发，路径安装不走这里） */
-const IMPLEMENTATION_FILES = ["plugin.tsx", "workflow-store.ts", "run-snapshot-reader.ts"]
+const IMPLEMENTATION_FILES = [
+  "plugin.tsx",
+  "workflow-store.ts",
+  "run-snapshot-reader.ts",
+  "journal-reader.ts",
+  "result-view.ts",
+]
 
 function vendorImplementationOutsideNodeModules(packageRoot: string, version: string): string {
   const vendorDir = join(tmpdir(), `opencode-dynamic-workflows-vendor-${version}`)

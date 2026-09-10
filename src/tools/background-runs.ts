@@ -150,11 +150,16 @@ export class BackgroundRunManager {
         resolveTier: (tier) => modelTiers[tier],
         onAgentJournal: (entry) => {
           try {
-            journalStore.append(entry.key.slice(0, entry.key.indexOf(":")), entry.key, {
-              hash: entry.hash,
-              result: entry.result,
-              model: entry.model,
-            })
+            // 整条 entry 直通（Node Inspector 展示元数据随 JournalEntry 扩展字段自动落盘）
+            const { key, ...entryBody } = entry
+            journalStore.append(key.slice(0, key.indexOf(":")), key, entryBody)
+          } catch {
+            // 落盘失败不阻断运行
+          }
+        },
+        onAgentExecution: (payload) => {
+          try {
+            journalStore.recordExecution(info.runId, payload.key, payload.execution)
           } catch {
             // 落盘失败不阻断运行
           }
