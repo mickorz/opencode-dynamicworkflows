@@ -1,5 +1,5 @@
 /**
- * 并发限制器（照搬 pi-dynamic-workflows src/workflow.ts createLimiter）
+ * 并发限制器
  */
 
 /** 创建一个最多同时执行 limit 个任务的信号量 */

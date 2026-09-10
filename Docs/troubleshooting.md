@@ -41,6 +41,11 @@
 - 沙箱禁止 `import` / `require` / `Date.now()` / `Math.random()` / `new Date()`（确定性重放要求）
 - 时间戳、随机值改为通过 workflow 工具的 `args` 参数注入，脚本内用全局 `args` 读取
 
+**agent 报 `agent "x" 超时 (ms)`**
+
+- 单 agent 调大或省略 `timeoutMs`（省略且未设 run 级缺省则不设硬超时）；run 级调 `agentTimeoutMs` 入参
+- 注意超时会占用 `retries` 重试次数：重试也超时说明任务本身太慢，先拆小任务或换模型
+
 **agent 返回 null 或全部 null**
 
 - 可恢复失败（网络/超时/限流）重试耗尽后该 agent 返回 null，不抛错——重跑一次即可；频繁出现加 `agentRetries: 2` 参数（上限 3）

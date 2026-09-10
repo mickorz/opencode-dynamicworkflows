@@ -58,7 +58,7 @@ API 在已安装的 `@opencode-ai/plugin` / `@opencode-ai/sdk` 类型中找不�
 
 ## 测试
 
-- node:test + tsx（与 pi-dynamic-workflows 的 53 个测试同框架）
+- node:test + tsx
 - runtime 测试注入 fake runner（参考 `tests/` 现有模式：countingAgent / deferredAgent / deferred gate），不 mock HTTP
 - worktree 相关测试跑真实 git（P1 引入时）
 

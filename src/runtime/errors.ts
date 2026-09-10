@@ -1,5 +1,5 @@
 /**
- * workflow 运行时错误类型（移植自 pi-dynamic-workflows src/errors.ts 的最小集）
+ * workflow 运行时错误类型（最小集）
  */
 
 export enum WorkflowErrorCode {

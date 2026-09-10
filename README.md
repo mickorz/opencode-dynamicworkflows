@@ -2,7 +2,7 @@
 
 OpenCode 动态工作流插件：Main Agent 生成一段 JavaScript 编排脚本，由 Runtime 在 VM 沙箱中执行，通过 `agent() / parallel() / pipeline()` 将任务分发给大量独立子会话并行处理，脚本内汇总后仅把最终结果返回主上下文——解决大批量并行任务的主上下文污染问题。
 
-参考并移植自 [pi-dynamic-workflows](https://github.com/QuintinShaw/pi-dynamic-workflows)（MIT），底层适配 OpenCode v1 插件 API。
+底层基于 OpenCode v1 插件 API。
 
 ## 30 秒了解
 
@@ -11,6 +11,8 @@ OpenCode 动态工作流插件：Main Agent 生成一段 JavaScript 编排脚本
 **方案**：你用自然语言提需求 → Main Agent 自动生成一段编排脚本 → 插件在沙箱里执行它，把任务分发给几十个独立子会话并行跑 → 主会话只收到一份汇总结果 + 每个子任务的耗时与 token 统计。运行期间 TUI 侧边栏还有实时进度树：
 
 ![TUI 实时工作流树](assets/tui_workflowtree.png)
+
+点击树上任意节点进入**节点详情视图**：直接查看该 agent 的最终结果（文本或 JSON 美化展示，结构化输出不再是一片空白），附执行元数据（模型、耗时、token、子会话）与 Open Session 入口回看执行过程。
 
 **你不需要会写代码**。编排脚本由 Main Agent 按内置 skill 自动生成；想深入时再参考 [workflow-authoring DSL 参考](https://github.com/mickorz/opencode-dynamicworkflows/blob/main/skills/workflow-authoring/references/runtime.md)。
 
@@ -100,6 +102,29 @@ return r
 ```
 
 `r` 直接是 JSON 对象（`r.ok`、`r.summary` 可直接访问），不用自己解析文本。更多见 [how-to-guides](docs/how-to-guides.md) 的「使用不同模型编排」与「schema 结构化返回」两章。
+
+**再进一步：超时与重试。** 慢任务单设超时，可恢复失败（含超时）自动重试：
+
+```
+用 workflow 工具执行以下脚本，原样执行不要改动：
+
+export const meta = { name: 'timeout_retry_demo', description: '单 agent 超时与重试' }
+
+// 60 秒硬超时，可恢复失败自动重试 2 次（共 3 次尝试）
+const r = await agent('分析 docs 目录并输出要点清单', { label: 'docs分析', timeoutMs: 60000, retries: 2 })
+return r
+```
+
+要点：`timeoutMs` 毫秒，省略则不设硬超时；`retries` 上限 3，超时属于可重试失败；也可在工具入参里传 `agentTimeoutMs` / `agentRetries` 给整次 run 设缺省，单 agent 的 `timeoutMs` / `retries` 优先。详见 [how-to-guides](docs/how-to-guides.md) 的「超时与重试」章。
+
+**同一个脚本带参数重跑：args。** 脚本里读全局 `args`，口令末尾追加参数，脚本不用改：
+
+```
+用 workflow 工具执行 scripts/node-detail-ab-test.js，原样执行不要改动，
+args 传 {"model": "biangfeng-gateway/glm-5.2"}
+```
+
+脚本侧接收（缺省回退，参数可省）：`const modelOptions = {}; if (args && typeof args.model === 'string') modelOptions.model = args.model`，再把 `...modelOptions` 展开进 `agent()` 选项。沙箱禁用 `Date.now()` / `Math.random()`，外部值（列表、路径、时间戳）都从 `args` 注入。详见 [how-to-guides](docs/how-to-guides.md) 的「带参数执行」章。
 
 ## 核心概念
 

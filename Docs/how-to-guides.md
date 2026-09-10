@@ -1,4 +1,4 @@
-# 进阶用法：模型编排、schema 结构化、后台运行、断点续跑、质量 DSL、worktree 隔离
+# 进阶用法：模型编排、schema 结构化、超时重试、参数注入、后台运行、断点续跑、质量 DSL、worktree 隔离
 
 > 六个独立场景，按需取用。DSL 全部参数与语义的权威细节见 [workflow-authoring DSL 参考](https://github.com/mickorz/opencode-dynamicworkflows/blob/main/skills/workflow-authoring/references/runtime.md)。
 
@@ -58,6 +58,69 @@ if (!result.ok) return '分析失败：' + (result.summary ?? '')
 - 实现机制：走 OpenCode 原生结构化输出（`format: json_schema`）；网关不支持时自动降级（prompt 要求 JSON + 本地宽松解析 + 必填校验），脚本无需感知
 - 已知现象：schema agent 的子会话正文可能为空（结果在 StructuredOutput 工具调用里，不在正文）——正常，不是故障，见 [troubleshooting](troubleshooting.md)
 - 与质量 DSL 组合：输出格式不稳定时 `retry(() => agent(prompt, { schema }), { until: r => r && r.ok })`
+
+## 超时与重试（timeoutMs / retries）
+
+**场景**：慢任务设硬超时快速止损；偶发失败（网络/限流/超时）自动重试，不让人守着。
+
+```javascript
+// 单 agent 级：60 秒硬超时，可恢复失败重试 2 次（共 3 次尝试）
+const r = await agent('深度分析 docs 目录并输出要点清单', {
+  label: 'docs分析',
+  timeoutMs: 60000,
+  retries: 2,
+})
+```
+
+run 级缺省（工具入参，对本次所有 agent 生效，单 agent 参数优先）：
+
+```
+用 workflow 工具执行以下脚本，原样执行不要改动，agentTimeoutMs 传 120000，agentRetries 传 1：
+
+export const meta = { name: 'timeout_retry_demo', description: 'run 级超时重试缺省' }
+
+const r = await Promise.all([
+  agent('任务A：分析 README 并总结', { label: 'a' }),
+  agent('任务B：分析 docs 并总结', { label: 'b', timeoutMs: 30000 }), // 单 agent 覆盖为 30 秒
+])
+return r
+```
+
+要点：
+
+- `timeoutMs` 毫秒；省略且未设 run 级缺省时不设硬超时；超时报错形如 `agent "x" 超时 (ms)`
+- `retries` 上限 3，默认 0；超时属于可重试失败，占用重试次数
+- 优先级：单 agent `timeoutMs` / `retries` > 工具入参 `agentTimeoutMs` / `agentRetries` > 不设超时/不重试
+- 与质量 DSL 的 `retry` 区分：DSL retry 是「直到 until 条件通过」（对结果不满意就换着再来），`retries` 是「可恢复失败后原样重试」（网络/限流/超时）；两者可叠加
+
+## 带参数执行（args）
+
+**场景**：同一个脚本不改一行代码重跑多种配置（如 A/B 换模型）；或把外部值（文件列表、路径、时间戳）传进沙箱——沙箱禁用 `Date.now()` / `Math.random()`，动态值只能从 `args` 进。
+
+口令（以 examples/sample-project/scripts/node-detail-ab-test.js 为例，换模型重跑）：
+
+```
+用 workflow 工具执行 scripts/node-detail-ab-test.js，原样执行不要改动，
+args 传 {"model": "biangfeng-gateway/glm-5.2"}
+```
+
+脚本侧接收（该脚本的真实写法，缺省回退）：
+
+```javascript
+// args.model 可选（"provider/modelId" 形式）；缺省用会话默认模型
+const modelOptions = {}
+if (args && typeof args.model === 'string') modelOptions.model = args.model
+
+// 展开进 agent 选项：传了就生效，没传就退回默认
+const structured = await agent('...', { label: 'schema-reader', ...modelOptions, schema: SCHEMA })
+```
+
+要点：
+
+- `args` 是 workflow 工具入参（JSON 对象），脚本内用全局 `args` 读取，任意嵌套层级都行
+- 接收处一律先判型再取值（`typeof args.xxx === 'string'`），参数可省不报错
+- 与 resume 的交互：args 变了会影响受它控制的 prompt / model，对应调用的哈希随之变化，resume 只回放未受影响的调用（改哪重跑哪，符合预期）
+- 纯参数变更不改脚本时，也可用 `resumeFromRunId` 续跑：未变调用直接回放，只重跑参数影响到的部分
 
 ## 后台运行长任务
 

@@ -11,7 +11,7 @@
  *  removeWorktree(wt)
  *   -> git worktree remove --force + git branch -D（best-effort，失败不抛）
  *
- * 注意（照搬 Pi worktree.ts 立场）：
+ * 设计立场：
  *  - 结果不自动合并：路径暴露给调用方（prompt 经 directory query 路由到 worktree）
  *  - 失败静默降级为共享目录运行，只 log 一行
  *  - 确定性命名（runId-callIndex-label）保证 resume 时 key 稳定

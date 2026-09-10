@@ -1,5 +1,5 @@
 /**
- * workflow 脚本解析与 VM 沙箱执行（移植自 pi-dynamic-workflows src/workflow.ts）
+ * workflow 脚本解析与 VM 沙箱执行
  *
  * 解析流程：
  *  DETERMINISM_BLOCKLIST 正则快检
