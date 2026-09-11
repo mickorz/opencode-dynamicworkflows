@@ -152,13 +152,13 @@ export function buildSidebarRows(progress: WorkflowProgress): SidebarRow[] {
   return rows
 }
 
-/** 单树标题行：名称 进度计数 运行中后缀 token 合计（sidebar 与全屏路由共用） */
+/** 单树标题行：名称 进度计数 运行中后缀 token 合计 runId（sidebar 与全屏路由共用；runId 供 resume 续跑复制） */
 export function headerLine(progress: WorkflowProgress): string {
   const suffix =
     progress.status === "running" && progress.running > 0 ? ` | ${progress.running} running` : ""
   const tokens = sumTokens(progress)
   const tokensPart = tokens > 0 ? ` | ${formatTokens(tokens)} tok` : ""
-  return `${progress.name} (${progress.completed}/${progress.total}${suffix})${tokensPart}`
+  return `${progress.name} (${progress.completed}/${progress.total}${suffix})${tokensPart} | ${progress.runId}`
 }
 
 /**
