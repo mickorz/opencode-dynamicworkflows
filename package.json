@@ -13,7 +13,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "opencode-dynamic-workflows": "./dist/cli/index.js"
+    "opencode-dynamic-workflows": "dist/cli/index.js"
   },
   "exports": {
     ".": {

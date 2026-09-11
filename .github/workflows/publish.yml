@@ -39,6 +39,12 @@ jobs:
 
       - run: npm ci
 
+      # OIDC Trusted Publishing 前置条件可观测：Node >= 22.14、npm >= 11.5.1 才支持
+      - name: 打印工具链版本
+        run: |
+          node --version
+          npm --version
+
       # 防手滑：tag 与 package.json 版本不一致直接失败，不发错版本
       - name: 校验 tag 与 package.json 版本一致
         run: test "${GITHUB_REF_NAME#v}" = "$(node -p "require('./package.json').version")"
