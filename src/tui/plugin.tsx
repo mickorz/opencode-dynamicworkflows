@@ -453,7 +453,7 @@ function RouteView(props: { api: TuiPluginApi; sessionID?: string }) {
  * 数据双通道：节点状态走快照信号（复用 getOrCreateProgress 的 1s 轮询，完成后自动刷新）；
  * result 内容走 journal 文件按需读取（挂载即读 + 轮询 diff 守卫 + 状态翻转立即重读）。
  * 快照被新 run 清理时（终态快照有生命周期），header 由 journal entry 元数据回填。
- * 键位：Enter/o 打开子会话（Open Session，sessionId 取自节点）· Esc/q 返回来源路由。
+ * 键位：Enter/o 打开子会话（Open Session，sessionId 取自节点）· up/Esc/q 返回 · left/right 切换相邻 agent。
  */
 function NodeDetailView(props: {
   api: TuiPluginApi
@@ -529,6 +529,15 @@ function NodeDetailView(props: {
     reloadJournal()
   })
 
+  // 节点切换（同路由换参不重挂）：重置 diff 守卫并立即按新节点重读 journal，
+  // 否则同一 run 内切节点时 lastRaw 未变会拦住重读，entry 停留在旧节点结果
+  createEffect(() => {
+    props.runId
+    props.nodeId
+    lastRaw = null
+    reloadJournal()
+  })
+
   // ---- Result 展示状态（空态三分 + 正文）----
   const resultState = () =>
     resolveResultState({
@@ -537,6 +546,24 @@ function NodeDetailView(props: {
       entry: entry(),
       preview: view()?.outputPreview,
     })
+
+  // 节点切换（left/right）：沿主视图 j/k 同一份可选序列循环，换参导航；
+  // 同路由换参会响应式更新 props（不重挂），因此下面另有 runId/nodeId 变化时
+  // 重置 diff 守卫重读 journal 的 effect，避免 entry 停留在旧节点结果
+  const switchSibling = (delta: number) => {
+    if (!props.runId || !props.nodeId) return
+    const keys = selectableNodeKeys(buildMultiRunRows(progresses()))
+    const next = moveSelection(keys, selectionKey(props.runId, props.nodeId), delta)
+    if (next === undefined) return
+    const found = findSelectedRunNode(progresses(), next)
+    if (!found) return
+    props.api.route.navigate(NODE_DETAIL_ROUTE, {
+      sessionID: props.sessionID,
+      runId: found.runId,
+      nodeId: found.node.id,
+      returnRoute: props.returnRoute,
+    })
+  }
 
   // ---- 操作 ----
   const openSession = () => {
@@ -592,10 +619,14 @@ function NodeDetailView(props: {
           commands: [
             { name: "workflow.node.open", run: () => openSession() },
             { name: "workflow.node.back", run: () => backFromDetail() },
+            { name: "workflow.node.prev", run: () => switchSibling(-1) },
+            { name: "workflow.node.next", run: () => switchSibling(1) },
           ],
           bindings: [
             { key: "enter,o", cmd: "workflow.node.open", desc: "Open agent session" },
-            { key: "escape,q", cmd: "workflow.node.back", desc: "Back" },
+            { key: "escape,q,up", cmd: "workflow.node.back", desc: "Back" },
+            { key: "left", cmd: "workflow.node.prev", desc: "Previous agent" },
+            { key: "right", cmd: "workflow.node.next", desc: "Next agent" },
           ],
         })
       }}
@@ -691,7 +722,7 @@ function NodeDetailView(props: {
             {/* 操作区：键位提示 */}
             <box paddingTop={1}>
               <text fg={theme().textMuted}>
-                {view()?.sessionId ? "Enter/o Open Session · " : ""}Esc/q 返回 · 滚轮滚动正文
+                {view()?.sessionId ? "Enter/o Open Session · " : ""}left/right 切换 agent · Esc/up 返回 · 滚轮滚动正文
               </text>
             </box>
           </>
