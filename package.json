@@ -6,7 +6,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mickorz/opencode-dynamicworkflows.git"
+    "url": "https://github.com/mickorz/opencode-dynamicworkflows"
   },
   "files": [
     "dist",
