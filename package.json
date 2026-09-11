@@ -4,6 +4,10 @@
   "description": "OpenCode 动态工作流插件：Main Agent 生成 JS Workflow，Runtime 并行调度子会话，仅返回汇总结果",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mickorz/opencode-dynamicworkflows.git"
+  },
   "files": [
     "dist",
     "src/tui",
