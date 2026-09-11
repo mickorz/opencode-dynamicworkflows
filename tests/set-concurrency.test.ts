@@ -105,7 +105,7 @@ test("run 内 setConcurrency 后实际并发随之变化", async () => {
     gated.releaseAll()
     result = await Promise.race([runPromise, new Promise<undefined>((r) => setTimeout(() => r(undefined), 5))])
   }
-  if (result === undefined) await runPromise
+  if (result === undefined) result = await runPromise
   assert.ok(result.logs.some((line) => line.includes("并发上限调整为 3（原 1）")), JSON.stringify(result.logs))
 })
 
