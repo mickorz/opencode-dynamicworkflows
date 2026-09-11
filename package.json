@@ -1,6 +1,6 @@
 {
   "name": "@mickorz/opencode-dynamic-workflows",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "OpenCode 动态工作流插件：Main Agent 生成 JS Workflow，Runtime 并行调度子会话，仅返回汇总结果",
   "type": "module",
   "license": "MIT",
