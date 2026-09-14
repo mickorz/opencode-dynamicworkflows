@@ -109,3 +109,22 @@ workflow tool 传 `background: true` 时立即返回 runId、本轮对话不阻�
 - `workflow_control({ action: "stop", runId })`：停止运行中的 run（已完成的 agent 结果在 journal，可用 `workflow(resumeFromRunId)` 续跑）
 
 适用：长跑批量任务（大扇出分析、全仓审计）且期间想继续对话。后台 run 的 checkpoint 走 headless 默认值（无人工弹窗）。
+
+## 嵌套工作流（经 general 子代理）
+
+脚本沙箱内没有 `workflow()` 全局；要串联多层大流程，让 `agentType: 'general'` 的子代理去调用 workflow 工具（general 与主会话一样可用插件工具，缺省的 explore 只读白名单调不了）：
+
+```javascript
+const middle = await agent(
+  '请调用 workflow 工具执行一个子工作流，参数：scriptPath 为 "scripts/chain-middle.js"。' +
+  '不要传 background 与 script。等子工作流执行完成后，把最终结果 JSON 原样作为回复输出。',
+  { label: '子workflow:middle', agentType: 'general', timeoutMs: 600000 },
+)
+```
+
+约定：
+
+- prompt 必须写明"scriptPath only、不传 background、等完成、结果 JSON 原样回传"，防止中间层拿到转述
+- 结果经子代理文本回复回传，是字符串；需要结构时自行 JSON 解析容错
+- 每层独立 runId / journal / token 计量；TUI 层级树把嵌套子树挂在触发节点名下
+- 嵌套无深度保护，自行控层防失控

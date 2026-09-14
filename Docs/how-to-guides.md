@@ -195,3 +195,35 @@ await parallel(tasks.map(task => () =>
 - 必须配合 `agentType: 'general'`（缺省 explore 只读，写不了文件）
 - 非 git 目录或 worktree 创建失败时**静默降级**为共享目录（日志可见），不会报错中断
 - 运行结束（含超时/中断）自动拆除 worktree 与分支；**结果不自动合并**——需要保留改动时，让 agent 在脚本里把产物写到指定路径或以文本返回
+
+## 嵌套工作流（workflow 里再跑 workflow）
+
+**场景**：把多个 workflow 串联成一个更大的流程——上层 workflow 的某个 agent 自己再去执行一个完整的子 workflow（如 根 -> 中间层并行扇出 -> 多个叶子），各层独立计量 token、耗时与 journal。
+
+**原理**：`agent()` 开的是普通子会话；`agentType: 'general'` 的子代理与主会话一样能调用插件工具（含 `workflow`）。脚本沙箱内**没有** `workflow()` 全局，嵌套只能走这条链路；缺省的 explore 子代理是只读白名单，调不了 `workflow`。
+
+```javascript
+export const meta = { name: 'chain_root', description: '嵌套链根：串联中间层与叶子两层子 workflow' }
+
+phase('Launch')
+// 委托 general 子代理去执行子 workflow（scriptPath 指向子脚本文件）
+const middle = await agent(
+  '请调用 workflow 工具执行一个子工作流，参数要求：\n' +
+  '- scriptPath: "scripts/chain-middle.js"\n' +
+  '不要传 background，不要传 script（二选一规则）。必须等子工作流真正执行完成。\n' +
+  '完成后把 workflow 返回的最终结果 JSON 原样作为你的回复输出，不要添加解释文字。',
+  { label: '子workflow:middle', agentType: 'general', timeoutMs: 600000 },
+)
+
+phase('Report')
+return { middle }
+```
+
+要点：
+
+- **prompt 必须写明**：只传 `scriptPath`、不传 `background`/`script`、等执行完成、结果 JSON 原样回传——否则中间层拿到的是转述而非结构化结果
+- 子脚本与普通 workflow 完全一致（可继续嵌套下一层）；`args` 由上层 prompt 里带进子调用
+- **TUI 层级树**：嵌套 run 的实时/终态子树直接挂在触发节点名下（缩进一级、细箭头、可独立折叠），主会话侧边栏与全屏 `/workflow` 视图同构；各层 token 独立合计，分层成本可见
+- **每层独立**：runId、journal、断点续跑、快照互不干扰；中断后续跑用对应层自己的 runId
+- **无深度保护**：嵌套层级无硬限制，编排时自行控层防失控烧 token（每层都有 general 子代理的会话开销）
+- 嵌套子代理会话与主会话同目录：快照按 `rootSessionId` 血统归属主会话显示，进程重启后血统丢失则该批嵌套树退化为不可见（不影响执行与结果）

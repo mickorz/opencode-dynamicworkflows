@@ -14,6 +14,10 @@ OpenCode 动态工作流插件：Main Agent 生成一段 JavaScript 编排脚本
 
 点击树上任意节点进入**节点详情视图**：直接查看该 agent 的最终结果（文本或 JSON 美化展示，结构化输出不再是一片空白），附执行元数据（模型、耗时、token、子会话）与 Open Session 入口回看执行过程。
 
+**嵌套工作流**：`agentType: 'general'` 的子代理本身也能再调 `workflow` 工具，把多层 workflow 串联成一个大流程（如 根 workflow -> 中间层并行扇出 -> 多个叶子 workflow）。每层嵌套 run 独立计量 token 与耗时，并在 TUI 侧边栏以**层级树**呈现——嵌套子树直接挂在触发节点名下，逐级缩进：
+
+![TUI 嵌套工作流层级树](assets/workflow-tree-tui.png)
+
 **你不需要会写代码**。编排脚本由 Main Agent 按内置 skill 自动生成；想深入时再参考 [workflow-authoring DSL 参考](https://github.com/mickorz/opencode-dynamicworkflows/blob/main/skills/workflow-authoring/references/runtime.md)。
 
 ## 前提条件
@@ -130,6 +134,7 @@ args 传 {"model": "biangfeng-gateway/glm-5.2"}
 
 - **子会话隔离**：每个 agent 是独立子会话，父会话内用 subagent 导航可查看各自完整过程；主会话只有汇总。
 - **缺省只读**：`agent()` 默认用只读的 explore 子代理；需要写文件的任务显式传 `agentType: 'general'`。
+- **嵌套工作流**：general 子代理可再调 `workflow` 工具串联多层大流程，TUI 侧边栏层级树显示（嵌套子树挂触发节点下），详见 [how-to-guides](docs/how-to-guides.md) 的「嵌套工作流」章。
 - **后台与续跑**：脚本参数 `background: true` 立即返回 runId 不阻塞对话；中断后 `resumeFromRunId` 可断点续跑，已完成的 agent 不再重复消耗 token。
 - **质量助手**：`verify`（对抗式验证）/ `judgePanel`（评审团选优）/ `retry`（有界重试）/ `checkpoint`（人工确认点）。
 
@@ -139,6 +144,7 @@ args 传 {"model": "biangfeng-gateway/glm-5.2"}
 - VM 沙箱确定性护栏（禁 `Date.now()` / `Math.random()` / import / require，可确定性重放）
 - DSL：`agent / parallel / pipeline / phase / log / args` + 质量助手
 - 原生结构化输出（`schema` 走 OpenCode `format: json_schema`）、并发控制（缺省 CPU 核数-2、上限 16）、超时/重试/abort 级联、git worktree 隔离、journal 断点续跑、后台运行
+- 嵌套工作流：general 子代理内可再触发 `workflow`（多层串联），每层独立 run/journal/token 计量，TUI 层级树（画中画）显示
 
 各功能用法见 [docs/how-to-guides.md](docs/how-to-guides.md)。
 
