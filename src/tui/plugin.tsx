@@ -16,6 +16,8 @@ import type { Renderable } from "@opentui/core"
 import { For, Show, createEffect, createSignal } from "solid-js"
 import {
   buildMultiRunRows,
+  buildNestedRunRows,
+  splitRunsByParent,
   buildSidebarRows,
   findSelectedRunNode,
   findWorkflowMetadata,
@@ -188,11 +190,14 @@ function nodeLine(node: WorkflowNode): string {
   return `${node.label}${durationPart}${tokensPart}${replayed}`
 }
 
-/** 单棵 run 树：标题行折叠开关 + phase 分组节点列表（多树同显，每 run 独立一块） */
+/** 单棵 run 树：标题行折叠开关 + phase 分组节点列表（多树同显，每 run 独立一块）。
+ *  B2 层级显示：嵌套子 run（子代理会话内触发）经 childrenOf 挂在触发节点名下递归渲染 */
 function RunTree(props: {
   api: TuiPluginApi
   session_id: string
   progress: WorkflowProgress
+  childrenOf?: (parentSessionId: string) => WorkflowProgress[]
+  nested?: boolean
 }) {
   const theme = () => props.api.theme.current
   const [collapsed, setCollapsed] = getOrCreateCollapsed(
@@ -201,13 +206,15 @@ function RunTree(props: {
     props.api.lifecycle.onDispose,
   )
   const rows = () => buildSidebarRows(props.progress)
+  const childRuns = (sessionId: string | undefined) =>
+    sessionId && props.childrenOf ? props.childrenOf(sessionId) : []
 
   return (
     <box paddingBottom={1}>
-      {/* 折叠开关只挂标题行：挂外层时节点点击导航后事件冒泡会把树折起来 */}
+      {/* 折叠开关只挂标题行：挂外层时节点点击导航后事件冒泡会把树折起来；嵌套子 run 用缩进与細箭头区分 */}
       <box onMouseDown={() => setCollapsed((current) => !current)}>
-        <text fg={theme().text}>
-          <b>{collapsed() ? "▶" : "▼"}</b> {headerLine(props.progress)}
+        <text fg={props.nested ? theme().textMuted : theme().text}>
+          <b>{collapsed() ? (props.nested ? "▸" : "▶") : props.nested ? "▾" : "▼"}</b> {headerLine(props.progress)}
         </text>
       </box>
       <Show when={!collapsed()}>
@@ -257,6 +264,20 @@ function RunTree(props: {
                     </box>
                   </box>
                 </Show>
+                {/* B2：嵌套子 run 树插在触发节点之后（缩进一级）；无子 run 时 For 空渲染不占位 */}
+                <box paddingLeft={2}>
+                  <For each={childRuns(row.node.sessionId)}>
+                    {(child) => (
+                      <RunTree
+                        api={props.api}
+                        session_id={props.session_id}
+                        progress={child}
+                        childrenOf={props.childrenOf}
+                        nested
+                      />
+                    )}
+                  </For>
+                </box>
               </box>
             )
           }}
@@ -268,12 +289,21 @@ function RunTree(props: {
 
 function View(props: { api: TuiPluginApi; session_id: string }) {
   const progresses = getOrCreateProgress(props.api, props.session_id, props.api.lifecycle.onDispose)
+  // B2：拆顶层与嵌套子 run，只递归渲染顶层，嵌套树在 RunTree 内挂触发节点下
+  const parts = () => splitRunsByParent(progresses(), props.session_id)
 
   return (
     <Show when={progresses().length > 0}>
       <box>
-        <For each={progresses()}>
-          {(progress) => <RunTree api={props.api} session_id={props.session_id} progress={progress} />}
+        <For each={parts().tops}>
+          {(progress) => (
+            <RunTree
+              api={props.api}
+              session_id={props.session_id}
+              progress={progress}
+              childrenOf={parts().childrenOf}
+            />
+          )}
         </For>
       </box>
     </Show>
@@ -306,7 +336,7 @@ function RouteView(props: { api: TuiPluginApi; sessionID?: string }) {
   const progresses = props.sessionID
     ? getOrCreateProgress(props.api, props.sessionID, props.api.lifecycle.onDispose)
     : () => []
-  const rows = () => buildMultiRunRows(progresses())
+  const rows = () => buildNestedRunRows(progresses(), props.sessionID ?? "")
   const keys = () => selectableNodeKeys(rows())
   // 滚动跟随：行渲染体的 id 登记表 + 滚动容器引用，选中越屏时 scrollChildIntoView
   const rowRenderableIds = new Map<string, string>()
@@ -390,9 +420,10 @@ function RouteView(props: { api: TuiPluginApi; sessionID?: string }) {
       >
         <For each={rows()}>
           {(row) => {
+            const depthIndent = 2 + (row.depth ?? 0) * 2
             if (row.kind === "run") {
               return (
-                <box paddingTop={1}>
+                <box paddingTop={1} paddingLeft={depthIndent}>
                   <text fg={theme().text}>
                     <b>{row.title}</b>
                   </text>
@@ -401,7 +432,7 @@ function RouteView(props: { api: TuiPluginApi; sessionID?: string }) {
             }
             if (row.kind === "phase") {
               return (
-                <box paddingLeft={2} paddingTop={1}>
+                <box paddingLeft={depthIndent} paddingTop={1}>
                   <text fg={theme().textMuted}>{row.title}</text>
                 </box>
               )
@@ -412,7 +443,7 @@ function RouteView(props: { api: TuiPluginApi; sessionID?: string }) {
             return (
               <box
                 flexDirection="row"
-                paddingLeft={2}
+                paddingLeft={depthIndent}
                 backgroundColor={selected ? theme().backgroundPanel : undefined}
                 ref={(el: { id: string }) => {
                   // 登记行渲染体 id，选中越屏时 scrollChildIntoView 跟随

@@ -46,6 +46,8 @@ export interface WorkflowProgress {
   completed: number
   failed: number
   total: number
+  /** 触发本 run 的会话（B2 层级显示）：顶层 run 等于当前会话，嵌套 run 为某节点的子会话；缺省视为顶层 */
+  parentSessionId?: string
 }
 
 /** sidebar 展示行：phase 标题行或 agent 节点行 */
@@ -164,11 +166,72 @@ export function headerLine(progress: WorkflowProgress): string {
 /**
  * 多树合并行（全屏路由 /workflow 用）：每棵树前插入 run 标题行，节点行携带 runId。
  * 不同 run 的节点 id 可能重复，选中态用 runId 节点id 复合键保证跨树唯一。
+ * depth 为 B2 层级显示的缩进层级（顶层 0，嵌套子 run 递增）。
  */
 export type MultiRunRow =
-  | { kind: "run"; runId: string; title: string; status: WorkflowProgressStatus }
-  | { kind: "phase"; title: string; runId: string }
-  | { kind: "node"; node: WorkflowNode; runId: string }
+  | { kind: "run"; runId: string; title: string; status: WorkflowProgressStatus; depth?: number }
+  | { kind: "phase"; title: string; runId: string; depth?: number }
+  | { kind: "node"; node: WorkflowNode; runId: string; depth?: number }
+
+/**
+ * 按血统拆分顶层与嵌套子 run（B2 层级显示）：
+ *  顶层 = parentSessionId 缺省、等于当前会话、或指向不可见节点（孤儿提升，不隐藏数据）
+ *  子 run 挂在触发节点名下：node.sessionId === run.parentSessionId
+ * 传入列表需已按创建时间降序（pickAllProgresses 保证），子 run 同一节点下自然保持该序。
+ * 会话父子链是无环的（node 会话是 run 期间新建的子会话），递归必然终止。
+ */
+export function splitRunsByParent(
+  progresses: ReadonlyArray<WorkflowProgress>,
+  sessionId: string,
+): { tops: WorkflowProgress[]; childrenOf: (parentSessionId: string) => WorkflowProgress[] } {
+  const children = new Map<string, WorkflowProgress[]>()
+  const nodeSessions = new Set<string>()
+  for (const progress of progresses) {
+    for (const node of progress.nodes) {
+      if (node.sessionId) nodeSessions.add(node.sessionId)
+    }
+    if (progress.parentSessionId) {
+      const list = children.get(progress.parentSessionId) ?? []
+      list.push(progress)
+      children.set(progress.parentSessionId, list)
+    }
+  }
+  const tops = progresses.filter(
+    (p) => !p.parentSessionId || p.parentSessionId === sessionId || !nodeSessions.has(p.parentSessionId),
+  )
+  const childrenOf = (parentSessionId: string) => children.get(parentSessionId) ?? []
+  return { tops, childrenOf }
+}
+
+/**
+ * 层级多树行（B2）：顶层 run 各成块，嵌套子 run 的行插在其触发节点之后并带 depth 缩进。
+ * 行序即展示序，与 j/k 键盘导航、scrollChildIntoView 滚动跟随共用。
+ */
+export function buildNestedRunRows(
+  progresses: ReadonlyArray<WorkflowProgress>,
+  sessionId: string,
+): MultiRunRow[] {
+  const { tops, childrenOf } = splitRunsByParent(progresses, sessionId)
+  const rows: MultiRunRow[] = []
+  const emitRun = (progress: WorkflowProgress, depth: number) => {
+    // depth 仅在大于 0 时写入：旧形状等价（退化场景与 buildMultiRunRows 逐字段一致）
+    const withDepth = <T extends object>(row: T): T => (depth ? { ...row, depth } : row)
+    rows.push(withDepth({ kind: "run", runId: progress.runId, title: headerLine(progress), status: progress.status }))
+    let currentPhase: string | undefined
+    for (const node of progress.nodes) {
+      if (node.phase && node.phase !== currentPhase) {
+        rows.push(withDepth({ kind: "phase", title: node.phase, runId: progress.runId }))
+        currentPhase = node.phase
+      }
+      rows.push(withDepth({ kind: "node", node, runId: progress.runId }))
+      if (node.sessionId) {
+        for (const child of childrenOf(node.sessionId)) emitRun(child, depth + 1)
+      }
+    }
+  }
+  for (const top of tops) emitRun(top, 0)
+  return rows
+}
 
 export function buildMultiRunRows(progresses: ReadonlyArray<WorkflowProgress>): MultiRunRow[] {
   const rows: MultiRunRow[] = []

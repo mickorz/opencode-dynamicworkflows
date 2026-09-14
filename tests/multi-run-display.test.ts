@@ -11,13 +11,15 @@
  */
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { pickAllProgresses, runCreatedAt } from "../src/tui/run-snapshot-reader.js"
+import { pickAllProgresses, runCreatedAt, toProgress } from "../src/tui/run-snapshot-reader.js"
 import {
   buildMultiRunRows,
+  buildNestedRunRows,
   findSelectedNode,
   progressesViewKey,
   selectableNodeKeys,
   selectionKey,
+  splitRunsByParent,
   type WorkflowProgress,
 } from "../src/tui/workflow-store.js"
 import type { RunSnapshotView } from "../src/tui/run-snapshot-reader.js"
@@ -129,4 +131,86 @@ test("buildMultiRunRows：每树插入 run 标题行，跨树节点复合键唯�
   assert.ok(hit)
   assert.equal(hit.id, "n0")
   assert.equal(findSelectedNode([progress("run1", "n0")], selectionKey("run2", "n0")), undefined)
+})
+
+test("B2 层级行：嵌套子 run 挂在触发节点后带 depth 缩进，孤儿提升为顶层", () => {
+  // 三层链模拟：root(parent=主会话，节点带 sessionId) -> middle -> leaf x2，另有孤儿 run
+  const p = (runId: string, parentSessionId: string | undefined, sessionIds: string[]) => ({
+    runId,
+    name: runId,
+    status: "completed" as const,
+    phases: ["P1"],
+    nodes: sessionIds.map((sid, i) => ({ id: `${runId}:${i}`, label: `n${i}`, status: "ok" as const, sessionId: sid })),
+    running: 0,
+    completed: sessionIds.length,
+    failed: 0,
+    total: sessionIds.length,
+    parentSessionId,
+  })
+  const progresses = [
+    p("root", "ses_main", ["ses_a", "ses_z"]),
+    p("middle", "ses_a", ["ses_b", "ses_c", "ses_d"]),
+    p("leaf2", "ses_c", ["ses_f"]),
+    p("leaf1", "ses_b", ["ses_e"]),
+    p("orphan", "ses_gone", ["ses_h"]),
+  ]
+  // 传入列表按创建时间降序（root 最旧在前无妨，层级装配只看归属）
+  const rows = buildNestedRunRows(progresses, "ses_main")
+  const summary = rows.map((r) => {
+    const who = r.kind === "node" ? r.node.id : r.kind === "run" ? r.runId : r.title
+    return `${r.kind}:${who}:d${r.depth ?? 0}`
+  })
+  assert.deepEqual(summary, [
+    "run:root:d0",
+    "node:root:0:d0",
+    "run:middle:d1", // 子workflow:middle 节点(ses_a)之后插入 middle 块
+    "node:middle:0:d1",
+    "run:leaf1:d2", // middle 的 ses_b 节点之后插 leaf1
+    "node:leaf1:0:d2",
+    "node:middle:1:d1",
+    "run:leaf2:d2", // middle 的 ses_c 节点之后插 leaf2
+    "node:leaf2:0:d2",
+    "node:middle:2:d1",
+    "node:root:1:d0",
+    "run:orphan:d0", // 父会话不可见（ses_gone 无节点）→ 提升顶层
+    "node:orphan:0:d0",
+  ])
+
+  // 拆分函数：顶层归属与子 run 查询
+  const { tops, childrenOf } = splitRunsByParent(progresses, "ses_main")
+  assert.deepEqual(tops.map((t) => t.runId).sort(), ["orphan", "root"])
+  assert.deepEqual(childrenOf("ses_a").map((c) => c.runId), ["middle"])
+  assert.deepEqual(childrenOf("ses_b").map((c) => c.runId), ["leaf1"])
+})
+
+test("B2 层级行：无 parentSessionId 的旧数据退化为平铺（与 buildMultiRunRows 同序）", () => {
+  const progresses = [
+    { runId: "a", name: "a", status: "completed" as const, phases: [], nodes: [{ id: "a:0", label: "n", status: "ok" as const }], running: 0, completed: 1, failed: 0, total: 1 },
+    { runId: "b", name: "b", status: "completed" as const, phases: [], nodes: [{ id: "b:0", label: "n", status: "ok" as const }], running: 0, completed: 1, failed: 0, total: 1 },
+  ]
+  const nested = buildNestedRunRows(progresses, "ses_main")
+  const flat = buildMultiRunRows(progresses)
+  assert.deepEqual(nested, flat)
+})
+
+test("B2：toProgress 携带 parentSessionId（快照 -> 渲染模型的层级信息透传）", () => {
+  const snapshot: RunSnapshotView = {
+    version: 1,
+    runId: "run-n",
+    parentSessionId: "ses_child",
+    rootSessionId: "ses_main",
+    name: "nested",
+    status: "completed",
+    time: 1,
+    phases: [],
+    nodes: [{ id: "run-n:0", label: "n", status: "ok", sessionId: "s" }],
+    running: 0,
+    completed: 1,
+    failed: 0,
+    total: 1,
+  }
+  const progress = toProgress(snapshot)
+  assert.equal(progress.parentSessionId, "ses_child")
+  const rows = buildNestedRunRows([snapshot && progress], "ses_child")
+  assert.equal(rows[0].kind, "run", "parent 即当前会话时作为顶层渲染")
 })

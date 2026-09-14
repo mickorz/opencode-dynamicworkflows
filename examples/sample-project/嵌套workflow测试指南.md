@@ -46,7 +46,7 @@ flowchart TD
     D --> G[叶子 数据模型]
 ```
 
-4. TUI：主会话 sidebar 平铺显示全部嵌套树（root/middle/leaf x2 共 4 棵，B1 方案：快照带 rootSessionId 血统，按 run 创建时间从新到旧排列）；进子代理会话视图则只看该会话直接归属的树
+4. TUI（B2 层级树）：主会话 sidebar 只显示顶层 root 树，嵌套 run 作为子树插在触发节点名下（缩进一级、細箭头、可独立折叠）；全屏 workflow 视图同构层级缩进，j/k 导航跨层可用；无父节点的孤儿 run 自动提升为顶层不隐藏
 
 ```mermaid
 flowchart TD

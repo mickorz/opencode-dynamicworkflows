@@ -119,7 +119,7 @@ export function isStale(snapshot: RunSnapshotView, now: number): boolean {
   return snapshot.status === "running" && now - snapshot.time > RUN_SNAPSHOT_STALE_MS
 }
 
-/** 快照映射为 sidebar 渲染用的 WorkflowProgress */
+/** 快照映射为 sidebar 渲染用的 WorkflowProgress（B2：携带 parentSessionId 供层级装配） */
 export function toProgress(snapshot: RunSnapshotView): WorkflowProgress {
   return {
     runId: snapshot.runId,
@@ -131,6 +131,7 @@ export function toProgress(snapshot: RunSnapshotView): WorkflowProgress {
     completed: snapshot.completed,
     failed: snapshot.failed,
     total: snapshot.total,
+    parentSessionId: snapshot.parentSessionId,
   }
 }
 
