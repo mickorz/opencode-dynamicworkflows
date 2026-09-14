@@ -203,3 +203,35 @@ test("parseRunSnapshot：提取 Node Inspector 新字段；老快照无新字段
   assert.equal(legacy.nodes[0].outputType, undefined)
   assert.equal(legacy.nodes[0].attempt, undefined)
 })
+test("B1 嵌套显示：listSessionSnapshots 宽匹配 rootSessionId，主会话能看到嵌套 run 树", () => {
+  const dir = mkdtempSync(join(tmpdir(), "wf-reader-root-"))
+  try {
+    const record = { id: "n:0", label: "n0", status: "ok" as const, sessionId: "s1" }
+    // 根 run：parent 即主会话
+    tryWriteRunSnapshot(
+      dir,
+      buildRunSnapshot({ runId: "run-root", parentSessionId: "ses_main", name: "chain_root", status: "completed", records: [record], time: 1000 }),
+    )
+    // 嵌套 run：parent 是子代理会话，root 透传主会话
+    tryWriteRunSnapshot(
+      dir,
+      buildRunSnapshot({ runId: "run-middle", parentSessionId: "ses_child", rootSessionId: "ses_main", name: "chain_middle", status: "running", records: [record], time: 2000 }),
+    )
+    // 无关会话的 run（无 root 字段，旧格式）
+    tryWriteRunSnapshot(
+      dir,
+      buildRunSnapshot({ runId: "run-other", parentSessionId: "ses_other", status: "running", records: [record], time: 3000 }),
+    )
+
+    const views = listSessionSnapshots(dir, "ses_main")
+    assert.deepEqual(views.map((v) => v.runId).sort(), ["run-middle", "run-root"], "parent 或 root 命中均可见")
+    const middle = views.find((v) => v.runId === "run-middle")
+    assert.equal(middle?.rootSessionId, "ses_main", "rootSessionId 解析回读")
+    // 子代理会话视图仍按 parent 归属看到自己的 run；无关会话不误挂
+    assert.equal(listSessionSnapshots(dir, "ses_child").map((v) => v.runId).join(), "run-middle")
+    assert.equal(listSessionSnapshots(dir, "ses_other").length, 1)
+    assert.equal(listSessionSnapshots(dir, "ses_unknown").length, 0)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

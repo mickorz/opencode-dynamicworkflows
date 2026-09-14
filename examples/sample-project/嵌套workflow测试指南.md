@@ -46,7 +46,18 @@ flowchart TD
     D --> G[叶子 数据模型]
 ```
 
-4. TUI：多树同显，嵌套 run 各自成树（sidebar 观察运行中的实时节点）
+4. TUI：主会话 sidebar 平铺显示全部嵌套树（root/middle/leaf x2 共 4 棵，B1 方案：快照带 rootSessionId 血统，按 run 创建时间从新到旧排列）；进子代理会话视图则只看该会话直接归属的树
+
+```mermaid
+flowchart TD
+    A[主会话] --> B[子workflow middle 通用代理]
+    A --> H[根汇总]
+    B --> C[子workflow 权限 通用代理]
+    B --> D[子workflow 数据模型 通用代理]
+    B --> E[中间层汇总]
+    C --> F[叶子 权限系统]
+    D --> G[叶子 数据模型]
+```
 
 ## 注意事项
 

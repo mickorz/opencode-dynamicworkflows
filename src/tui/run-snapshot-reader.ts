@@ -21,6 +21,8 @@ export interface RunSnapshotView {
   version: number
   runId: string
   parentSessionId: string
+  /** 祖先主会话（B1 嵌套显示）：嵌套 run 的快照带根会话，主会话视图靠它命中；缺省回退 parentSessionId */
+  rootSessionId?: string
   name: string
   status: WorkflowProgressStatus
   time: number
@@ -75,6 +77,7 @@ export function parseRunSnapshot(raw: unknown): RunSnapshotView | null {
     version: RUN_SNAPSHOT_VERSION,
     runId: rec.runId,
     parentSessionId: rec.parentSessionId,
+    ...(typeof rec.rootSessionId === "string" && rec.rootSessionId ? { rootSessionId: rec.rootSessionId } : {}),
     name: typeof rec.name === "string" && rec.name ? rec.name : "workflow",
     status,
     time: rec.time,
@@ -90,7 +93,9 @@ export function parseRunSnapshot(raw: unknown): RunSnapshotView | null {
   }
 }
 
-/** 列某会话的全部快照（按 time 降序，最新在前）；目录不存在或读失败返回空 */
+/** 列某会话可见的全部快照（按 time 降序，最新在前）；目录不存在或读失败返回空。
+ *  归属判定（B1 嵌套显示）：parentSessionId 直接命中，或 rootSessionId 命中（嵌套 run 透传的祖先主会话）——
+ *  主会话视图因此能同时看到子代理会话内触发的嵌套 run 树 */
 export function listSessionSnapshots(directory: string, sessionId: string): RunSnapshotView[] {
   const dir = join(directory, ".opencode-workflows", "runs")
   if (!existsSync(dir)) return []
@@ -99,7 +104,8 @@ export function listSessionSnapshots(directory: string, sessionId: string): RunS
     if (!entry.endsWith(".json")) continue
     try {
       const parsed = parseRunSnapshot(JSON.parse(readFileSync(join(dir, entry), "utf8")))
-      if (parsed && parsed.parentSessionId === sessionId) snapshots.push(parsed)
+      const owned = parsed && (parsed.parentSessionId === sessionId || parsed.rootSessionId === sessionId)
+      if (owned) snapshots.push(parsed)
     } catch {
       // 坏文件跳过
     }

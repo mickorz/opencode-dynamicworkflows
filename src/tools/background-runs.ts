@@ -30,6 +30,7 @@ import {
   RUN_SNAPSHOT_HEARTBEAT_MS,
   tryWriteRunSnapshot,
 } from "./run-snapshot.js"
+import { lookupRootSessionId, registerAgentSession, unregisterAgentSessions } from "./run-lineage.js"
 import type { AgentRecord } from "../types/index.js"
 
 export type BackgroundRunStatus = "running" | "completed" | "failed" | "aborted"
@@ -55,6 +56,8 @@ export interface BackgroundStartDeps {
   client: PluginInput["client"]
   parentSessionId: string
   directory: string
+  /** 祖先主会话（B1 嵌套显示）：缺省时 start 内部查血统表回退 parentSessionId */
+  rootSessionId?: string
 }
 
 export interface BackgroundStartInput {
@@ -77,6 +80,8 @@ export class BackgroundRunManager {
   start(deps: BackgroundStartDeps, input: BackgroundStartInput): string {
     const { meta } = parseWorkflowScript(input.script)
     const runId = `run-${Date.now().toString(36)}-${++this.seq}`
+    // B1：嵌套后台 run 透传祖先主会话（调用方已查表则直用），快照与清理都按它归属
+    const rootSessionId = deps.rootSessionId ?? lookupRootSessionId(deps.parentSessionId) ?? deps.parentSessionId
     const info: BackgroundRunInfo = {
       runId,
       name: meta.name,
@@ -92,13 +97,14 @@ export class BackgroundRunManager {
     this.prune()
 
     // 分离执行：不阻塞 tool 返回
-    void this.execute(deps, input, info, controller)
+    void this.execute(deps, rootSessionId, input, info, controller)
 
     return runId
   }
 
   private async execute(
     deps: BackgroundStartDeps,
+    rootSessionId: string,
     input: BackgroundStartInput,
     info: BackgroundRunInfo,
     controller: AbortController,
@@ -110,6 +116,7 @@ export class BackgroundRunManager {
         buildRunSnapshot({
           runId: info.runId,
           parentSessionId: deps.parentSessionId,
+          rootSessionId,
           name: info.name,
           status,
           records: info.records,
@@ -136,6 +143,8 @@ export class BackgroundRunManager {
     const heartbeat = setInterval(() => {
       if (info.status === "running") writeSnapshot("running")
     }, RUN_SNAPSHOT_HEARTBEAT_MS)
+    // 血统注册面：本 run 的 agent 子会话 -> rootSessionId；run 结束统一注销（见 finally）
+    const registeredSessions = new Set<string>()
     try {
       const result = await runWorkflow(input.script, {
         agent: adapter,
@@ -168,6 +177,11 @@ export class BackgroundRunManager {
           const index = info.records.findIndex((r) => r.id === record.id)
           if (index >= 0) info.records[index] = record
           else info.records.push(record)
+          // B1：子会话创建即回传（running 态已带 sessionId），注册血统供嵌套 workflow 查表
+          if (record.sessionId) {
+            registeredSessions.add(record.sessionId)
+            registerAgentSession(record.sessionId, rootSessionId)
+          }
           writeSnapshot("running")
         },
       })
@@ -216,6 +230,8 @@ export class BackgroundRunManager {
     } finally {
       clearInterval(heartbeat)
       info.endedAt = Date.now()
+      // 本 run 结束：注销血统（嵌套工具调用均已返回，不存在仍在使用注册项的窗口）
+      unregisterAgentSessions(registeredSessions)
     }
   }
 

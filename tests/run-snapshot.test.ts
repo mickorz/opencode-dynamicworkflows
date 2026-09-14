@@ -4,7 +4,7 @@
 
 import test from "node:test"
 import assert from "node:assert/strict"
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -13,6 +13,7 @@ import {
   cleanupRunSnapshots,
   readRunSnapshots,
   runSnapshotPath,
+  runSnapshotsDir,
   tryWriteRunSnapshot,
 } from "../src/tools/run-snapshot.js"
 import type { AgentRecord } from "../src/types/index.js"
@@ -136,6 +137,41 @@ test("快照 JSON 可被 TUI 侧宽松解析（跨进程形状契约：无 undef
     const parsed = JSON.parse(raw)
     assert.equal(parsed.version, 1)
     assert.equal(parsed.agents[0].sessionId, "c1")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("B1 嵌套显示：buildRunSnapshot 带 rootSessionId 落盘字段，缺省不写字段", () => {
+  const dir = tempProject()
+  try {
+    tryWriteRunSnapshot(
+      dir,
+      buildRunSnapshot({ runId: "nested", parentSessionId: "ses_child", rootSessionId: "ses_main", status: "running", records: [], time: 1 }),
+    )
+    tryWriteRunSnapshot(dir, buildRunSnapshot({ runId: "plain", parentSessionId: "ses_main", status: "running", records: [], time: 2 }))
+    const nested = JSON.parse(readFileSync(runSnapshotPath(dir, "nested"), "utf8"))
+    assert.equal(nested.rootSessionId, "ses_main")
+    const plain = JSON.parse(readFileSync(runSnapshotPath(dir, "plain"), "utf8"))
+    assert.equal("rootSessionId" in plain, false, "缺省时不写字段，旧读者按 parentSessionId 回退")
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("B1 嵌套显示：cleanupRunSnapshots 按 rootSessionId 扩围清理嵌套终态快照", () => {
+  const dir = tempProject()
+  try {
+    // 嵌套 run：parent 是子代理会话，root 是主会话
+    tryWriteRunSnapshot(dir, buildRunSnapshot({ runId: "nested_done", parentSessionId: "ses_child", rootSessionId: "ses_main", status: "completed", records: [], time: 1 }))
+    tryWriteRunSnapshot(dir, buildRunSnapshot({ runId: "nested_alive", parentSessionId: "ses_child2", rootSessionId: "ses_main", status: "running", records: [], time: 2 }))
+    // 无血缘的其他会话快照
+    tryWriteRunSnapshot(dir, buildRunSnapshot({ runId: "other", parentSessionId: "ses_other", status: "completed", records: [], time: 3 }))
+
+    cleanupRunSnapshots(dir, "ses_main")
+
+    const files = readdirSync(runSnapshotsDir(dir)).map((f) => f.replace(".json", "")).sort()
+    assert.deepEqual(files, ["nested_alive", "other"], "root 命中的终态被清，活快照与无关会话保留")
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

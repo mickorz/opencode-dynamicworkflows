@@ -6,6 +6,7 @@ import { loadModelTiers } from "../agent/model-tiers.js"
 import { renderWorkflowResult } from "./render.js"
 import { buildProgressMetadata, type WorkflowProgressStatus } from "./workflow-progress.js"
 import { buildRunSnapshot, cleanupRunSnapshots, RUN_SNAPSHOT_HEARTBEAT_MS, tryWriteRunSnapshot } from "./run-snapshot.js"
+import { lookupRootSessionId, registerAgentSession, unregisterAgentSessions } from "./run-lineage.js"
 import { parseWorkflowScript } from "../runtime/vm.js"
 import { resolveScriptText } from "./script-source.js"
 import { BackgroundRunManager } from "./background-runs.js"
@@ -62,12 +63,15 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
       }
       script = normalized
 
+      // B1 嵌套显示：若本会话是某活跃 run 的 agent 子会话，透传其根会话；否则自己就是根
+      const rootSessionId = lookupRootSessionId(context.sessionID) ?? context.sessionID
+
       // 后台路径（P2-2）：立即返回 runId，结果完成后回传主会话
       if (input.background) {
         let runId: string
         try {
           runId = background.start(
-            { client: ctx.client, parentSessionId: context.sessionID, directory: context.directory },
+            { client: ctx.client, parentSessionId: context.sessionID, directory: context.directory, rootSessionId },
             {
               script,
               args: input.args,
@@ -116,12 +120,15 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
       // 完成态仍走 tool 返回值 metadata（下方 return，C 通道兜底）。
       cleanupRunSnapshots(context.directory, context.sessionID)
       const progressRecords: AgentRecord[] = []
+      // 血统注册面：本 run 创建的 agent 子会话 -> rootSessionId；run 结束统一注销（见 finally）
+      const registeredSessions = new Set<string>()
       const writeTerminalSnapshot = (records: ReadonlyArray<AgentRecord>, status: WorkflowProgressStatus) => {
         tryWriteRunSnapshot(
           context.directory,
           buildRunSnapshot({
             runId,
             parentSessionId: context.sessionID,
+            rootSessionId,
             name: workflowName,
             status,
             records,
@@ -202,6 +209,11 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
             const index = progressRecords.findIndex((r) => r.id === record.id)
             if (index >= 0) progressRecords[index] = record
             else progressRecords.push(record)
+            // B1：子会话创建即回传（running 态已带 sessionId），注册血统供嵌套 workflow 查表
+            if (record.sessionId) {
+              registeredSessions.add(record.sessionId)
+              registerAgentSession(record.sessionId, rootSessionId)
+            }
             writeTerminalSnapshot(progressRecords, "running")
           },
         })
@@ -243,6 +255,8 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
       } finally {
         clearInterval(heartbeat)
         context.abort.removeEventListener("abort", onAbort)
+        // 本 run 结束：注销血统（嵌套工具调用均已返回，不存在仍在使用注册项的窗口）
+        unregisterAgentSessions(registeredSessions)
       }
     },
   })

@@ -31,6 +31,8 @@ export interface RunSnapshot {
   version: number
   runId: string
   parentSessionId: string
+  /** 祖先主会话（B1 嵌套显示）：嵌套 run 透传根会话，主会话 TUI 据此宽匹配；缺省回退 parentSessionId */
+  rootSessionId?: string
   name?: string
   status: WorkflowProgressStatus
   /** 写入时刻（毫秒），TUI 失联判定与排序依据 */
@@ -47,6 +49,8 @@ export interface RunSnapshot {
 export function buildRunSnapshot(input: {
   runId: string
   parentSessionId: string
+  /** 祖先主会话（B1）：嵌套 run 传根会话；缺省不写字段（旧读者回退 parentSessionId） */
+  rootSessionId?: string
   name?: string
   status: WorkflowProgressStatus
   records: ReadonlyArray<AgentRecord>
@@ -61,6 +65,7 @@ export function buildRunSnapshot(input: {
   return {
     version: RUN_SNAPSHOT_VERSION,
     parentSessionId: input.parentSessionId,
+    ...(input.rootSessionId ? { rootSessionId: input.rootSessionId } : {}),
     time: input.time,
     ...progress,
   }
@@ -97,7 +102,7 @@ function isTerminalStatus(status: unknown): boolean {
   return status === "completed" || status === "aborted" || status === "failed"
 }
 
-/** 新 run 启动前清理：删除同 parentSessionId 的终态快照（活快照不动，支持并发后台 run） */
+/** 新 run 启动前清理：删除归属于该会话的终态快照（parent 或 root 命中，含嵌套 run 遗留；活快照不动，支持并发后台 run） */
 export function cleanupRunSnapshots(directory: string, parentSessionId: string): void {
   try {
     const dir = runSnapshotsDir(directory)
@@ -106,8 +111,9 @@ export function cleanupRunSnapshots(directory: string, parentSessionId: string):
       if (!entry.endsWith(".json")) continue
       const file = join(dir, entry)
       try {
-        const parsed = JSON.parse(readFileSync(file, "utf8")) as { parentSessionId?: string; status?: string }
-        if (parsed.parentSessionId === parentSessionId && isTerminalStatus(parsed.status)) {
+        const parsed = JSON.parse(readFileSync(file, "utf8")) as { parentSessionId?: string; rootSessionId?: string; status?: string }
+        const owned = parsed.parentSessionId === parentSessionId || parsed.rootSessionId === parentSessionId
+        if (owned && isTerminalStatus(parsed.status)) {
           rmSync(file, { force: true })
         }
       } catch {
