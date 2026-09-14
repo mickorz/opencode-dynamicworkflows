@@ -151,25 +151,87 @@ fff 只索引会话目录,所以让 fff 索引大树必须把会话目录设在�
 
 ## 7. 结论与建议
 
-### 最终结论
+### 最终结论(综合第一层端到端 + 第二层纯搜索)
 
 1. **fff 在本机 Windows + opencode 1.18.30 可用且 `=0` 真实启用**,不会崩、不会静默回退。
-2. **端到端体感性能:fff 与 rg 无显著差异**(3 轮均值 fff 快 2.7%,但 < 1σ,方向不稳)。对**一次性 `opencode run` 场景**,在 ~6000 文件量级下开启 fff **没有可感知收益**。
-3. **瓶颈是 LLM 轮次,不是搜索后端**:20 次搜索的真实搜索工作量 ~30-40s,而单次 run 总耗 236-342s,LLM 占 >85%。优化搜索后端对端到端收益天花板很低。
-4. **两后端行为有微小差异**:fff 的 glob 在未传 limit 时可能截断结果;rg 的 glob 从项目根不跟 junction/reparse point(必须显式 `path=`)。这些对正确性影响小但值得知晓。
+2. **搜索后端本身:fff 在冷搜索上明显更快(约 2 倍,glob 尤甚 73%),OS 文件缓存热后两路基本持平甚至 rg 略快**(见第 8 章)。这是把 LLM 延迟完全扣除后的真实后端差异。
+3. **但端到端体感:fff 收益被 LLM 噪声淹没**。第一层 3 轮均值 fff 仅快 2.7%(< 1σ,方向不稳);原因是 LLM 占 explore agent 时间的 ~81%(第 8 章实测:纯搜索 46s vs agent 总 240s),搜索后端优化的端到端收益天花板很低。
+4. **两后端行为差异**:fff glob 未传 limit 时按默认页大小可能截断结果;fff grep 有 1.5s `timeBudgetMs` 上限(`search.ts:170`)可能截断大结果;rg glob 从项目根不跟 junction/reparse point(必须显式 `path=`)。正确性影响小但值得知晓。
+
+### 一句话
+
+> fff 搜索本身在冷启动时确实快得多,但 opencode 的 Agent 工作流瓶颈是 LLM 轮次而非搜索;在 Windows 上是否长期开启 fff,取决于你是否在意"首次冷搜索"的那点加速,以及内存开销是否可接受。热缓存后 rg 与 fff 基本同速。
 
 ### 建议
 
-- **是否长期开启 fff**:本数据不支持"开了更快"的结论。若内存增长可接受、且主要在**长会话反复搜索**(warm 场景)下使用,可再测 warm 收益(见下);否则保持 Windows 默认(rg)即可。
-- **测 warm 收益**(fff 索引复用):在同一会话内连续多次跑 workflow,用 `opencode run -c` 续会话,对比第 1 次(cold)与第 N 次(warm)。属 v2。
-- **彻底排除 LLM 延迟**:上第二层纯 `find/grep` benchmark —— 不经 agent,直接对两后端跑 N 次 glob/grep 取均值,测的是纯搜索耗时,信号干净。这才是回答"fff 搜索本身快不快"的正确实验。
-- **更大树**:如需测 fff 索引在大库的 cold 成本,把 junction 指向更大的树(注意排除 node_modules,fff 是否尊重 .gitignore 未在本测试验证)。
+- **日常一次性 `opencode run`、活跃开发(树已热)**:保持 Windows 默认(rg)即可,fff 无可感知收益。
+- **冷启动场景(首次扫大库、CI、刚开机首跑)**:可开 fff,首次搜索明显快;但单次 run 总耗仍由 LLM 主导。
+- **长会话反复搜索**:本测试每次 `opencode run` 是独立进程,fff 索引按会话构建不复用(`disableMmapCache:true`),所以跨进程每次都 cold。要看 warm 索引复用收益,需在同一会话内连续多次跑(`opencode run -c` 续会话),属 v3。
+- **更大树**:把 junction 指向更大树可放大冷搜索差异;注意 fff 是否尊重 .gitignore(本测试未验证,大树含 node_modules 时可能索引爆量)。
 
-## 8. 参考引用
+## 8. 第二层:纯搜索后端 benchmark(LLM 完全扣除)
+
+> 目的:第一层端到端被 LLM 方差主导,看不到后端真相。第二层把 LLM 完全扣除,直测 fff vs rg 的纯搜索耗时。
+> 方法:`opencode run --format json` 拿主会话事件流 → 从 `workflow` tool 的 `part.state.metadata.agents[0].sessionId` 取 explore **子会话 ID** → 查 `~/.local/share/opencode/opencode.db` 的 `part` 表,过滤 `type='tool'` 且 `tool in (glob,grep)`,对每个 part 的 `state.time.end - state.time.start` 求和 = **纯搜索总耗时**(LLM 推理全部排除)。
+> 工具:`better-sqlite3` 只读查询;脚本 `C:\...\Temp\opencode\fff-bench-db\query.js`(传子会话 ID)。
+
+### 8.1 三轮纯搜索结果(大树 large-target,6375 文件)
+
+| 轮 | OS 缓存 | OFF 总 (ms) | OFF glob | OFF grep | ON 总 (ms) | ON glob | ON grep | fff vs rg |
+|---|---|---:|---:|---:|---:|---:|---:|---|
+| R1 | 冷 | 46149 | 26449 | 19700 | 22828 | 7033 | 15795 | **fff 快 50.5%**(glob 快 73%) |
+| R2 | 热 | 17912 | 4518 | 13394 | 16147 | 4966 | 11181 | fff 快 9.9%(glob 基本持平) |
+| R3 | 热 | 12797 | 5208 | 7589 | 16465 | 4249 | 12216 | fff 慢 28.7%(grep 慢) |
+| 均值 | | 25619 | 12058 | 13561 | 18480 | 5416 | 13064 | fff 快 27.9%(冷轮主导) |
+| 仅热 R2/R3 均值 | | 15355 | 4863 | 10492 | 16306 | 4608 | 11699 | **fff 慢 6.2%(基本持平)** |
+
+每轮 explore agent 总时 vs 纯搜索(以 R1 off 为例):agent 239627ms,纯搜索 46149ms → **LLM 占 80.7%,纯搜索仅 19.3%**。
+
+### 8.2 冷/热分析(核心洞察)
+
+- **冷(R1,该树首次搜索)**:rg 每次 glob 冷遍历目录树(~2.6s/次),fff 用内存索引(~0.7s/次)→ **fff glob 快 73%、总快 2 倍**。这是 fff 的设计优势:索引遍历冷盘 vs 内存查找。
+- **热(R2/R3,OS 文件缓存已热)**:rg 走页缓存也快了(~0.5s/次 glob),fff 优势消失,两路基本持平甚至 rg 略快(grep 上 rg 有时更快)。说明 **fff 的收益主要在"首次冷搜索",OS 缓存热后被 rg 追平**。
+- **grep 后端两路始终接近**:fff 因 `timeBudgetMs:1_500` 把每次 grep 钉在 ~1.5-2s 上限,rg grep 随缓存波动(0.6-2.7s)。fff grep 不一定更快,且有截断风险。
+- **方差来源**:即使扣除 LLM,纯搜索仍受 OS 文件缓存冷/热影响(R1 vs R2 差 6 倍),这是任何文件搜索基准的固有变量。
+
+### 8.2.1 冷热对比图
+
+```mermaid
+flowchart TD
+    subgraph Cold ["冷搜索 首次扫树 OS缓存未热"]
+        direction LR
+        A1["ripgrep 纯搜索 46149ms"]
+        A2["fff 纯搜索 22828ms"]
+        A1 --> A2
+        AC["fff 快约2倍 glob优势明显"]
+    end
+    subgraph Warm ["热搜索 反复扫描 OS缓存已热"]
+        direction LR
+        B1["ripgrep 纯搜索 15355ms"]
+        B2["fff 纯搜索 16306ms"]
+        B1 --> B2
+        BC["基本持平 rg略快"]
+    end
+    Cold -- OS缓存升温 --> Warm
+    Warm --> Done["端到端仍被LLM主导 搜索占比约两成"]
+```
+
+> 数值取自第 8.1 表:冷=R1 实测,热=R2 与 R3 均值。纵向上读:冷态 fff 明显快;热态两路持平;横向箭头点出即便搜索快了,端到端仍被 LLM 占据。
+
+### 8.3 方法论注记
+
+- 主会话事件流(`--format json`)只含主 agent 的 1 次 `workflow` tool_use;20 次 glob/grep 发生在 workflow 内部 explore **子会话**,其工具 part(含 `state.time`)持久化在 `opencode.db` 的 `part` 表,按 `session_id` 查询。
+- 跨轮 agent 行为有方差(有时先跑 glob/bash/read 扰动再调 workflow),但不影响纯搜索提取(始终从子会话取)。
+- glob 调用起始时间常重叠(agent 单轮并行发多个 glob),故"求和"是总工作量非墙钟;A/B 两路并行模式一致,求和可比。
+- better-sqlite3 以 `readonly:true` 查询,不影响 opencode 运行。
+
+## 9. 参考引用
 
 - 环境变量与后端选择:`thirdparties/opencode/packages/core/src/flag/flag.ts`、`thirdparties/opencode/packages/core/src/filesystem/search.ts`
+- fff grep 的 timeBudgetMs 截断:`thirdparties/opencode/packages/core/src/filesystem/search.ts:170`
 - `opencode run --command`:`thirdparties/opencode/packages/opencode/src/cli/cmd/run.ts`
 - workflow 沙箱禁用时间/随机 API:`src/runtime/vm.ts`
 - workflow tool 与 scriptPath 解析:`src/tools/workflow.ts`、`src/tools/script-source.ts`
+- 工具 part 的 `state.time.start/end`(纯搜索计时来源):`thirdparties/opencode/packages/opencode/src/cli/cmd/run/tool.ts:192-194`、`subagent-data.ts:283-288`;持久化于 `~/.local/share/opencode/opencode.db` 的 `part` 表(`session_id`+`data` JSON)
 - 本仓库 AGENTS.md(事实来源与 API 约束):`AGENTS.md`
 - OpenCode 官方插件文档:`thirdparties/opencode/packages/web/src/content/docs/plugins.mdx`
