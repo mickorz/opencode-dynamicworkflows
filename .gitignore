@@ -22,6 +22,12 @@ Docs/*
 # 手工验收工程的运行时状态与本地测试脚本（不入库）；docs/ 下仅 10 个 mdx 验收语料入库（examples 自包含承诺），spec 笔记等本地文档忽略
 examples/sample-project/.opencode/
 examples/sample-project/.xflow/
+
+# FFF 基准测试的运行产物与 thirdparties junction（不入库；src 是指向 thirdparties 的 junction）
+examples/sample-project/benchmarks/results/
+examples/sample-project/benchmarks/large-target/results/
+examples/sample-project/benchmarks/large-target/src/
+examples/sample-project/benchmarks/large-target/.opencode/
 examples/sample-project/scripts/spec-clarify-workflow*
 examples/sample-project/docs/*
 !examples/sample-project/docs/*.mdx
