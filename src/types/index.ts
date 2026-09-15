@@ -44,6 +44,8 @@ export interface AgentRecord {
   label: string
   phase?: string
   status: AgentRecordStatus
+  /** 该 agent 开始执行的绝对时间戳（毫秒）；journal 回放不产生（TUI phase 耗时用） */
+  startedAt?: number
   tokens?: number
   cost?: number
   error?: string

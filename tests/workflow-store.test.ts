@@ -10,12 +10,16 @@ import {
   findSelectedRunNode,
   findWorkflowMetadata,
   formatDuration,
+  formatElapsed,
   formatTokens,
   moveSelection,
+  nodeLine,
   parseWorkflowMetadata,
+  phaseElapsedMs,
   selectableNodeKeys,
   sumTokens,
   type ToolPartLike,
+  type WorkflowNode,
 } from "../src/tui/workflow-store.js"
 
 const VALID = {
@@ -204,4 +208,61 @@ test("findSelectedRunNode：跨树命中并携带所属 runId", () => {
   assert.equal(findSelectedRunNode(progresses, "run-a:run-a:0")!.runId, "run-a")
   assert.equal(findSelectedRunNode(progresses, null), undefined)
   assert.equal(findSelectedRunNode(progresses, "不存在"), undefined)
+})
+
+test("phaseElapsedMs：running 递增、完成定格、无 startedAt 返回 undefined", () => {
+  const mk = (over: Partial<WorkflowNode>): WorkflowNode => ({
+    id: "n",
+    label: "n",
+    status: "ok",
+    ...over,
+  })
+  // running：now - 最早 startedAt（并行重叠取最早）
+  const running = [
+    mk({ startedAt: 1000, durationMs: 500, status: "running" }),
+    mk({ startedAt: 3000, durationMs: 0, status: "running" }),
+  ]
+  assert.equal(phaseElapsedMs(running, 8000), 7000)
+  // 完成：max(startedAt+durationMs) - min(startedAt)，重叠不重复计费
+  const done = [
+    mk({ startedAt: 1000, durationMs: 5000 }),
+    mk({ startedAt: 3000, durationMs: 9000 }),
+  ]
+  assert.equal(phaseElapsedMs(done, 999999), 11000)
+  // 全回放/老快照：无 startedAt 不显示
+  assert.equal(phaseElapsedMs([mk({ durationMs: 100 })], 999999), undefined)
+  // 混合：running 存在则按 now 递增
+  const mixed = [mk({ startedAt: 1000, durationMs: 2000 }), mk({ startedAt: 4000, status: "running" })]
+  assert.equal(phaseElapsedMs(mixed, 6000), 5000)
+})
+
+test("formatElapsed：整数秒，不带小数", () => {
+  assert.equal(formatElapsed(0), "0s")
+  assert.equal(formatElapsed(999), "0s")
+  assert.equal(formatElapsed(23000), "23s")
+  assert.equal(formatElapsed(65000), "1m05s")
+  assert.equal(formatElapsed(125000), "2m05s")
+})
+
+test("nodeLine：running 有 startedAt 显示整数秒实时耗时，完成态保持一位小数", () => {
+  const now = Date.now()
+  const running: WorkflowNode = { id: "n", label: "核查", status: "running", startedAt: now - 8400 }
+  assert.match(nodeLine(running), /^核查 ·8s$/)
+  const done: WorkflowNode = { id: "n", label: "核查", status: "ok", durationMs: 8400, tokens: 1234 }
+  assert.equal(nodeLine(done), "核查 ·8.4s ·1.2k tok")
+})
+
+test("parseWorkflowMetadata：解析 startedAt；老快照无此字段不回归", () => {
+  const withTs = parseWorkflowMetadata({
+    runId: "r",
+    status: "running",
+    agents: [{ id: "r:0", label: "a", status: "running", startedAt: 123456 }],
+  })
+  assert.equal(withTs!.nodes[0].startedAt, 123456)
+  const legacy = parseWorkflowMetadata({
+    runId: "r",
+    status: "running",
+    agents: [{ id: "r:0", label: "a", status: "running" }],
+  })
+  assert.equal(legacy!.nodes[0].startedAt, undefined)
 })

@@ -12,8 +12,8 @@ import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import type { WorkflowNode, WorkflowProgress, WorkflowProgressStatus } from "./workflow-store.js"
 
-/** 与 server 侧 RUN_SNAPSHOT_VERSION 同步（跨进程契约） */
-const RUN_SNAPSHOT_VERSION = 1
+/** 与 server 侧 RUN_SNAPSHOT_VERSION 同步（跨进程契约；export 供测试 fixture 引用） */
+export const RUN_SNAPSHOT_VERSION = 2
 /** 与 server 侧 RUN_SNAPSHOT_STALE_MS 同步（跨进程契约） */
 export const RUN_SNAPSHOT_STALE_MS = 8000
 

@@ -22,6 +22,9 @@ import {
   findSelectedRunNode,
   findWorkflowMetadata,
   formatDuration,
+  formatElapsed,
+  nodeLine,
+  phaseElapsedMs,
   formatTokens,
   headerLine,
   moveSelection,
@@ -181,15 +184,6 @@ function getOrCreateCollapsed(
   return [collapsed, setCollapsed]
 }
 
-function nodeLine(node: WorkflowNode): string {
-  const duration = formatDuration(node.durationMs)
-  const tokens = formatTokens(node.tokens)
-  const replayed = node.replayed ? " ·缓存" : ""
-  const durationPart = duration ? ` ·${duration}` : ""
-  const tokensPart = tokens ? ` ·${tokens} tok` : ""
-  return `${node.label}${durationPart}${tokensPart}${replayed}`
-}
-
 /** 单棵 run 树：标题行折叠开关 + phase 分组节点列表（多树同显，每 run 独立一块）。
  *  B2 层级显示：嵌套子 run（子代理会话内触发）经 childrenOf 挂在触发节点名下递归渲染 */
 function RunTree(props: {
@@ -221,9 +215,17 @@ function RunTree(props: {
         <For each={rows()}>
           {(row) => {
             if (row.kind === "phase") {
+              // phase 行耗时：组内节点现算（running 递增 / 完成定格；无 startedAt 不显示）
+              const phaseMs = phaseElapsedMs(
+                props.progress.nodes.filter((n) => n.phase === row.title),
+                Date.now(),
+              )
               return (
                 <box paddingLeft={1} paddingTop={1}>
-                  <text fg={theme().textMuted}>{row.title}</text>
+                  <text fg={theme().textMuted}>
+                    {row.title}
+                    {phaseMs !== undefined ? ` · ${formatElapsed(phaseMs)}` : ""}
+                  </text>
                 </box>
               )
             }
@@ -431,9 +433,17 @@ function RouteView(props: { api: TuiPluginApi; sessionID?: string }) {
               )
             }
             if (row.kind === "phase") {
+              // phase 行耗时：按 runId 回查该树 nodes 现算（running 递增 / 完成定格）
+              const progress = progresses().find((p) => p.runId === row.runId)
+              const phaseMs = progress
+                ? phaseElapsedMs(progress.nodes.filter((n) => n.phase === row.title), Date.now())
+                : undefined
               return (
                 <box paddingLeft={depthIndent} paddingTop={1}>
-                  <text fg={theme().textMuted}>{row.title}</text>
+                  <text fg={theme().textMuted}>
+                    {row.title}
+                    {phaseMs !== undefined ? ` · ${formatElapsed(phaseMs)}` : ""}
+                  </text>
                 </box>
               )
             }

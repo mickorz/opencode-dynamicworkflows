@@ -17,6 +17,8 @@ export interface WorkflowNode {
   label: string
   phase?: string
   status: WorkflowNodeStatus
+  /** 该 agent 开始执行的绝对时间戳（毫秒）；回放与老快照无此字段 */
+  startedAt?: number
   durationMs?: number
   sessionId?: string
   tokens?: number
@@ -71,6 +73,7 @@ export function parseWorkflowMetadata(raw: unknown): WorkflowProgress | null {
       label: n.label,
       phase: typeof n.phase === "string" ? n.phase : undefined,
       status: n.status,
+      startedAt: typeof n.startedAt === "number" ? n.startedAt : undefined,
       durationMs: typeof n.durationMs === "number" ? n.durationMs : undefined,
       sessionId: typeof n.sessionId === "string" ? n.sessionId : undefined,
       tokens: typeof n.tokens === "number" ? n.tokens : undefined,
@@ -152,6 +155,46 @@ export function buildSidebarRows(progress: WorkflowProgress): SidebarRow[] {
     rows.push({ kind: "node", node })
   }
   return rows
+}
+
+/** 节点展示行文本：label · 耗时 · token · 回放标记。running 且有 startedAt 时显示整数秒实时耗时
+ *  （随轮询重渲染递增，约 3 秒一跳），完成态保持一位小数格式 */
+export function nodeLine(node: WorkflowNode): string {
+  const duration =
+    node.status === "running" && node.startedAt !== undefined
+      ? formatElapsed(Math.max(0, Date.now() - node.startedAt))
+      : formatDuration(node.durationMs)
+  const tokens = formatTokens(node.tokens)
+  const replayed = node.replayed ? " ·缓存" : ""
+  const durationPart = duration ? ` ·${duration}` : ""
+  const tokensPart = tokens ? ` ·${tokens} tok` : ""
+  return `${node.label}${durationPart}${tokensPart}${replayed}`
+}
+
+/** phase 耗时（毫秒）：start = 组内最早 startedAt；存在 running 节点时 now - start 递增，
+ *  否则 max(startedAt+durationMs) - start 定格（并行重叠不重复计费，墙钟口径）。
+ *  全组无 startedAt（journal 回放或老快照）返回 undefined，渲染层不显示该段 */
+export function phaseElapsedMs(nodes: ReadonlyArray<WorkflowNode>, now: number): number | undefined {
+  let start: number | undefined
+  let end = 0
+  let running = false
+  for (const n of nodes) {
+    if (typeof n.startedAt !== "number") continue
+    if (start === undefined || n.startedAt < start) start = n.startedAt
+    const nodeEnd = n.startedAt + (n.durationMs ?? 0)
+    if (nodeEnd > end) end = nodeEnd
+    if (n.status === "running") running = true
+  }
+  if (start === undefined) return undefined
+  return running ? Math.max(0, now - start) : end - start
+}
+
+/** 整数秒格式化（phase 行与 running 节点实时耗时；区别于完成态节点的一位小数）：23s / 1m05s */
+export function formatElapsed(ms: number): string {
+  if (ms < 1000) return "0s"
+  const total = Math.floor(ms / 1000)
+  if (total < 60) return `${total}s`
+  return `${Math.floor(total / 60)}m${(total % 60).toString().padStart(2, "0")}s`
 }
 
 /** 单树标题行：名称 进度计数 运行中后缀 token 合计 runId（sidebar 与全屏路由共用；runId 供 resume 续跑复制） */

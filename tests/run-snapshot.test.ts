@@ -135,7 +135,7 @@ test("快照 JSON 可被 TUI 侧宽松解析（跨进程形状契约：无 undef
     const raw = readFileSync(runSnapshotPath(dir, "k"), "utf8")
     assert.doesNotMatch(raw, /undefined/, "JSON 序列化不应含 undefined 字面量")
     const parsed = JSON.parse(raw)
-    assert.equal(parsed.version, 1)
+    assert.equal(parsed.version, RUN_SNAPSHOT_VERSION)
     assert.equal(parsed.agents[0].sessionId, "c1")
   } finally {
     rmSync(dir, { recursive: true, force: true })

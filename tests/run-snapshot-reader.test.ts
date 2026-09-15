@@ -10,6 +10,7 @@ import { join } from "node:path"
 import { buildRunSnapshot, tryWriteRunSnapshot } from "../src/tools/run-snapshot.js"
 import {
   RUN_SNAPSHOT_STALE_MS,
+  RUN_SNAPSHOT_VERSION,
   isStale,
   listSessionSnapshots,
   parseRunSnapshot,
@@ -21,7 +22,7 @@ import { progressesViewKey, progressViewKey, type WorkflowProgress } from "../sr
 
 function snapshotView(overrides: Partial<RunSnapshotView> & { runId: string }): RunSnapshotView {
   return {
-    version: 1,
+    version: RUN_SNAPSHOT_VERSION,
     parentSessionId: "ses_p",
     name: "demo",
     status: "running",
@@ -75,15 +76,15 @@ test("parseRunSnapshot：server 产物 roundtrip 解析", () => {
 test("parseRunSnapshot：非法形状返回 null（version 不符 与 缺字段 与 空节点）", () => {
   assert.equal(parseRunSnapshot(null), null)
   assert.equal(parseRunSnapshot({ version: 999, runId: "x", parentSessionId: "s", time: 1, agents: [] }), null)
-  assert.equal(parseRunSnapshot({ version: 1, parentSessionId: "s", time: 1, agents: [] }), null) // 缺 runId
-  assert.equal(parseRunSnapshot({ version: 1, runId: "x", parentSessionId: "s", time: 1, agents: "no" }), null)
-  assert.equal(parseRunSnapshot({ version: 1, runId: "x", parentSessionId: "s", time: 1, agents: [{ bad: 1 }] }), null)
-  assert.equal(parseRunSnapshot({ version: 1, runId: "x", parentSessionId: "s", time: 1, agents: [] }), null)
+  assert.equal(parseRunSnapshot({ RUN_SNAPSHOT_VERSION, parentSessionId: "s", time: 1, agents: [] }), null) // 缺 runId
+  assert.equal(parseRunSnapshot({ RUN_SNAPSHOT_VERSION, runId: "x", parentSessionId: "s", time: 1, agents: "no" }), null)
+  assert.equal(parseRunSnapshot({ RUN_SNAPSHOT_VERSION, runId: "x", parentSessionId: "s", time: 1, agents: [{ bad: 1 }] }), null)
+  assert.equal(parseRunSnapshot({ RUN_SNAPSHOT_VERSION, runId: "x", parentSessionId: "s", time: 1, agents: [] }), null)
 })
 
 test("parseRunSnapshot：name 缺省回退 与 status 非法回退 running", () => {
   const view = parseRunSnapshot({
-    version: 1,
+    version: RUN_SNAPSHOT_VERSION,
     runId: "x",
     parentSessionId: "s",
     time: 1,
@@ -171,7 +172,7 @@ test("progressViewKey：关键字段变化才变，未变则相等", () => {
 
 test("parseRunSnapshot：提取 Node Inspector 新字段；老快照无新字段不回归", () => {
   const fresh = parseRunSnapshot({
-    version: 1,
+    version: RUN_SNAPSHOT_VERSION,
     runId: "run-n",
     parentSessionId: "ses_p",
     time: 1234,
@@ -193,7 +194,7 @@ test("parseRunSnapshot：提取 Node Inspector 新字段；老快照无新字段
 
   // 老快照（无新字段）：undefined 不崩；坏形状字段被清洗
   const legacy = parseRunSnapshot({
-    version: 1,
+    version: RUN_SNAPSHOT_VERSION,
     runId: "run-o",
     parentSessionId: "ses_p",
     time: 1234,

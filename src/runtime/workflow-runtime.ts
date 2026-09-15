@@ -258,6 +258,9 @@ export async function runWorkflow<T = unknown>(
       state.firstMiss = Math.min(state.firstMiss, callIndex)
     }
 
+    // 真实执行才记起始时间戳（journal 回放上面已 return，不带此字段；TUI phase 耗时用）
+    record.startedAt = agentStarted
+
     return limiter(async () => {
       const timeout = scriptOptions.timeoutMs !== undefined ? scriptOptions.timeoutMs : agentTimeoutMs
       const retries = normalizeAgentRetries(scriptOptions.retries ?? options.agentRetries ?? 0)

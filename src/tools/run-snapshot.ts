@@ -19,7 +19,7 @@ import { dirname, join } from "node:path"
 import type { AgentRecord } from "../types/index.js"
 import { buildProgressMetadata, type WorkflowProgressStatus } from "./workflow-progress.js"
 
-export const RUN_SNAPSHOT_VERSION = 1
+export const RUN_SNAPSHOT_VERSION = 2
 /** TUI 侧失联阈值（毫秒）。TUI 侧 reader 持有同值常量（跨进程契约，两处同步） */
 export const RUN_SNAPSHOT_STALE_MS = 8000
 /** 心跳间隔（毫秒）：快照只在 agent 状态迁移时写，并行 agent 长时间无迁移会被误判失联，
