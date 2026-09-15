@@ -179,12 +179,14 @@ test("parseRunSnapshot：提取 Node Inspector 新字段；老快照无新字段
     agents: [
       {
         id: "run-n:0", label: "新节点", status: "ok",
+        startedAt: 1700000000000,
         executionId: "run-n:0:1", attempt: 1, outputType: "structured",
         outputPreview: "预览文本", inputTokens: 11, outputTokens: 22,
       },
     ],
   })!
   const node = fresh.nodes[0]
+  assert.equal(node.startedAt, 1700000000000)
   assert.equal(node.executionId, "run-n:0:1")
   assert.equal(node.attempt, 1)
   assert.equal(node.outputType, "structured")

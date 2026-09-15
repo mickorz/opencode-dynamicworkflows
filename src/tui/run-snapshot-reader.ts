@@ -55,6 +55,7 @@ export function parseRunSnapshot(raw: unknown): RunSnapshotView | null {
       label: n.label,
       phase: typeof n.phase === "string" ? n.phase : undefined,
       status: n.status,
+      startedAt: typeof n.startedAt === "number" ? n.startedAt : undefined,
       durationMs: typeof n.durationMs === "number" ? n.durationMs : undefined,
       sessionId: typeof n.sessionId === "string" ? n.sessionId : undefined,
       tokens: typeof n.tokens === "number" ? n.tokens : undefined,
