@@ -93,6 +93,52 @@ test("原生结构化路径：info.structured 直接返回", async () => {
   assert.deepEqual(result, { type: "structured", value: { native: true }, sessionId: "sess-1" })
 })
 
+test("原生结构化路径：多 step 消息的 token 按 step-finish parts 求和（补 OpenCode 覆盖缺陷）", async () => {
+  // 复现 server 真实形状：json_schema 两段式 step，info.tokens 只剩最后一步（被覆盖），
+  // 但 parts 里两个 step-finish 各自带完整 tokens（schema v1 StepFinishPart）
+  const client = {
+    session: {
+      create: async () => ({ data: { id: "sess-1" }, error: undefined }),
+      prompt: async () => ({
+        data: {
+          info: { structured: { ok: true }, tokens: { input: 102, output: 3 } },
+          parts: [
+            { type: "step-finish", tokens: { input: 100, output: 200, reasoning: 0 } },
+            { type: "step-finish", tokens: { input: 102, output: 3, reasoning: 0 } },
+          ],
+        },
+        error: undefined,
+      }),
+      abort: async () => ({ data: undefined, error: undefined }),
+    },
+  }
+  const usages: unknown[] = []
+  const adapter = new OpenCodeSessionAdapter({ client: client as unknown as Client })
+  await adapter.run("分析", { schema: SCHEMA, onUsage: (u) => usages.push(u) })
+  // 求和：input 100+102，output 200+3；而不是 info.tokens 的 102+3
+  assert.deepEqual(usages, [{ input: 202, output: 203, total: 405 }])
+})
+
+test("单 step 消息且 info.tokens 缺失时，回退用 step-finish part 的 tokens", async () => {
+  const client = {
+    session: {
+      create: async () => ({ data: { id: "sess-1" }, error: undefined }),
+      prompt: async () => ({
+        data: {
+          info: {},
+          parts: [{ type: "text", text: "ok" }, { type: "step-finish", tokens: { input: 7, output: 8 } }],
+        },
+        error: undefined,
+      }),
+      abort: async () => ({ data: undefined, error: undefined }),
+    },
+  }
+  const usages: unknown[] = []
+  const adapter = new OpenCodeSessionAdapter({ client: client as unknown as Client })
+  await adapter.run("分析", { onUsage: (u) => usages.push(u) })
+  assert.deepEqual(usages, [{ input: 7, output: 8, total: 15 }])
+})
+
 test("400 触发降级：二次请求去 format，围栏 JSON 解析成功且必填校验通过", async () => {
   const prompts: Array<Record<string, unknown>> = []
   const client = makeClient({

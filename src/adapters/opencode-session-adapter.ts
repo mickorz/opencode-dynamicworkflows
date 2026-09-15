@@ -34,7 +34,8 @@ export interface OpenCodeSessionAdapterOptions {
   onStructuredDegrade?: (info: { label: string; reason: string }) => void
 }
 
-/** prompt 响应中我们实际消费的字段（server 端形状，见本地源码 session/prompt.ts:104-105、schema v1/session.ts:493-500） */
+/** prompt 响应中我们实际消费的字段（server 端形状，见本地源码 session/prompt.ts:104-105、schema v1/session.ts:493-500）
+ *  parts 含每个 step 的 step-finish part（携带该 step 的 tokens，schema v1/session.ts:240-256） */
 interface PromptResponse {
   info: {
     error?: unknown
@@ -42,7 +43,12 @@ interface PromptResponse {
     tokens?: { input?: number; output?: number; reasoning?: number }
     cost?: number
   }
-  parts: Array<{ type: string; text?: string; ignored?: boolean }>
+  parts: Array<{
+    type: string
+    text?: string
+    ignored?: boolean
+    tokens?: { input?: number; output?: number; reasoning?: number }
+  }>
 }
 
 /** 判断错误是否"疑似网关不支持 json_schema/工具强制"（400 族） */
@@ -269,17 +275,34 @@ export class OpenCodeSessionAdapter implements AgentSessionRunner {
   }
 
   private emitUsage(message: PromptResponse, options?: AgentRunOptions): void {
-    const tokens = message.info.tokens
-    if (tokens && options?.onUsage) {
-      const input = tokens.input ?? 0
-      const output = tokens.output ?? 0
-      options.onUsage({
-        input,
-        output,
-        total: input + output + (tokens.reasoning ?? 0),
-        ...(message.info.cost !== undefined ? { cost: message.info.cost } : {}),
-      })
-    }
+    if (!options?.onUsage) return
+    // 上游缺陷补偿（OpenCode processor.ts:459）：多 step 消息的 info.tokens 被
+    //「最后一个 step 的 usage」覆盖（同函数 cost 是 += 累加，tokens 是 = 覆盖；
+    // finish 事件的 totalUsage 未被采用）。json_schema 路径 toolChoice required
+    // 必然两段式：step1 生成结构化 JSON（output 大头）-> 工具执行 -> step2 收尾，
+    // 导致 info.tokens 严重偏小。parts 里每个 step-finish part 携带该 step 完整
+    // tokens，对多 step 求和还原真实消耗；单 step 时与 info.tokens 一致（不回归）。
+    const stepTokens = message.parts
+      .filter((part) => part.type === "step-finish" && part.tokens)
+      .map((part) => part.tokens!)
+    const source =
+      stepTokens.length >= 2
+        ? stepTokens.reduce<{ input: number; output: number; reasoning: number }>(
+            (acc, t) => ({
+              input: acc.input + (t.input ?? 0),
+              output: acc.output + (t.output ?? 0),
+              reasoning: acc.reasoning + (t.reasoning ?? 0),
+            }),
+            { input: 0, output: 0, reasoning: 0 },
+          )
+        : (message.info.tokens ?? stepTokens[0])
+    if (!source) return
+    options.onUsage({
+      input: source.input ?? 0,
+      output: source.output ?? 0,
+      total: (source.input ?? 0) + (source.output ?? 0) + (source.reasoning ?? 0),
+      ...(message.info.cost !== undefined ? { cost: message.info.cost } : {}),
+    })
   }
 }
 
