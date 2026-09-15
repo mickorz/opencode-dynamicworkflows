@@ -132,6 +132,7 @@ export function toProgress(snapshot: RunSnapshotView): WorkflowProgress {
     completed: snapshot.completed,
     failed: snapshot.failed,
     total: snapshot.total,
+    time: snapshot.time,
     parentSessionId: snapshot.parentSessionId,
   }
 }

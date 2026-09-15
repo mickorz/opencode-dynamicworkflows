@@ -48,6 +48,9 @@ export interface WorkflowProgress {
   completed: number
   failed: number
   total: number
+  /** 快照写入时刻（毫秒；快照通道有，metadata 通道无）。心跳 3 秒更新它
+   *  并经 progressViewKey 触发重渲染，是 running 期耗时递增的刷新源 */
+  time?: number
   /** 触发本 run 的会话（B2 层级显示）：顶层 run 等于当前会话，嵌套 run 为某节点的子会话；缺省视为顶层 */
   parentSessionId?: string
 }
@@ -346,10 +349,12 @@ export function progressesViewKey(progresses: ReadonlyArray<WorkflowProgress>): 
   return progresses.map(progressViewKey).join(";")
 }
 
-/** viewKey：稳定字符串摘要，不变则不写 signal 避免无谓重渲（omo viewKey 差分） */
+/** viewKey：稳定字符串摘要，不变则不写 signal 避免无谓重渲（omo viewKey 差分）。
+ *  混入快照 time：心跳 3 秒更新它，是 running 期耗时递增的重渲染触发源
+ * （metadata 通道无 time 记 0；终态快照不再心跳，无额外重渲） */
 export function progressViewKey(progress: WorkflowProgress | null): string {
   if (!progress) return "none"
-  return `${progress.runId}|${progress.status}|${progress.total}|${progress.completed}|${progress.running}|${progress.failed}`
+  return `${progress.runId}|${progress.status}|${progress.total}|${progress.completed}|${progress.running}|${progress.failed}|${progress.time ?? 0}`
 }
 
 /** 耗时展示：843ms -> 0.8s / 12300ms -> 12.3s / 75000ms -> 1m15s */

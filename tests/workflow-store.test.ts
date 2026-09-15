@@ -16,6 +16,7 @@ import {
   nodeLine,
   parseWorkflowMetadata,
   phaseElapsedMs,
+  progressViewKey,
   selectableNodeKeys,
   sumTokens,
   type ToolPartLike,
@@ -265,4 +266,22 @@ test("parseWorkflowMetadata：解析 startedAt；老快照无此字段不回归"
     agents: [{ id: "r:0", label: "a", status: "running" }],
   })
   assert.equal(legacy!.nodes[0].startedAt, undefined)
+})
+
+test("progressViewKey：混入 time，仅心跳时间变化也触发重渲染", () => {
+  const base = {
+    runId: "r",
+    name: "w",
+    status: "running" as const,
+    phases: [],
+    nodes: [],
+    running: 1,
+    completed: 0,
+    failed: 0,
+    total: 1,
+  }
+  // 同状态不同 time（快照心跳）-> key 不同 -> setProgress 生效 -> 耗时递增可刷新
+  assert.notEqual(progressViewKey({ ...base, time: 1000 }), progressViewKey({ ...base, time: 4000 }))
+  // metadata 通道无 time（undefined）与 0 等价，保持稳定
+  assert.equal(progressViewKey({ ...base }), progressViewKey({ ...base, time: undefined }))
 })
