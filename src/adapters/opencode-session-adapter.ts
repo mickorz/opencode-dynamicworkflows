@@ -173,7 +173,13 @@ export class OpenCodeSessionAdapter implements AgentSessionRunner {
     }
   }
 
-  /** 原生结构化路径：format: json_schema，结果取 info.structured */
+  /** 原生结构化路径：format: json_schema，结果取 info.structured
+   *  方案 A（见 Docs/05_问题与注意事项/schema格式无中间执行过程分析.md）：server 端
+   *  toolChoice required + 强系统提示会让模型第一轮直接调 StructuredOutput 交卷，
+   *  丢失全部中间探索过程与结果质量。这里追加任务级指令对冲：先调查后提交。 */
+  private static readonly INVESTIGATE_FIRST =
+    "\n\n注意：在提交最终结构化结果之前，必须先使用可用工具完成必要的调查与核实（读取文件、搜索代码、执行命令等），禁止在调查完成前直接提交答案；确认结论后，再通过 StructuredOutput 工具一次性提交完整的结构化结果。"
+
   private async promptStructured(
     sessionId: string,
     prompt: string,
@@ -187,7 +193,7 @@ export class OpenCodeSessionAdapter implements AgentSessionRunner {
       {
         model,
         agent: options.agentType ?? this.defaultAgent,
-        parts: [{ type: "text", text: prompt }],
+        parts: [{ type: "text", text: prompt + OpenCodeSessionAdapter.INVESTIGATE_FIRST }],
         format: { type: "json_schema", schema: options.schema },
       },
       options.directory,

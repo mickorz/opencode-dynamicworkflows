@@ -86,11 +86,17 @@ test("文本路径：拼接 text parts 并回传用量", async () => {
   assert.deepEqual(usages, [{ input: 10, output: 5, total: 16 }])
 })
 
-test("原生结构化路径：info.structured 直接返回", async () => {
-  const client = makeClient({ onFormatPresent: "ok", plainResponse: () => ({ info: {}, parts: [] }) })
+test("原生结构化路径：info.structured 直接返回，且 prompt 追加先调查后提交指令（方案 A）", async () => {
+  const prompts: Array<Record<string, unknown>> = []
+  const client = makeClient({ onFormatPresent: "ok", prompts, plainResponse: () => ({ info: {}, parts: [] }) })
   const adapter = new OpenCodeSessionAdapter({ client })
   const result = await adapter.run("分析", { schema: SCHEMA })
   assert.deepEqual(result, { type: "structured", value: { native: true }, sessionId: "sess-1" })
+  assert.equal(prompts.length, 1)
+  const text = JSON.stringify(prompts[0].parts)
+  assert.match(text, /调查与核实/, "应携带先调查指令")
+  assert.match(text, /StructuredOutput/, "应说明通过 StructuredOutput 提交")
+  assert.match(text, /分析/, "原始 prompt 应保留在前")
 })
 
 test("原生结构化路径：多 step 消息的 token 按 step-finish parts 求和（补 OpenCode 覆盖缺陷）", async () => {
