@@ -9,7 +9,7 @@
 // slot 计算：cron-parser 本地时区；同一 cron 与同一时刻，各实例算出的 slot 相同
 // （TriggerClaim 的 key 一致性前提）。
 
-import cronParser from "cron-parser"
+import { CronExpressionParser } from "cron-parser"
 
 /** 四模式正则；捕获组用于范围校验 */
 const EVERY_MINUTES = /^\*\/(\d{1,2}) \* \* \* \*$/
@@ -69,7 +69,7 @@ export function validateCron(expr: string): string | null {
 
 /** 解析并返回 iterator（已通过子集校验的表达式才调用） */
 function iterator(cron: string, currentDate: Date) {
-  return cronParser.CronExpressionParser.parse(cron, { currentDate })
+  return CronExpressionParser.parse(cron, { currentDate })
 }
 
 /** after 之后的下一个未来 slot */
