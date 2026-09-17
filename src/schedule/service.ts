@@ -19,6 +19,8 @@ export interface CreateScheduleInput {
   args?: Record<string, unknown>
   /** 创建即停用（缺省 true 启用） */
   enabled?: boolean
+  /** 单轮超时毫秒数 */
+  timeoutMs?: number
 }
 
 export function createSchedule(input: CreateScheduleInput): Schedule {
@@ -46,6 +48,7 @@ export function createSchedule(input: CreateScheduleInput): Schedule {
     cron: input.cron,
     enabled: input.enabled ?? true,
     args: input.args,
+    timeoutMs: input.timeoutMs,
     createdAt: now,
     updatedAt: now,
   }

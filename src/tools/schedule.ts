@@ -38,6 +38,7 @@ export function createScheduleTools(_ctx: PluginInput, scheduler: ScheduleRuntim
       ),
       name: tool.schema.string().optional().describe("展示名；缺省用 workflowId"),
       args: tool.schema.record(tool.schema.string(), tool.schema.any()).optional().describe("透传给 workflow 脚本的全局 args（JSON）"),
+      timeoutMs: tool.schema.number().optional().describe("单轮超时毫秒数，到点中止并记 timeout；缺省不限"),
     },
     async execute(input, context) {
       try {
@@ -47,6 +48,7 @@ export function createScheduleTools(_ctx: PluginInput, scheduler: ScheduleRuntim
           cron: input.cron,
           name: input.name,
           args: input.args,
+          timeoutMs: input.timeoutMs,
         })
         const next = nextRun(schedule.cron, new Date())
         return {
