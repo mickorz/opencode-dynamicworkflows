@@ -23,13 +23,17 @@ description: "创建或管理 Workflow 定时任务（Schedule）：如 /schedul
 
 若用户提到的脚本不存在于 `.opencode-workflows/workflows/`，先告知用户需要把 workflow 脚本放到该目录后再创建，不要凭空创建。
 
-## 意图 2：查看
+## 意图 3：管理操作
 
-"list / 列表 / 有哪些定时任务" -> 调用 `schedule_list` 工具并原样展示结果。
+- "list / 列表 / 有哪些定时任务" -> 调用 `schedule_list` 工具并原样展示结果
+- "看下 xxx / 详情 / 最近执行" -> 调用 `schedule_get`（参数 id）
+- "停用 / 暂停 xxx" -> 调用 `schedule_disable`（参数 id）
+- "启用 / 恢复 xxx" -> 调用 `schedule_enable`（参数 id）
+- "删除 xxx" -> 先向用户确认（保留历史但停止任务），再调用 `schedule_delete`（参数 id；不会删 workflow 文件）
+- "立即跑一次 / 测试一下 xxx" -> 调用 `schedule_run_now`（参数 id）并告知结果会落在独立会话与执行记录里
+- "改成每天 10 点 / 更新 cron / 改 args" -> 调用 `schedule_update`（参数 id + 变更字段；workflowId 不可改，需要时删除后重建）
 
-## 意图 3：其他管理操作
-
-disable / enable / delete / run-now / update 等操作当前版本暂未提供工具，直接告知用户对应的配置文件位置（`.opencode-workflows/schedules/<id>.json`）与可手动修改的字段。
+用户投的 id 不确定时，先 `schedule_list` 再确认。
 
 ## 边界提醒（创建成功后必须保留在回复里）
 

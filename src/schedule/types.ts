@@ -20,6 +20,10 @@ export interface Schedule {
   enabled: boolean
   /** 透传给 workflow 脚本的 args */
   args?: Record<string, unknown>
+  /** 重叠策略（P1 仅 skip：上一轮还在跑时新轮跳过；Phase 3 生效） */
+  overlapPolicy?: "skip"
+  /** 单轮超时毫秒数（Phase 3 生效；到点 abort） */
+  timeoutMs?: number
   createdAt: string
   updatedAt: string
 }

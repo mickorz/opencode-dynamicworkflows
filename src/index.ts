@@ -34,7 +34,7 @@ export const DynamicWorkflowPlugin: Plugin = async (input) => {
     tool: {
       workflow: createWorkflowTool(input, background),
       workflow_control: createWorkflowControlTool(background),
-      ...createScheduleTools(input),
+      ...createScheduleTools(input, scheduler),
     },
   }
 }

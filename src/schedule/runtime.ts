@@ -92,8 +92,8 @@ export class ScheduleRuntime {
     }
   }
 
-  /** 认领成功后的执行：fresh session -> 后台 run -> Record（终态由 onFinished 写） */
-  private async execute(schedule: Schedule, slot: Date): Promise<void> {
+  /** 认领成功后的执行：fresh session -> 后台 run -> Record（终态由 onFinished 写）；返回 runId */
+  private async execute(schedule: Schedule, slot: Date): Promise<string | undefined> {
     const startedAt = new Date().toISOString()
     const base: ScheduleRun = {
       scheduleId: schedule.id,
@@ -112,8 +112,10 @@ export class ScheduleRuntime {
         throw new Error(`session create 失败: ${JSON.stringify(created.error)}`)
       }
       const sessionId = created.data.id
-      writeRecord(this.deps.directory, { ...base, sessionId })
-      this.deps.manager.start(
+      // 含 sessionId 的 base 供终态 Record 复用（onFinished 闭包）
+      const runningBase: ScheduleRun = { ...base, sessionId }
+      writeRecord(this.deps.directory, runningBase)
+      return this.deps.manager.start(
         {
           client: this.deps.client,
           parentSessionId: sessionId,
@@ -123,13 +125,27 @@ export class ScheduleRuntime {
         {
           script,
           args: schedule.args,
-          onFinished: (info) => this.writeTerminalRecord(base, schedule, info),
+          onFinished: (info) => this.writeTerminalRecord(runningBase, schedule, info),
         },
       )
     } catch (error) {
       // 执行准备失败（workflow 缺失 / session 创建失败）：直接落 failed Record
       this.writeFailedRecord(base, schedule, error instanceof Error ? error.message : String(error))
+      return undefined
     }
+  }
+
+  /** 立即执行一次（schedule_run_now）：跳过时间判定与 claim（手动语义），走同一执行路径 */
+  async runNow(scheduleId: string): Promise<{ runId?: string; error?: string }> {
+    const schedule = listSchedules(this.deps.directory).find((s) => s.id === scheduleId)
+    if (!schedule) {
+      return { error: `SCHEDULE_NOT_FOUND：未找到定时任务 "${scheduleId}"（可用 schedule_list 查看全部）` }
+    }
+    const runId = await this.execute(schedule, this.now())
+    if (!runId) {
+      return { error: `启动失败（详情见 Record 或 workflow 是否缺失）：scheduleId=${scheduleId}` }
+    }
+    return { runId }
   }
 
     /** BackgroundRunManager 终态 -> Record 终态 */
