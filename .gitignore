@@ -16,8 +16,11 @@ Docs/*
 !Docs/testing.md
 !Docs/development.md
 
-# workflow 运行时产物（journal、运行状态）
+# workflow 运行时产物（journal、运行状态）；examples 的验收 workflow 脚本入库（自包含承诺）
 .opencode-workflows/
+!examples/sample-project/.opencode-workflows/
+examples/sample-project/.opencode-workflows/*
+!examples/sample-project/.opencode-workflows/workflows/
 
 # 手工验收工程的运行时状态与本地测试脚本（不入库）；docs/ 下仅 10 个 mdx 验收语料入库（examples 自包含承诺），spec 笔记等本地文档忽略
 examples/sample-project/.opencode/

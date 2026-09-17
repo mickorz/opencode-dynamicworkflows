@@ -67,6 +67,8 @@ export interface BackgroundStartInput {
   maxAgents?: number
   agentTimeoutMs?: number
   agentRetries?: number
+  /** 终态回调（completed/failed/aborted 后调用一次；ScheduleRuntime 用于写终态 Record）。回调抛错不阻断 run */
+  onFinished?: (info: BackgroundRunInfo) => void
 }
 
 /** 完成后注册表里保留的历史条数 */
@@ -232,6 +234,12 @@ export class BackgroundRunManager {
       info.endedAt = Date.now()
       // 本 run 结束：注销血统（嵌套工具调用均已返回，不存在仍在使用注册项的窗口）
       unregisterAgentSessions(registeredSessions)
+      // 终态回调（如 ScheduleRun Record 落盘）；回调异常不改变 run 终态
+      try {
+        input.onFinished?.(info)
+      } catch {
+        // 回调失败仅丢失外部记录，run 本身已终态
+      }
     }
   }
 

@@ -18,6 +18,7 @@ import {
   PKG_NAME,
   SKILL_NAMES,
   cliPackageRoot,
+  copyCommands,
   detectInstalled,
   globalCacheScopeDir,
   readInstalledVersion,
@@ -103,6 +104,12 @@ export async function runUpdate(): Promise<void> {
 
     // 提醒 SKILL_NAMES 之外可能有旧拷贝残留（当前仅两个内置 skill，防未来改名遗留）
     p.log.info(`内置 skill 清单：${SKILL_NAMES.join("、")}`)
+
+    // /schedule command 模板刷新（覆盖式，与 skill 同源策略）
+    for (const item of results) {
+      copyCommands(cwd, item.kind)
+      p.log.info(`已刷新 /schedule command（${item.kind}）`)
+    }
   } catch (error) {
     s.stop("更新失败")
     p.log.error(error instanceof Error ? error.message : String(error))

@@ -25,6 +25,7 @@ import {
   projectTuiJsonPath,
   projectSkillsTargetDir,
   removeConfigWithBackup,
+  removeCommands,
   removePluginEntries,
   removeSkillTarget,
   skillTargets,
@@ -172,6 +173,11 @@ export async function runUninstall(): Promise<void> {
         removeSkillTarget(target)
         s.stop(`已删除 ${target.destDir}`)
       }
+    }
+
+    // 清理 /schedule command 模板（单文件，无本地改动价值，直接删）
+    for (const item of selected) {
+      removeCommands(cwd, item.kind)
     }
 
     // 3. 锁定模式：npm uninstall（与安装的 npm install 对称，不再询问；失败时 node_modules 仍在，重跑卸载器会再次检测到）

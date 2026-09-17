@@ -10,7 +10,7 @@
  * 安装方式与条目匹配规则见 Docs/npx cli安装方式-交互式安装器实施方案.md 第 2 节。
  */
 
-import { existsSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { dirname, isAbsolute, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -24,6 +24,9 @@ export const PKG_IN_NODE_MODULES = "node_modules/@mickorz/opencode-dynamic-workf
 export const PLUGIN_SPEC_LOCAL = "./node_modules/@mickorz/opencode-dynamic-workflows"
 /** 包内 skills 目录（skill 拷贝源，位于 CLI 自身包根） */
 export const SKILL_NAMES = ["workflow-authoring", "workflow-optimize"] as const
+
+/** 分发的 command 模板（拷贝到 OpenCode commands 目录，/schedule 入口） */
+export const COMMAND_NAMES = ["schedule.md"] as const
 
 // ---------------------------------------------------------------------------
 // 路径解析
@@ -78,6 +81,29 @@ export function globalSkillsTargetDir(): string {
 /** skill 项目目标目录（.agents/skills，OpenCode 原生扫描且向上遍历） */
 export function projectSkillsTargetDir(cwd: string): string {
   return join(cwd, ".agents", "skills")
+}
+
+/** command 目标目录（global 模式 → 全局配置 commands；project/locked → 项目 .opencode/commands） */
+export function commandTargetDir(cwd: string, mode: "global" | "project" | "locked"): string {
+  return mode === "global" ? join(globalConfigDir(), "commands") : join(cwd, ".opencode", "commands")
+}
+
+/** 拷贝 command 模板（单文件，覆盖式） */
+export function copyCommands(cwd: string, mode: "global" | "project" | "locked"): void {
+  const sourceBase = join(cliPackageRoot(), "commands")
+  const destDir = commandTargetDir(cwd, mode)
+  mkdirSync(destDir, { recursive: true })
+  for (const name of COMMAND_NAMES) {
+    copyFileSync(join(sourceBase, name), join(destDir, name))
+  }
+}
+
+/** 删除已拷贝的 command 模板 */
+export function removeCommands(cwd: string, mode: "global" | "project" | "locked"): void {
+  const destDir = commandTargetDir(cwd, mode)
+  for (const name of COMMAND_NAMES) {
+    rmSync(join(destDir, name), { force: true })
+  }
 }
 
 /** CLI 自身包根（npx 运行时位于 npx 缓存；skill 拷贝源取此处，不依赖 OpenCode 缓存是否已装） */

@@ -24,6 +24,8 @@ import {
   projectTuiJsonPath,
   skillTargets,
   copySkill,
+  copyCommands,
+  commandTargetDir,
   unwrap,
 } from "./config.js"
 
@@ -160,6 +162,10 @@ export async function runInstall(): Promise<void> {
         s.stop(`已拷贝 ${target.name} → ${target.destDir}`)
       }
     }
+
+    // 拷贝 /schedule command 模板（单文件覆盖，随安装方式选目录）
+    copyCommands(cwd, mode)
+    p.log.info(`已拷贝 /schedule command → ${commandTargetDir(cwd, mode)}/schedule.md`)
   } catch (error) {
     s.stop("安装失败")
     p.log.error(error instanceof Error ? error.message : String(error))

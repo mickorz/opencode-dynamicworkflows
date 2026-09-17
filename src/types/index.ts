@@ -70,6 +70,8 @@ export interface AgentRecord {
 
 /** workflow 脚本 meta 信封 */
 export interface WorkflowMeta {
+  /** 稳定 ID（Schedule 引用）；缺省用 name */
+  id?: string
   name: string
   description?: string
   phases?: Array<{ title: string }>

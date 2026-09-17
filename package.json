@@ -36,6 +36,7 @@
     "@clack/prompts": "^1.8.0",
     "@opentui/solid": "^0.4.5",
     "acorn": "^8.16.0",
+    "cron-parser": "^5.10.1",
     "jsonc-parser": "^3.3.1",
     "solid-js": "1.9.12"
   },
