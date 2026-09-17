@@ -227,3 +227,40 @@ return { middle }
 - **每层独立**：runId、journal、断点续跑、快照互不干扰；中断后续跑用对应层自己的 runId
 - **无深度保护**：嵌套层级无硬限制，编排时自行控层防失控烧 token（每层都有 general 子代理的会话开销）
 - 嵌套子代理会话与主会话同目录：快照按 `rootSessionId` 血统归属主会话显示，进程重启后血统丢失则该批嵌套树退化为不可见（不影响执行与结果）
+
+## 定时任务（Schedule）
+
+把稳定 workflow 配置成定时执行，到点由插件内调度器**确定性执行**（直接按 workflowId 加载脚本，不经 LLM 判断）。
+
+### 准备：workflow 脚本放入约定目录
+
+项目根的 `.opencode-workflows/workflows/`，脚本就是普通 workflow（`export const meta = { name: 'daily-review' }`，`meta.id` 可选覆盖 name 作为 workflowId）。
+
+### 创建：自然语言或直接传 cron
+
+```
+/schedule 每小时执行 daily-review.js
+```
+
+或让 Main Agent 调 `schedule_create` 工具。支持的 cron 四模式（`m`=分 `h`=时 `W`=周几 0-6）：
+
+| 意图 | cron |
+|------|------|
+| 每 n 分钟 | `*/n * * * *` |
+| 每小时 m 分 | `m * * * *` |
+| 每天 h 点 m 分 | `m h * * *` |
+| 每周 W 的 h 点 m 分 | `m h * * W` |
+
+创建回显含 `Next run` 与 `Requires OpenCode running: Yes` 边界声明。
+
+### 管理与观测
+
+- `schedule_list` / `schedule_get <id>`：下次执行、最近执行历史
+- `schedule_update` / `schedule_enable` / `schedule_disable` / `schedule_delete`：改 cron/args/timeout、启停、删除（不删 workflow 文件）
+- `schedule_run_now <id>`：立即跑一轮验证（后台执行，结果在独立会话与执行记录里）
+- 执行记录：`.opencode-workflows/runs/schedules/<scheduleId>/`，每轮一条 JSON（状态、耗时、token、错误）；每轮一个独立 OpenCode 会话，可在会话列表按时间找到并查看 agent 树
+- 重叠保护：上一轮还在跑时新一轮跳过（记录 skipped）；`timeoutMs` 可设单轮超时；定时执行中 `checkpoint()` 直接失败（无人值守不支持人工确认）
+
+### 边界（务必知晓）
+
+OpenCode 关闭期间任务不执行、错过的时间点不补跑（下一个未来时间点正常）；同项目多开 OpenCode 不会重复执行。

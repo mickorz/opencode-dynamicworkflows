@@ -70,5 +70,6 @@ if (!await checkpoint('即将改动生产配置，确认？')) return '已取消
 ## 参考
 
 - [runtime API 详解](references/runtime.md)
+- [Schedule 定时执行](references/schedule.md)
 - [范例：扇出汇总](examples/fan-out-and-synthesize.js)
 - [范例：分阶段流水线](examples/phased-pipeline-review.js)

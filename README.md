@@ -141,10 +141,20 @@ args 传 {"model": "biangfeng-gateway/glm-5.2"}
 ## 功能一览
 
 - `workflow` 自定义 tool + `workflow_control` 控制 tool（status / stop）
+- Schedule 定时任务：`/schedule 每小时执行 xxx.js` 自然语言创建，到点确定性执行（不经 LLM 判断）；同项目多开 OpenCode 不重复执行；执行记录可查
 - VM 沙箱确定性护栏（禁 `Date.now()` / `Math.random()` / import / require，可确定性重放）
 - DSL：`agent / parallel / pipeline / phase / log / args` + 质量助手
 - 原生结构化输出（`schema` 走 OpenCode `format: json_schema`）、并发控制（缺省 CPU 核数-2、上限 16）、超时/重试/abort 级联、git worktree 隔离、journal 断点续跑、后台运行
 - 嵌套工作流：general 子代理内可再触发 `workflow`（多层串联），每层独立 run/journal/token 计量，TUI 层级树（画中画）显示
+
+### Schedule 定时任务的产品边界（设计而非缺陷）
+
+- **OpenCode 必须运行**：TUI 关闭期间任务不执行，重开后自动恢复。
+- **错过 = 跳过**：休眠/关机错过的时间点不补跑，下一个未来时间点正常执行。
+- **多实例安全**：同项目开多个 OpenCode，每个时间槽至多触发一次（原子 claim 协调）。
+- 执行语义为 at-most-once per slot；workflow 需人工 checkpoint 的场景不适合定时跑（会直接失败）。
+
+用法见 [docs/how-to-guides.md](docs/how-to-guides.md) 的定时任务一节。
 
 各功能用法见 [docs/how-to-guides.md](docs/how-to-guides.md)。
 
