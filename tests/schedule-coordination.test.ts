@@ -9,6 +9,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { spawn } from "node:child_process"
+import { pathToFileURL } from "node:url"
 import { tryClaim, pruneClaims, claimsRoot, CLAIM_RETENTION_MS } from "../src/schedule/coordination.js"
 import { writeRecord, latestRecord, listRecords } from "../src/schedule/record.js"
 
@@ -45,10 +46,11 @@ test("pruneClaims：过期删除、保留期内不删", () => {
 test("tryClaim 跨进程：两个子进程竞争同一 slot，恰一个成功", async () => {
   const dir = tmpProject()
   const slot = new Date("2026-09-17T09:00:00")
-  // 子进程脚本：轮询起跑文件出现后立即 tryClaim，exit 0 = 抢到 / exit 3 = EEXIST / exit 4 = barrier 超时
+  // 子进程脚本（tsx 直跑源码，不依赖 dist——CI 的 npm test 在 build 之前）：
+  // 轮询起跑文件出现后立即 tryClaim，exit 0 = 抢到 / exit 3 = EEXIST / exit 4 = barrier 超时
   const script = `
-const { tryClaim } = require(${JSON.stringify(path.resolve("dist/schedule/coordination.js"))})
-const fs = require("node:fs")
+import { tryClaim } from ${JSON.stringify(pathToFileURL(path.resolve("src/schedule/coordination.ts")).href)}
+import fs from "node:fs"
 const dir = ${JSON.stringify(dir)}
 const slot = new Date(${slot.getTime()})
 const goFile = ${JSON.stringify(path.join(dir, "go.flag"))}
@@ -58,10 +60,11 @@ while (!fs.existsSync(goFile)) {
 }
 process.exit(tryClaim(dir, ${JSON.stringify("sch-race")}, slot) ? 0 : 3)
 `
-  const scriptFile = path.join(dir, "race-child.cjs")
+  const scriptFile = path.join(dir, "race-child.mts")
   fs.writeFileSync(scriptFile, script, "utf-8")
+  const tsxCli = path.resolve("node_modules", "tsx", "dist", "cli.mjs")
   // 两个子进程先起（各自轮询 barrier），父进程放行后并发抢同一 slot
-  const children = [0, 1].map(() => spawnSyncPromise(process.execPath, [scriptFile], { timeout: 15_000 }))
+  const children = [0, 1].map(() => spawnPromise(process.execPath, [tsxCli, scriptFile], { timeout: 15_000 }))
   await new Promise((resolve) => setTimeout(resolve, 400))
   fs.writeFileSync(path.join(dir, "go.flag"), "")
   const codes = await Promise.all(children)
@@ -71,7 +74,7 @@ process.exit(tryClaim(dir, ${JSON.stringify("sch-race")}, slot) ? 0 : 3)
 })
 
 /** spawn 异步包装，返回 exit code */
-function spawnSyncPromise(cmd: string, args: string[], opts: { timeout?: number }): Promise<number | null> {
+function spawnPromise(cmd: string, args: string[], opts: { timeout?: number }): Promise<number | null> {
   const child = spawn(cmd, args, opts)
   return new Promise((resolve) => {
     child.on("close", (code) => resolve(code))
