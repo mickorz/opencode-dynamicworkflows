@@ -23,6 +23,7 @@ function tmpProject(): string {
 
 test("cron 四模式合法校验", () => {
   assert.equal(validateCron("*/5 * * * *"), null)
+  assert.equal(validateCron("* * * * *"), null, "裸星号即每分钟（与 */1 等价）")
   assert.equal(validateCron("30 * * * *"), null)
   assert.equal(validateCron("0 9 * * *"), null)
   assert.equal(validateCron("0 10 * * 1"), null)
@@ -43,6 +44,9 @@ test("nextRun 与 latestSlot 边界", () => {
   const now = new Date(2026, 8, 17, 15, 37, 12)
   assert.equal(nextRun("*/5 * * * *", now).getTime(), new Date(2026, 8, 17, 15, 40, 0).getTime())
   assert.equal(latestSlot("*/5 * * * *", now).getTime(), new Date(2026, 8, 17, 15, 35, 0).getTime())
+  // 裸星号与 */1 结果一致（每分钟）
+  assert.equal(nextRun("* * * * *", now).getTime(), nextRun("*/1 * * * *", now).getTime())
+  assert.equal(latestSlot("* * * * *", now).getTime(), latestSlot("*/1 * * * *", now).getTime())
   // 每天 9 点：08:59 -> latest 是昨天 9 点
   const morning = new Date(2026, 8, 17, 8, 59, 10)
   assert.equal(latestSlot("0 9 * * *", morning).getTime(), new Date(2026, 8, 16, 9, 0, 0).getTime())

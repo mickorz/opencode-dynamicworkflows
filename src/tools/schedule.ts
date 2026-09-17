@@ -21,6 +21,13 @@ function err(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** 本地时间显示（YYYY-MM-DD HH:mm），避免用户按 UTC 误等时差 */
+function formatLocal(value: Date | string): string {
+  const date = typeof value === "string" ? new Date(value) : value
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
 export function createScheduleTools(_ctx: PluginInput, scheduler: ScheduleRuntime) {
   const scheduleCreate = tool({
     description: "创建 Workflow 定时任务（Schedule）。自然语言的定时意图（每分钟/每小时/每天/每周）由调用方翻译成 cron 后传入。到点由插件内调度器确定性执行 workflowId（不经 LLM 判断）；OpenCode 运行期间生效，关闭后不执行、错过的时间点不补跑。",
@@ -41,7 +48,7 @@ export function createScheduleTools(_ctx: PluginInput, scheduler: ScheduleRuntim
           name: input.name,
           args: input.args,
         })
-        const next = nextRun(schedule.cron, new Date()).toISOString()
+        const next = nextRun(schedule.cron, new Date())
         return {
           title: "schedule_create",
           output: [
@@ -50,7 +57,7 @@ export function createScheduleTools(_ctx: PluginInput, scheduler: ScheduleRuntim
             `ID: ${schedule.id}`,
             `Workflow: ${schedule.workflowId}`,
             `Cron: ${schedule.cron}`,
-            `Next run: ${next}`,
+            `Next run: ${formatLocal(next)}（本地时间）`,
             "Requires OpenCode running: Yes",
             "",
             "说明：OpenCode 运行期间到点自动执行；关闭 OpenCode 或休眠错过的轮次不补跑（下一个未来时间点正常执行）。查看用 schedule_list。",
@@ -75,8 +82,8 @@ export function createScheduleTools(_ctx: PluginInput, scheduler: ScheduleRuntim
       }
       const lines = views.map((v) => {
         const enabled = v.enabled ? "启用" : "停用"
-        const next = v.enabled ? (v.nextRunAt ?? "-") : "-"
-        const last = v.lastRunAt ? `${v.lastRunStatus} @ ${v.lastRunAt}` : "从未执行"
+        const next = v.enabled ? (v.nextRunAt ? formatLocal(v.nextRunAt) : "-") : "-"
+        const last = v.lastRunAt ? `${v.lastRunStatus} @ ${formatLocal(v.lastRunAt)}` : "从未执行"
         const missing = v.workflowMissing ? " [警告: workflow 文件缺失]" : ""
         return `- ${v.id}${missing}\n  workflow: ${v.workflowId} | cron: ${v.cron} | ${enabled}\n  next: ${next} | last: ${last}`
       })
@@ -94,7 +101,7 @@ export function createScheduleTools(_ctx: PluginInput, scheduler: ScheduleRuntim
       try {
         const v = getScheduleView(context.directory, input.id)
         const history = v.history.length
-          ? v.history.map((r) => `  - ${r.startedAt} ${r.status}${r.error ? `（${r.error}）` : ""}`).join("\n")
+          ? v.history.map((r) => `  - ${formatLocal(r.startedAt)} ${r.status}${r.error ? `（${r.error}）` : ""}`).join("\n")
           : "  （从未执行）"
         return {
           title: "schedule_get",
@@ -102,8 +109,8 @@ export function createScheduleTools(_ctx: PluginInput, scheduler: ScheduleRuntim
             `ID: ${v.id}`,
             `Workflow: ${v.workflowId}${v.workflowMissing ? " [警告: workflow 文件缺失]" : ""}`,
             `Cron: ${v.cron} | ${v.enabled ? "启用" : "停用"}`,
-            `Next run: ${v.enabled ? (v.nextRunAt ?? "-") : "（停用）"}`,
-            `Last run: ${v.lastRunAt ? `${v.lastRunStatus} @ ${v.lastRunAt}` : "从未执行"}`,
+            `Next run: ${v.enabled ? (v.nextRunAt ? formatLocal(v.nextRunAt) : "-") : "（停用）"}`,
+            `Last run: ${v.lastRunAt ? `${v.lastRunStatus} @ ${formatLocal(v.lastRunAt)}` : "从未执行"}`,
             `Timeout: ${v.timeoutMs ? `${v.timeoutMs}ms` : "无"}`,
             `Requires OpenCode running: Yes`,
             "",
@@ -136,7 +143,7 @@ export function createScheduleTools(_ctx: PluginInput, scheduler: ScheduleRuntim
             "Schedule 已更新",
             `ID: ${updated.id}`,
             `Cron: ${updated.cron} | ${updated.enabled ? "启用" : "停用"}`,
-            `Next run: ${updated.enabled ? nextRun(updated.cron, new Date()).toISOString() : "（停用）"}`,
+            `Next run: ${updated.enabled ? formatLocal(nextRun(updated.cron, new Date())) : "（停用）"}`,
           ].join("\n"),
         }
       } catch (error) {
@@ -164,7 +171,7 @@ export function createScheduleTools(_ctx: PluginInput, scheduler: ScheduleRuntim
     async execute(input, context) {
       try {
         const s = setScheduleEnabled(context.directory, input.id, true)
-        return { title: "schedule_enable", output: `已启用 ${s.id}，下次执行 ${nextRun(s.cron, new Date()).toISOString()}` }
+        return { title: "schedule_enable", output: `已启用 ${s.id}，下次执行 ${formatLocal(nextRun(s.cron, new Date()))}（本地时间）` }
       } catch (error) {
         return { title: "schedule_enable", output: err(error) }
       }

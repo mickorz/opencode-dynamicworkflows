@@ -11,8 +11,8 @@
 
 import { CronExpressionParser } from "cron-parser"
 
-/** 四模式正则；捕获组用于范围校验 */
-const EVERY_MINUTES = /^\*\/(\d{1,2}) \* \* \* \*$/
+// 四模式正则；捕获组用于范围校验（分钟字段：* 等价于 */1）
+const EVERY_MINUTES = /^(\*\/(\d{1,2})|\*) \* \* \* \*$/
 const HOURLY = /^(\d{1,2}) \* \* \* \*$/
 const DAILY = /^(\d{1,2}) (\d{1,2}) \* \* \*$/
 const WEEKLY = /^(\d{1,2}) (\d{1,2}) \* \* (\d(?:,\d)*)$/
@@ -27,7 +27,7 @@ export function validateCron(expr: string): string | null {
 
   let m = EVERY_MINUTES.exec(text)
   if (m) {
-    const n = Number(m[1])
+    const n = m[2] === undefined ? 1 : Number(m[2]) // 裸 "*" 等价 */1
     if (n < 1 || n > 59) return `每分钟模式的步长需在 1-59 之间，收到 ${n}`
     return null
   }
@@ -60,7 +60,7 @@ export function validateCron(expr: string): string | null {
 
   return [
     `不支持的 cron 表达式 "${expr}"。P1 仅支持四种模式：`,
-    "  */n * * * *   每 n 分钟（如 */5 每 5 分钟）",
+    "  * 或 */n 分钟字段  每分钟或每 n 分钟（如 */5 每 5 分钟）",
     "  m  *  * * *   每小时 m 分（如 30 * * * * 每小时半点）",
     "  m  h  * * *   每天 h 点 m 分（如 0 9 * * * 每天 9 点）",
     "  m  h  * * W   每周 W 的 h 点 m 分（W 0-6，0=周日；如 0 10 * * 1 每周一 10 点）",
