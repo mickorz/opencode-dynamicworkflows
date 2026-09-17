@@ -19,7 +19,7 @@ import { BackgroundRunManager, type BackgroundRunInfo } from "../tools/backgroun
 import { latestSlot } from "./cron.js"
 import { listSchedules } from "./store.js"
 import { readWorkflowScript } from "./registry.js"
-import { tryClaim, pruneClaims } from "./coordination.js"
+import { tryClaim, pruneClaims, acquireExecutionLock, releaseExecutionLock } from "./coordination.js"
 import { writeRecord } from "./record.js"
 import type { Schedule, ScheduleRun, ScheduleRunStatus } from "./types.js"
 
@@ -88,19 +88,44 @@ export class ScheduleRuntime {
       const slot = latestSlot(schedule.cron, now)
       if (now.getTime() - slot.getTime() > this.graceMs) continue // 错过 = skip
       if (!tryClaim(this.deps.directory, schedule.id, slot)) continue // 已被认领，静默
-      await this.execute(schedule, slot)
+      await this.execute(schedule, slot, "scheduled")
     }
   }
 
-  /** 认领成功后的执行：fresh session -> 后台 run -> Record（终态由 onFinished 写）；返回 runId */
-  private async execute(schedule: Schedule, slot: Date): Promise<string | undefined> {
+  /**
+   * 执行一次：execution lock（overlap=skip）-> fresh session -> 后台 run（含 timeout / checkpoint 即败）-> Record
+   * 返回 runId；被 overlap skip 或准备失败时 undefined。
+   */
+  private async execute(
+    schedule: Schedule,
+    slot: Date,
+    trigger: "scheduled" | "manual",
+  ): Promise<string | undefined> {
     const startedAt = new Date().toISOString()
     const base: ScheduleRun = {
       scheduleId: schedule.id,
       workflowId: schedule.workflowId,
       status: "running",
+      trigger,
       scheduledAt: slot.toISOString(),
+      slotEpoch: slot.getTime(),
       startedAt,
+    }
+    // overlapPolicy=skip（P1 唯一策略）：同 schedule 上一轮仍在跑 -> 写 skipped Record 不执行
+    if (!acquireExecutionLock(this.deps.directory, schedule.id)) {
+      writeRecord(this.deps.directory, {
+        ...base,
+        status: "skipped",
+        finishedAt: new Date().toISOString(),
+        error: "上一轮仍在执行（overlapPolicy=skip）",
+      })
+      return undefined
+    }
+    let timeoutTimer: NodeJS.Timeout | undefined
+    let timedOut = false
+    const release = () => {
+      if (timeoutTimer) clearTimeout(timeoutTimer)
+      releaseExecutionLock(this.deps.directory, schedule.id)
     }
     try {
       const script = readWorkflowScript(this.deps.directory, schedule.workflowId)
@@ -115,7 +140,7 @@ export class ScheduleRuntime {
       // 含 sessionId 的 base 供终态 Record 复用（onFinished 闭包）
       const runningBase: ScheduleRun = { ...base, sessionId }
       writeRecord(this.deps.directory, runningBase)
-      return this.deps.manager.start(
+      const runId = this.deps.manager.start(
         {
           client: this.deps.client,
           parentSessionId: sessionId,
@@ -125,45 +150,76 @@ export class ScheduleRuntime {
         {
           script,
           args: schedule.args,
-          onFinished: (info) => this.writeTerminalRecord(runningBase, schedule, info),
+          // checkpoint 即败（需求 17）：定时执行无人值守，无人工确认通道
+          confirm: () =>
+            Promise.reject(
+              new Error(
+                "INTERACTIVE_ACTION_REQUIRED：定时执行不支持 checkpoint 人工确认（无人值守），请在手动运行中确认或移除 checkpoint",
+              ),
+            ),
+          trigger:
+            trigger === "scheduled"
+              ? { type: "schedule", scheduleId: schedule.id, scheduledAt: slot.toISOString() }
+              : { type: "manual", scheduleId: schedule.id },
+          onFinished: (info) => {
+            release()
+            this.writeTerminalRecord(runningBase, info, timedOut)
+          },
         },
       )
+      // timeout（需求 21）：到点 stop，复用 abort 级联；Record 量 timedOut 标志记 timeout 态
+      if (schedule.timeoutMs && schedule.timeoutMs > 0) {
+        timeoutTimer = setTimeout(() => {
+          timedOut = true
+          this.deps.manager.stop(runId)
+        }, schedule.timeoutMs)
+      }
+      return runId
     } catch (error) {
-      // 执行准备失败（workflow 缺失 / session 创建失败）：直接落 failed Record
-      this.writeFailedRecord(base, schedule, error instanceof Error ? error.message : String(error))
+      release()
+      this.writeFailedRecord(base, error instanceof Error ? error.message : String(error))
       return undefined
     }
   }
 
-  /** 立即执行一次（schedule_run_now）：跳过时间判定与 claim（手动语义），走同一执行路径 */
+  /** 立即执行一次（schedule_run_now）：跳过时间判定与 claim（手动语义），走同一执行路径（含 execution lock） */
   async runNow(scheduleId: string): Promise<{ runId?: string; error?: string }> {
     const schedule = listSchedules(this.deps.directory).find((s) => s.id === scheduleId)
     if (!schedule) {
       return { error: `SCHEDULE_NOT_FOUND：未找到定时任务 "${scheduleId}"（可用 schedule_list 查看全部）` }
     }
-    const runId = await this.execute(schedule, this.now())
+    const runId = await this.execute(schedule, this.now(), "manual")
     if (!runId) {
-      return { error: `启动失败（详情见 Record 或 workflow 是否缺失）：scheduleId=${scheduleId}` }
+      return { error: `启动失败（上一轮仍在执行，或 workflow 缺失；详情见执行记录）：scheduleId=${scheduleId}` }
     }
     return { runId }
   }
 
-    /** BackgroundRunManager 终态 -> Record 终态 */
-  private writeTerminalRecord(base: ScheduleRun, _schedule: Schedule, info: BackgroundRunInfo): void {
-    const status: ScheduleRunStatus = info.status === "completed" ? "success" : "failed"
+    /** BackgroundRunManager 终态 -> Record 终态（timeout 标志区分超时与失败） */
+  private writeTerminalRecord(base: ScheduleRun, info: BackgroundRunInfo, timedOut: boolean): void {
+    const status: ScheduleRunStatus = timedOut ? "timeout" : info.status === "completed" ? "success" : "failed"
     const okCount = info.records.filter((r) => r.status === "ok").length
+    const tokens = info.records.reduce((acc, r) => acc + (r.tokens ?? 0), 0)
+    const cost = info.records.reduce((acc, r) => acc + (r.cost ?? 0), 0)
     writeRecord(this.deps.directory, {
       ...base,
       workflowRunId: info.runId,
       status,
       finishedAt: new Date().toISOString(),
+      durationMs: info.endedAt ? info.endedAt - new Date(base.startedAt).getTime() : undefined,
+      tokens,
+      cost: cost > 0 ? cost : undefined,
       result: info.status === "completed" ? `完成：${okCount}/${info.records.length} agent 成功` : undefined,
-      error: info.status === "completed" ? undefined : info.error ?? `run ${info.status}`,
+      error: timedOut
+        ? `超过 timeoutMs 被 abort（${info.error ?? "timeout"}）`
+        : info.status === "completed"
+          ? undefined
+          : info.error ?? `run ${info.status}`,
     })
   }
 
   /** 准备阶段失败（无 workflowRunId） */
-  private writeFailedRecord(base: ScheduleRun, _schedule: Schedule, message: string): void {
+  private writeFailedRecord(base: ScheduleRun, message: string): void {
     writeRecord(this.deps.directory, {
       ...base,
       status: "failed",

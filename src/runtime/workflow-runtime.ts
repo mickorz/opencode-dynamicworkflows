@@ -86,6 +86,12 @@ export interface WorkflowRunOptions {
   onAgentUpdate?: (record: AgentRecord) => void
   /** 每个 attempt 到达失败/中止终态时回调（FR-7 执行历史）；payload 绝不携带 hash/result，落盘不影响 resume */
   onAgentExecution?: (payload: { key: string; execution: AgentExecutionRecord }) => void
+  /** 触发来源元数据（需求 26 Observability：manual / schedule / webhook...）；写入 run 日志首行 */
+  trigger?: {
+    type: string
+    scheduleId?: string
+    scheduledAt?: string
+  }
 }
 
 /** checkpoint() 的可选项（P1-4，仅确认型：OpenCode 无自由文本 UI 通道） */
@@ -151,6 +157,13 @@ export async function runWorkflow<T = unknown>(
     callSeq: 0,
     warnedTiers: new Set(),
     firstMiss: Number.POSITIVE_INFINITY,
+  }
+  // 触发来源首行日志（需求 26 Observability：区分 manual / schedule 等）
+  if (options.trigger) {
+    const t = options.trigger
+    state.logs.push(
+      `trigger: ${t.type}${t.scheduleId ? ` schedule=${t.scheduleId}` : ""}${t.scheduledAt ? ` scheduledAt=${t.scheduledAt}` : ""}`,
+    )
   }
 
   let agentCount = 0

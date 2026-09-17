@@ -85,6 +85,7 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
               maxAgents: input.maxAgents,
               agentTimeoutMs: input.agentTimeoutMs,
               agentRetries: input.agentRetries,
+              trigger: { type: "manual" },
             },
           )
         } catch (error) {
@@ -206,6 +207,7 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
           signal: runController.signal,
           resolveTier,
           confirm,
+          trigger: { type: "manual" },
           cwd: context.directory,
           runId,
           resumeJournal,

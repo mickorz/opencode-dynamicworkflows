@@ -77,9 +77,72 @@ export function pruneClaims(directory: string, now = Date.now(), retentionMs = C
   return removed
 }
 
-// ---------- ExecutionLock（Phase 3 落地） ----------
-// 设计定案（见 Docs/01_需求与规划/Schedule功能P1执行计划.md D13/D14）：
-//  - acquireExecutionLock(directory, scheduleId, runId)：wx 创建 execution-locks/<scheduleId>.lock
-//    内容 { pid, runId, startedAt }；被占且持有 pid 存活 -> false（skip）；pid 已死 -> 删锁重抢
-//  - releaseExecutionLock(directory, scheduleId)：run 结束删除
-//  - 锁 key 用 scheduleId 而非 workflowId（两个 schedule 引用同一 workflow 合法）
+// ---------- ExecutionLock（Phase 3：防执行重叠，overlapPolicy=skip） ----------
+
+export function executionLocksDir(directory: string): string {
+  return path.join(directory, ".opencode-workflows", "execution-locks")
+}
+
+interface LockContent {
+  scheduleId: string
+  pid: number
+  startedAt: string
+}
+
+/** 持锁进程是否已死（同机 project-scoped 下 pid 检测有效；EPERM 视为存活） */
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM"
+  }
+}
+
+/**
+ * 获取执行锁：wx 原子创建；被占时检测持有进程——已死视为僵尸锁，删锁重抢一次。
+ * 返回 true = 持锁（调用方负责 run 结束 releaseExecutionLock）
+ */
+export function acquireExecutionLock(directory: string, scheduleId: string): boolean {
+  fs.mkdirSync(executionLocksDir(directory), { recursive: true })
+  const lockPath = path.join(executionLocksDir(directory), `${scheduleId}.lock`)
+  const content: LockContent = { scheduleId, pid: process.pid, startedAt: new Date().toISOString() }
+  const create = () => {
+    try {
+      const fd = fs.openSync(lockPath, "wx")
+      try {
+        fs.writeSync(fd, JSON.stringify(content, null, 2))
+      } finally {
+        fs.closeSync(fd)
+      }
+      return true
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") return false
+      throw error
+    }
+  }
+  if (create()) return true
+  // 被占：僵尸检测（持有进程已死则删锁重抢）
+  try {
+    const raw = fs.readFileSync(lockPath, "utf-8")
+    const held = JSON.parse(raw) as LockContent
+    if (held.pid && !isPidAlive(held.pid)) {
+      fs.rmSync(lockPath, { force: true })
+      return create()
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      // 锁文件间隙消失（持有方已释放）：直接重抢
+      return create()
+    }
+    // 锁文件损坏（半写窗口等）视为僵尸，删锁重抢；删失败则 create 会 EEXIST 返回 false（安全）
+    fs.rmSync(lockPath, { force: true })
+    return create()
+  }
+  return false
+}
+
+/** 释放执行锁（run 终态后调用；不存在静默） */
+export function releaseExecutionLock(directory: string, scheduleId: string): void {
+  fs.rmSync(path.join(executionLocksDir(directory), `${scheduleId}.lock`), { force: true })
+}

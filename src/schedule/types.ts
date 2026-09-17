@@ -37,10 +37,19 @@ export interface ScheduleRun {
   /** 本轮 fresh session 的 id（agent 子树挂其下） */
   sessionId?: string
   status: ScheduleRunStatus
+  /** 触发来源：scheduled（到点）/ manual（run_now 手动） */
+  trigger?: "scheduled" | "manual"
   /** 触发时间槽（slot）ISO；run_now 时为手动触发时间 */
   scheduledAt?: string
+  /** slot epoch 毫秒（排序/查询用） */
+  slotEpoch?: number
   startedAt: string
   finishedAt?: string
+  /** 总耗时毫秒（终态时写入） */
+  durationMs?: number
+  /** token 与成本汇总（各 agent 记录之和，终态时写入） */
+  tokens?: number
+  cost?: number
   /** 结果摘要（如 N agents completed；详细数据在 journal） */
   result?: string
   error?: string

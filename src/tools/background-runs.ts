@@ -18,7 +18,7 @@
  */
 
 import type { PluginInput } from "@opencode-ai/plugin"
-import { runWorkflow } from "../runtime/workflow-runtime.js"
+import { runWorkflow, type WorkflowRunOptions } from "../runtime/workflow-runtime.js"
 import { parseWorkflowScript } from "../runtime/vm.js"
 import { OpenCodeSessionAdapter } from "../adapters/opencode-session-adapter.js"
 import { JournalStore } from "../persistence/journal.js"
@@ -69,10 +69,17 @@ export interface BackgroundStartInput {
   agentRetries?: number
   /** 终态回调（completed/failed/aborted 后调用一次；ScheduleRuntime 用于写终态 Record）。回调抛错不阻断 run */
   onFinished?: (info: BackgroundRunInfo) => void
+  /** checkpoint 人工确认通道（scheduled run 注入即败版本，需求 17） */
+  confirm?: (promptText: string) => Promise<unknown>
+  /** 触发来源（manual / schedule） */
+  trigger?: RunTrigger
 }
 
 /** 完成后注册表里保留的历史条数 */
 const KEEP_COMPLETED = 20
+
+/** run 触发来源元数据（透传给 runWorkflow 写入 run 日志，需求 26 Observability） */
+export type RunTrigger = NonNullable<WorkflowRunOptions["trigger"]>
 
 export class BackgroundRunManager {
   private readonly runs = new Map<string, InternalRun>()
@@ -159,6 +166,8 @@ export class BackgroundRunManager {
         runId: info.runId,
         cwd: deps.directory,
         resolveTier: (tier) => modelTiers[tier],
+        confirm: input.confirm,
+        trigger: input.trigger,
         onAgentJournal: (entry) => {
           try {
             // 整条 entry 直通（Node Inspector 展示元数据随 JournalEntry 扩展字段自动落盘）
@@ -191,6 +200,14 @@ export class BackgroundRunManager {
       info.logs.push(...result.logs, ...degradeNotes)
       writeSnapshot("completed")
 
+      // 终态回调先于回传（ScheduleRun Record 等外部状态不能被回传延迟阻塞）；endedAt 提前赋值供回调消费
+      info.endedAt = Date.now()
+      try {
+        input.onFinished?.(info)
+      } catch {
+        // 回调失败仅丢失外部记录，run 本身已终态
+      }
+
       // 结果回传：渲染文本作为一条消息发回主会话，Main Agent 接力汇报
       const rendered = renderWorkflowResult(result)
       info.delivered = true
@@ -216,8 +233,14 @@ export class BackgroundRunManager {
       info.logs.push(
         `后台工作流${info.status === "aborted" ? "被停止" : "失败"}：${info.error}。已完成的 agent 已记入 journal，可传 resumeFromRunId="${info.runId}" 续跑。`,
       )
-      // 失败也回传主会话（用户需要知道）
+      // 失败也回传主会话（用户需要知道）；终态回调先落（回传挂起/失败不阻塞 Record）
       writeSnapshot(info.status)
+      info.endedAt = Date.now()
+      try {
+        input.onFinished?.(info)
+      } catch {
+        // 同上：回调失败不影响 run 终态
+      }
       try {
         info.delivered = true
         await deps.client.session.prompt({
@@ -234,12 +257,6 @@ export class BackgroundRunManager {
       info.endedAt = Date.now()
       // 本 run 结束：注销血统（嵌套工具调用均已返回，不存在仍在使用注册项的窗口）
       unregisterAgentSessions(registeredSessions)
-      // 终态回调（如 ScheduleRun Record 落盘）；回调异常不改变 run 终态
-      try {
-        input.onFinished?.(info)
-      } catch {
-        // 回调失败仅丢失外部记录，run 本身已终态
-      }
     }
   }
 
