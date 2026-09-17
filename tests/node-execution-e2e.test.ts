@@ -139,6 +139,7 @@ test("前台 tool 全链路：journal entry 含展示元数据，失败 attempt 
 
     const output = await workflowTool.execute(
       {
+        background: false, // 本用例验证前台链路（journal 同步落盘），缺省已是后台
         script: `export const meta = { name: 'e2e_node' }
 const ok = await agent('正常任务', { label: '成功节点' })
 let failed = null

@@ -19,6 +19,7 @@ const DESCRIPTION = [
   "脚本规则：首条语句 export const meta = { name, description }；可用全局 agent/parallel/pipeline/phase/log/args/setConcurrency/verify/judgePanel/retry/checkpoint；",
   "禁止 import/require/Date.now()/Math.random()/new Date()；agent() 至少调用一次。",
   "agent() 缺省用只读的 explore 子代理，写文件类任务显式传 { agentType: 'general' }。",
+  "缺省后台运行：立即返回 runId 不阻塞，完成后结果自动发回本会话。需要同步拿结果或 checkpoint 人工确认时显式传 background:false 走前台。",
 ].join("")
 
 export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunManager) {
@@ -43,7 +44,7 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
         "续跑某次历史 run（传入上次结果里的 runId）与修改后的 script：未变的 agent() 调用直接从 journal 回放（不调 LLM），首个变更调用及其后全部重跑。调用按位置匹配，保持前序调用不变且有序。",
       ),
       background: tool.schema.boolean().optional().describe(
-        "后台运行（P2）：true 时立即返回 runId不阻塞本轮对话，完成后结果自动发回本会话；用 workflow_control 工具查状态或停止。缺省 false（前台阻塞直到完成）。后台 run 的 checkpoint 走 headless 默认值。",
+        "后台运行（P2）：缺省 true，立即返回 runId 不阻塞本轮对话，完成后结果自动发回本会话；用 workflow_control 工具查状态或停止。两个例外强制前台：agent 嵌套会话内调用（需同步拿结果继续编排）、resumeFromRunId 续跑（后台未接 journal 回放）。显式传 false 前台阻塞直到完成（checkpoint 才有人工确认弹窗，后台走 headless 默认值）。",
       ),
     },
 
@@ -65,9 +66,14 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
 
       // B1 嵌套显示：若本会话是某活跃 run 的 agent 子会话，透传其根会话；否则自己就是根
       const rootSessionId = lookupRootSessionId(context.sessionID) ?? context.sessionID
+      // 缺省后台（长跑任务不阻塞对话）。两个例外强制前台，即使显式传 true 也降级：
+      //  1) agent 嵌套会话内调用：后台结果只会回传到 agent 会话，中间层拿不到工具返回值，嵌套编排链会断
+      //  2) resumeFromRunId 续跑：后台路径未接 journal 回放，避免 resume 参数被静默丢弃
+      const runInBackground =
+        (input.background ?? true) && rootSessionId === context.sessionID && !input.resumeFromRunId
 
       // 后台路径（P2-2）：立即返回 runId，结果完成后回传主会话
-      if (input.background) {
+      if (runInBackground) {
         let runId: string
         try {
           runId = background.start(

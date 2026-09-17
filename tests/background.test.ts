@@ -6,7 +6,8 @@
  *  - 完成后结果作为一条 prompt 回传主会话（path.id === parentSessionId）
  *  - journal 逐 agent 落盘（后台中断可续跑的基础）
  *  - workflow_control status 列出进度；stop 停止运行中的 run（abort 级联到子会话）
- *  - 前台路径不受影响（background 缺省）
+ *  - 缺省后台（background 省略即后台）；显式 false 走前台阻塞
+ *  - 嵌套 agent 会话 / resumeFromRunId 强制前台
  */
 
 import test from "node:test"
@@ -19,6 +20,7 @@ import type { ToolContext } from "@opencode-ai/plugin"
 import { createWorkflowTool } from "../src/tools/workflow.js"
 import { createWorkflowControlTool } from "../src/tools/workflow-control.js"
 import { BackgroundRunManager, type BackgroundRunSnapshot } from "../src/tools/background-runs.js"
+import { registerAgentSession, unregisterAgentSessions } from "../src/tools/run-lineage.js"
 
 type Client = PluginInput["client"]
 
@@ -173,18 +175,80 @@ test("stop 不存在的 runId 与缺 runId 均给出明确提示", async () => {
   assert.match(r3.output, /没有后台工作流/)
 })
 
-test("前台路径不受影响：background 缺省时阻塞执行并返回结果", async () => {
+test("缺省即后台：background 省略时立即返回 runId，不阻塞", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wf-bg-default-"))
+  try {
+    const fake = makeFakeClient()
+    const manager = new BackgroundRunManager()
+    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager)
+
+    const result = (await workflowTool.execute(
+      { script: `export const meta = { name: 'bg_default' }\nreturn await agent('任务A')` },
+      makeToolContext(dir),
+    )) as { output: string; metadata: { runId: string } }
+
+    assert.match(result.output, /后台工作流已启动/)
+    await until(() => fake.deliveries.length >= 1)
+    assert.match(fake.deliveries[0], /bg_default 完成/)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("前台路径：显式 background:false 阻塞执行并返回结果", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wf-fg-"))
   try {
     const fake = makeFakeClient()
     const manager = new BackgroundRunManager()
     const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager)
     const result = (await workflowTool.execute(
-      { script: `export const meta = { name: 'fg_demo' }\nreturn await agent('同步任务')` },
+      { script: `export const meta = { name: 'fg_demo' }\nreturn await agent('同步任务')`, background: false },
       makeToolContext(dir),
     )) as { output: string }
     assert.match(result.output, /fg_demo 完成/)
     assert.equal(fake.deliveries.length, 0, "前台不回传主会话")
+    assert.equal(manager.status().length, 0, "前台不注册后台 run")
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("嵌套 agent 会话强制前台：即使缺省后台，也能同步拿到结果", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wf-nested-fg-"))
+  registerAgentSession("agent-sess-1", "root-1") // 模拟：当前会话是某活跃 run 的 agent 子会话
+  try {
+    const fake = makeFakeClient()
+    const manager = new BackgroundRunManager()
+    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager)
+    const ctx = { ...makeToolContext(dir), sessionID: "agent-sess-1" } as ToolContext
+    const result = (await workflowTool.execute(
+      { script: `export const meta = { name: 'nested_fg' }\nreturn await agent('子层任务')` },
+      ctx,
+    )) as { output: string }
+    assert.match(result.output, /nested_fg 完成/, "嵌套会话同步拿到结果")
+    assert.equal(manager.status().length, 0, "嵌套不注册后台 run")
+  } finally {
+    unregisterAgentSessions(["agent-sess-1"])
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("resumeFromRunId 强制前台：续跑请求不会退化为无回放的后台新 run", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wf-resume-fg-"))
+  try {
+    const fake = makeFakeClient()
+    const manager = new BackgroundRunManager()
+    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager)
+    // 不存在的 journal：验证续跑请求走前台路径（返回 journal 缺失提示而非启动后台 run）
+    const result = (await workflowTool.execute(
+      {
+        script: `export const meta = { name: 'resume_fg' }\nreturn await agent('续跑任务')`,
+        resumeFromRunId: "run-not-exist",
+      },
+      makeToolContext(dir),
+    )) as { output: string }
+    assert.match(result.output, /找不到 run "run-not-exist"/, "走前台续跑检查路径")
+    assert.equal(manager.status().length, 0)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }

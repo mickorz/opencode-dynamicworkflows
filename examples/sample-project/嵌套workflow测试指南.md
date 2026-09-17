@@ -63,6 +63,6 @@ flowchart TD
 
 - journal 是逐 agent 流式追加的：run 进行中读 journal 文件看到条目不全是正常现象，等终态再核对（易误判为丢失）
 - explore 子代理调不了 workflow 工具（权限白名单）；嵌套调用必须显式 `agentType: 'general'`
-- 嵌套子代理的 prompt 要写明：只传 scriptPath、不传 background 与 script（二选一规则）、等执行完成、结果 JSON 原样回传
+- 嵌套子代理的 prompt 要写明：只传 scriptPath、不传 background 与 script（二选一规则）、等执行完成、结果 JSON 原样回传。注：workflow 缺省已改为后台，但嵌套 agent 会话内会强制前台（中间层需同步拿返回值），即使忘写这句也不会断链
 - 嵌套层级无硬限制，无防递归保护；编排时自行控制深度，防止失控烧 token
 - 每层嵌套各自独立 runId、独立 journal、独立快照，互不冲突；resume 亦是按各 runId 独立进行

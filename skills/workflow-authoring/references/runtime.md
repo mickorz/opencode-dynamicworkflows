@@ -103,12 +103,12 @@ await agent('重构 src/player.ts 并提交修改说明', { isolation: 'worktree
 
 ## 后台运行与控制（tool 参数，非脚本全局）
 
-workflow tool 传 `background: true` 时立即返回 runId、本轮对话不阻塞；完成后结果自动作为一条消息发回当前会话，Main Agent 会接力汇报。后台 run 不受 Esc 影响，控制走 `workflow_control` 工具：
+缺省即后台（background 省略等价 true）：立即返回 runId、本轮对话不阻塞；完成后结果自动作为一条消息发回当前会话，Main Agent 会接力汇报。后台 run 不受 Esc 影响，控制走 `workflow_control` 工具：
 
 - `workflow_control({ action: "status" })`：列出全部后台 run 与进度（X/N agent）
 - `workflow_control({ action: "stop", runId })`：停止运行中的 run（已完成的 agent 结果在 journal，可用 `workflow(resumeFromRunId)` 续跑）
 
-适用：长跑批量任务（大扇出分析、全仓审计）且期间想继续对话。后台 run 的 checkpoint 走 headless 默认值（无人工弹窗）。
+适用：长跑批量任务（大扇出分析、全仓审计）且期间想继续对话。后台 run 的 checkpoint 走 headless 默认值（无人工弹窗）；需要 checkpoint 人工确认或同步拿结果时显式传 `background: false` 走前台。两个例外即使显式传 true 也强制前台：agent 嵌套会话内调用（中间层需同步拿结果继续编排）、resumeFromRunId 续跑（后台未接 journal 回放）。
 
 ## 嵌套工作流（经 general 子代理）
 
@@ -124,7 +124,7 @@ const middle = await agent(
 
 约定：
 
-- prompt 必须写明"scriptPath only、不传 background、等完成、结果 JSON 原样回传"，防止中间层拿到转述
+- prompt 必须写明"scriptPath only、等完成、结果 JSON 原样回传"，防止中间层拿到转述；嵌套会话内即使不传 background 也强制前台（中间层需同步拿工具返回值）
 - 结果经子代理文本回复回传，是字符串；需要结构时自行 JSON 解析容错
 - 每层独立 runId / journal / token 计量；TUI 层级树把嵌套子树挂在触发节点名下
 - 嵌套无深度保护，自行控层防失控
