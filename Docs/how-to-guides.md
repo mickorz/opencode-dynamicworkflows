@@ -196,11 +196,38 @@ await parallel(tasks.map(task => () =>
 - 非 git 目录或 worktree 创建失败时**静默降级**为共享目录（日志可见），不会报错中断
 - 运行结束（含超时/中断）自动拆除 worktree 与分支；**结果不自动合并**——需要保留改动时，让 agent 在脚本里把产物写到指定路径或以文本返回
 
-## 嵌套工作流（workflow 里再跑 workflow）
+## 嵌套工作流（原生 workflow() 原语，推荐）
+
+**场景**：把多个 workflow 组合成更大的流程——多阶段流水线、同脚本多配置并行对比、复用既有稳定子流程。
+
+**用法**：脚本内直接 `await workflow(ref, args?)`，不经 LLM 转发（旧 general 代理转发方案已 legacy，见下节）。一个 run 共享并发配额与中断；父脚本可纯编排（零 agent）；结果自带「子流程耗时」段（wall-clock，多配置对比的正确口径）。
+
+```javascript
+export const meta = { name: 'full_pipeline', description: '三段式流水线父编排' }
+
+phase('编排')
+// 路径引用：上段结果传下段
+const spec = await workflow('./scripts/1-spec.js')
+const design = await workflow('./scripts/2-design.js', { brief: spec.brief })
+
+// 注册名引用：.opencode-workflows/workflows/ 下的脚本按 meta.id ?? meta.name 寻址
+// （含斜杠名如 'ui/main-menu' 合法；与 Schedule 的 workflowId 同一体系）
+const report = await workflow('daily-review', { design: design.design })
+
+// 同脚本多实例并行：label 区分（UI/phase/journal 身份）
+const rs = await parallel([
+  () => workflow({ scriptPath: './sub.js', label: 'deepseek' }, args),
+  () => workflow({ scriptPath: './sub.js', label: 'gpt' }, args),
+])
+```
+
+约束：仅一层嵌套；禁止调用自身/祖先；args 与返回值须可结构化克隆（对象/数组/标量，子内修改不外溢）；子流程错误直接上抛（父 try-catch 自理）。
+
+## 嵌套工作流（旧方案：general 子代理转发，legacy）
 
 **场景**：把多个 workflow 串联成一个更大的流程——上层 workflow 的某个 agent 自己再去执行一个完整的子 workflow（如 根 -> 中间层并行扇出 -> 多个叶子），各层独立计量 token、耗时与 journal。
 
-**原理**：`agent()` 开的是普通子会话；`agentType: 'general'` 的子代理与主会话一样能调用插件工具（含 `workflow`）。脚本沙箱内**没有** `workflow()` 全局，嵌套只能走这条链路；缺省的 explore 子代理是只读白名单，调不了 `workflow`。
+**原理**：`agent()` 开的是普通子会话；`agentType: 'general'` 的子代理与主会话一样能调用插件工具（含 `workflow`）。**新脚本请用上节原生 `workflow()` 原语**（省一轮 LLM、结果直通、单 run 计量）；本方案保留用于兼容。
 
 ```javascript
 export const meta = { name: 'chain_root', description: '嵌套链根：串联中间层与叶子两层子 workflow' }

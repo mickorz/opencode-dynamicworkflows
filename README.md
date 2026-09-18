@@ -145,7 +145,10 @@ args 传 {"model": "biangfeng-gateway/glm-5.2"}
 - VM 沙箱确定性护栏（禁 `Date.now()` / `Math.random()` / import / require，可确定性重放）
 - DSL：`agent / parallel / pipeline / phase / log / args` + 质量助手
 - 原生结构化输出（`schema` 走 OpenCode `format: json_schema`）、并发控制（缺省 CPU 核数-2、上限 16）、超时/重试/abort 级联、git worktree 隔离、journal 断点续跑、后台运行
-- 嵌套工作流：general 子代理内可再触发 `workflow`（多层串联），每层独立 run/journal/token 计量，TUI 层级树（画中画）显示
+- 原生子工作流 `workflow()`：脚本内直接组合子流程（`await workflow('./sub.js', args)` 或按注册名 `workflow('daily-review')`），不经 LLM 转发；一个 run 共享并发配额/中断/journal，父可纯编排；同脚本多实例靠 label 区分
+- 子流程观测：结果自带子流程 wall-clock 耗时与 token 统计（多配置对比以 wall-clock 为准）；TUI 按子流程分组子树显示
+- Workflow Registry：`.opencode-workflows/workflows/` 下的脚本按 `meta.id ?? meta.name` 全局引用，与 Schedule 的 workflowId 同一体系（同一脚本可定时也可被组合）
+- 嵌套工作流（旧方案，legacy）：general 子代理内再触发 `workflow` 工具，每层独立 run/journal/token 计量
 
 ### Schedule 定时任务的产品边界（设计而非缺陷）
 
