@@ -98,11 +98,11 @@ test("findWorkflowMetadata：从后往前取最近一次 workflow tool part（pa
   assert.equal(findWorkflowMetadata([{ nope: 1 } as { id?: string }], getParts), undefined)
 })
 
-test("buildSidebarRows：phase 变化处插标题行，无 phase 平铺", () => {
+test("buildSidebarRows：phase 变化处插标题行，无 phase 平铺；子流程一级分组（v0.9）", () => {
   const p = parseWorkflowMetadata(VALID)!
   const rows = buildSidebarRows(p)
   assert.deepEqual(
-    rows.map((r) => (r.kind === "phase" ? `#${r.title}` : r.node.label)),
+    rows.map((r) => (r.kind === "phase" ? `#${r.title}` : r.kind === "workflow" ? `@${r.title}` : r.node.label)),
     ["#Analyze", "解释1", "解释2", "#Summarize", "汇总"],
   )
   // 无 phase 的节点不产生标题行
@@ -110,6 +110,22 @@ test("buildSidebarRows：phase 变化处插标题行，无 phase 平铺", () => 
   assert.deepEqual(
     plain.map((r) => r.kind),
     ["node", "node", "node"],
+  )
+  // 子流程节点：workflowPath[0] 变化处插 workflow 分组行，换组后 phase 重新起头
+  const wfRows = buildSidebarRows(
+    parseWorkflowMetadata({
+      runId: "r2",
+      agents: [
+        { ...VALID.agents[0], phase: "▸ ds / 生成", workflowPath: ["ds"] },
+        { ...VALID.agents[1], phase: "▸ ds / 校验", workflowPath: ["ds"] },
+        { ...VALID.agents[2], phase: "▸ gpt / 生成", workflowPath: ["gpt"] },
+        { ...VALID.agents[0], phase: "▸ gpt / 校验", workflowPath: ["gpt"] },
+      ],
+    })!,
+  )
+  assert.deepEqual(
+    wfRows.map((r) => (r.kind === "phase" ? `#${r.title}` : r.kind === "workflow" ? `@${r.title}` : r.node.label)),
+    ["@ds", "#▸ ds / 生成", "解释1", "#▸ ds / 校验", "解释2", "@gpt", "#▸ gpt / 生成", "汇总", "#▸ gpt / 校验", "解释1"],
   )
 })
 

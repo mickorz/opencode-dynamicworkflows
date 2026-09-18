@@ -11,6 +11,12 @@ const OUTPUT_BUDGET_BYTES = 48 * 1024
 const AGENT_SUMMARY_MAX_LINES = 200
 
 /** 渲染 tool 返回（F-07：return 值 + agent 单行摘要 + metadata，控制在截断预算内） */
+/** 毫秒时长人性化（不足 1s 显示 ms） */
+function fmtMs(ms?: number): string {
+  if (ms === undefined) return "-"
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
+}
+
 export function renderWorkflowResult(
   result: Awaited<ReturnType<typeof runWorkflow>>,
 ): { title: string; output: string; metadata: Record<string, unknown> } {
@@ -29,6 +35,25 @@ export function renderWorkflowResult(
       `（runId: ${result.runId}）`,
   )
   if (result.phases.length) lines.push(`阶段: ${result.phases.join(" > ")}`)
+
+  // 子流程耗时与 token（v0.9 Observability）：wall-clock 与 agent sum 并列，并行场景 wall 才是真实耗时
+  const childWfs = (result.workflows ?? []).filter((w) => w.keySegment !== "root")
+  if (childWfs.length > 0) {
+    lines.push("")
+    lines.push("子流程耗时（wall-clock ≠ agent 时长之和，并行时以 wall 为准）:")
+    for (const w of childWfs) {
+      const wfAgents = result.agents.filter((a) => a.workflowScopePath?.includes(w.keySegment))
+      const agentSum = wfAgents.reduce((s, a) => s + (a.durationMs ?? 0), 0)
+      const wfTokens = wfAgents.reduce((s, a) => s + (a.tokens ?? 0), 0)
+      const wfCost = wfAgents.reduce((s, a) => s + (a.cost ?? 0), 0)
+      const statusText =
+        w.status === "ok" ? "" : w.status === "failed" ? " [失败]" : w.status === "aborted" ? " [中止]" : " [运行中]"
+      lines.push(
+        `  ${w.displayPath.join(" / ")}${statusText}：wall ${(fmtMs(w.durationMs))}` +
+          `，agent 合 ${fmtMs(agentSum)}，${wfTokens} tokens${wfCost > 0 ? `，$${wfCost.toFixed(4)}` : ""}`,
+      )
+    }
+  }
 
   lines.push("")
   lines.push("agent 摘要:")

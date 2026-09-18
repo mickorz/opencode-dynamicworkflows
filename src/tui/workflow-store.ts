@@ -16,6 +16,8 @@ export interface WorkflowNode {
   id: string
   label: string
   phase?: string
+  /** 展示身份（scope 链 label 数组；root 的 agent 无此字段，旧快照兼容） */
+  workflowPath?: string[]
   status: WorkflowNodeStatus
   /** 该 agent 开始执行的绝对时间戳（毫秒）；回放与老快照无此字段 */
   startedAt?: number
@@ -55,8 +57,11 @@ export interface WorkflowProgress {
   parentSessionId?: string
 }
 
-/** sidebar 展示行：phase 标题行或 agent 节点行 */
-export type SidebarRow = { kind: "phase"; title: string } | { kind: "node"; node: WorkflowNode }
+/** sidebar 展示行：workflow 分组行（子流程一级）/ phase 标题行 / agent 节点行 */
+export type SidebarRow =
+  | { kind: "workflow"; title: string }
+  | { kind: "phase"; title: string }
+  | { kind: "node"; node: WorkflowNode }
 
 /** ToolPart.metadata 是 any（无类型约束），形状校验失败一律返回 null 防崩（旧结构/异构数据） */
 export function parseWorkflowMetadata(raw: unknown): WorkflowProgress | null {
@@ -75,6 +80,9 @@ export function parseWorkflowMetadata(raw: unknown): WorkflowProgress | null {
       id: n.id,
       label: n.label,
       phase: typeof n.phase === "string" ? n.phase : undefined,
+      workflowPath: Array.isArray(n.workflowPath)
+        ? n.workflowPath.filter((p): p is string => typeof p === "string")
+        : undefined,
       status: n.status,
       startedAt: typeof n.startedAt === "number" ? n.startedAt : undefined,
       durationMs: typeof n.durationMs === "number" ? n.durationMs : undefined,
@@ -144,13 +152,22 @@ export function findWorkflowMetadata(
 }
 
 /**
- * 组装 sidebar 展示行：按执行顺序遍历节点，phase 变化时插入标题行
- * （连续同 phase 的节点自然成组；无 phase 的节点直接平铺，不产生标题行）
+ * 组装 sidebar 展示行（两级分组，v0.9）：按执行顺序遍历节点，
+ * 子流程一级分组（workflowPath[0]）变化时插 workflow 行，phase 变化时插 phase 行；
+ * root 节点（无 workflowPath）直接按 phase 平铺（旧行为兼容）。
+ * 交错场景（并行 child 网络序）同一 workflow 行可能重复出现——与 phase 行同为时间线式语义。
  */
 export function buildSidebarRows(progress: WorkflowProgress): SidebarRow[] {
   const rows: SidebarRow[] = []
+  let currentWorkflow: string | undefined
   let currentPhase: string | undefined
   for (const node of progress.nodes) {
+    const wfGroup = node.workflowPath?.[0]
+    if (wfGroup && wfGroup !== currentWorkflow) {
+      rows.push({ kind: "workflow", title: wfGroup })
+      currentWorkflow = wfGroup
+      currentPhase = undefined // 换组后 phase 重新起头
+    }
     if (node.phase && node.phase !== currentPhase) {
       rows.push({ kind: "phase", title: node.phase })
       currentPhase = node.phase
@@ -216,6 +233,7 @@ export function headerLine(progress: WorkflowProgress): string {
  */
 export type MultiRunRow =
   | { kind: "run"; runId: string; title: string; status: WorkflowProgressStatus; depth?: number }
+  | { kind: "workflow"; title: string; runId: string; depth?: number }
   | { kind: "phase"; title: string; runId: string; depth?: number }
   | { kind: "node"; node: WorkflowNode; runId: string; depth?: number }
 

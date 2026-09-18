@@ -54,6 +54,9 @@ export function parseRunSnapshot(raw: unknown): RunSnapshotView | null {
       id: n.id,
       label: n.label,
       phase: typeof n.phase === "string" ? n.phase : undefined,
+      workflowPath: Array.isArray(n.workflowPath)
+        ? n.workflowPath.filter((p): p is string => typeof p === "string")
+        : undefined,
       status: n.status,
       startedAt: typeof n.startedAt === "number" ? n.startedAt : undefined,
       durationMs: typeof n.durationMs === "number" ? n.durationMs : undefined,

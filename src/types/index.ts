@@ -37,6 +37,29 @@ export interface AgentExecutionRecord {
   usage?: AgentUsageSplit
 }
 
+/** 子 workflow invocation 的执行记录（v0.9 Observability：wall-clock 统计与 TUI 树源）
+ *  四身份：workflowId（定义稳定 id，meta.id 可选）/ name（定义显示名）/ label（实例显示名）/ scopePath（实例稳定运行时身份） */
+export interface WorkflowExecutionRecord {
+  /** Definition Stable Identity：meta.id（旧脚本无则 undefined；现在开始记录，将来免迁移） */
+  workflowId?: string
+  /** Definition Display Name：meta.name */
+  name: string
+  /** Invocation Display Name：调用方 label 或 name */
+  label: string
+  /** journal 身份段：root 为 "root"，child 为 wfN */
+  keySegment: string
+  /** 展示身份：scope 链 label 数组（给人看；同名冲突时靠 scopePath 区分） */
+  displayPath: string[]
+  /** 稳定身份：scope 链 keySegment 数组（给机器识别/去重；如 ["root","wf0","wf2"]） */
+  scopePath: string[]
+  startedAt: number
+  endedAt?: number
+  /** wall-clock（≠ agent duration 之和：并行时 wall 才是真实耗时） */
+  durationMs?: number
+  status: "running" | "ok" | "failed" | "aborted"
+  error?: string
+}
+
 /** 单个 agent 的执行记录（用于 F-07 汇总返回） */
 export interface AgentRecord {
   /** 形如 runId:callIndex 的稳定标识 */
@@ -44,6 +67,10 @@ export interface AgentRecord {
   label: string
   phase?: string
   status: AgentRecordStatus
+  /** 展示身份（scope 链 label 数组）；root 的 agent 为 undefined（旧数据兼容） */
+  workflowPath?: string[]
+  /** 稳定身份（scope 链 keySegment 数组）；与 workflowPath 同生同灭（TUI 节点反查/按 invocation 聚合用） */
+  workflowScopePath?: string[]
   /** 该 agent 开始执行的绝对时间戳（毫秒）；journal 回放不产生（TUI phase 耗时用） */
   startedAt?: number
   tokens?: number
@@ -85,6 +112,8 @@ export interface WorkflowRunResult<T = unknown> {
   logs: string[]
   phases: string[]
   agents: AgentRecord[]
+  /** 全部 workflow invocation 的执行记录（含 root；wall-clock 统计与 TUI 树源，v0.9） */
+  workflows: WorkflowExecutionRecord[]
   agentCount: number
   durationMs: number
   runId: string

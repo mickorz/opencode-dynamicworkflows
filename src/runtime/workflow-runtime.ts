@@ -34,6 +34,7 @@ import type {
   AgentExecutionRecord,
   AgentUsage,
   JournalEntry,
+  WorkflowExecutionRecord,
   WorkflowRunResult,
 } from "../types/index.js"
 import { buildOutputPreview, truncatePromptForJournal } from "./agent-result.js"
@@ -156,6 +157,8 @@ interface SharedRunContext {
   agents: AgentRecord[]
   logs: string[]
   phases: string[]
+  /** 全部 workflow invocation 执行记录（含 root；v0.9 Observability） */
+  workflows: WorkflowExecutionRecord[]
   warnedTiers: Set<string>
   agentTimeoutMs: number | null
   agentRetries?: number
@@ -190,6 +193,10 @@ interface WorkflowScope {
   /** scope 私有回放边界：首个未命中 journal 的 callIndex */
   firstMiss: number
   parent?: WorkflowScope
+  /** 展示身份链（label 数组；root 在 executeWorkflow 入口补 [meta.name]） */
+  pathLabels?: string[]
+  /** 稳定身份链（keySegment 数组；root 为 ["root"]） */
+  pathKeys?: string[]
 }
 
 function createSharedRunContext(options: WorkflowRunOptions, runId: string): SharedRunContext {
@@ -204,6 +211,7 @@ function createSharedRunContext(options: WorkflowRunOptions, runId: string): Sha
     agents: [],
     logs: [],
     phases: [],
+    workflows: [],
     warnedTiers: new Set(),
     agentTimeoutMs: options.agentTimeoutMs !== undefined ? options.agentTimeoutMs : null,
     agentRetries: options.agentRetries,
@@ -253,7 +261,6 @@ export async function runWorkflow<T = unknown>(
     )
   }
   const { meta, result } = await executeWorkflow(script, options.args, shared, rootScope)
-
   // 纯编排合法：root run 级至少一次实际 dispatch（agent 含 child 内与 checkpoint）
   if (shared.agentCount === 0) {
     throw new WorkflowError(
@@ -269,6 +276,7 @@ export async function runWorkflow<T = unknown>(
     logs: shared.logs,
     phases: shared.phases,
     agents: shared.agents,
+    workflows: shared.workflows,
     agentCount: shared.agentCount,
     durationMs: Date.now() - started,
     runId,
@@ -283,6 +291,24 @@ async function executeWorkflow(
   scope: WorkflowScope,
 ): Promise<{ meta: ReturnType<typeof parseWorkflowScript>["meta"]; result: unknown }> {
   const { meta, body } = parseWorkflowScript(script)
+
+  // 路径身份链（v0.9）：root 补 [meta.name]/["root"]；child 在创建时已继承父链
+  if (!scope.parent) {
+    scope.pathLabels = [meta.name]
+    scope.pathKeys = ["root"]
+  }
+  // 本次 invocation 的执行记录（wall-clock 与 TUI 树源；root 也生成，作树顶）
+  const wfRecord: WorkflowExecutionRecord = {
+    workflowId: meta.id,
+    name: meta.name,
+    label: scope.label,
+    keySegment: scope.keySegment ?? "root",
+    displayPath: scope.pathLabels!,
+    scopePath: scope.pathKeys!,
+    startedAt: Date.now(),
+    status: "running",
+  }
+  shared.workflows.push(wfRecord)
 
   // 初始 phase（声明 meta.phases 时，首个 phase 之前的 agent 归入第一个声明的 phase）
   const initialPhase = meta.phases?.[0]?.title
@@ -366,6 +392,8 @@ async function executeWorkflow(
       label,
       phase: displayPhase,
       status: "running",
+      // 双身份（v0.9）：仅 child 填（root 的 agent 无此字段，旧数据兼容判断依据）
+      ...(scope.parent ? { workflowPath: scope.pathLabels!, workflowScopePath: scope.pathKeys! } : {}),
     }
     shared.agents.push(record)
     // 通知进行中状态：让后台 run 注册表能反映 running agent，进度展示才不会 done/total 永远相等
@@ -650,6 +678,9 @@ async function executeWorkflow(
       keySegment,
       firstMiss: Number.POSITIVE_INFINITY,
       parent: scope,
+      // 路径身份链：继承父链 + 自身（v0.9 Observability）
+      pathLabels: [...(scope.pathLabels ?? []), childLabel],
+      pathKeys: [...(scope.pathKeys ?? []), keySegment],
     }
     log(`workflow("${childLabel}") 启动（key=${keySegment}，script=${canonical}）`)
     try {
@@ -893,9 +924,16 @@ async function executeWorkflow(
 
   try {
     const result = await runScriptInVm(body, scope.label, globals)
+    wfRecord.endedAt = Date.now()
+    wfRecord.durationMs = wfRecord.endedAt - wfRecord.startedAt
+    wfRecord.status = "ok"
     return { meta, result }
   } catch (error) {
     shared.aborted = true
+    wfRecord.endedAt = Date.now()
+    wfRecord.durationMs = wfRecord.endedAt - wfRecord.startedAt
+    wfRecord.status = isAborted() ? "aborted" : "failed"
+    wfRecord.error = error instanceof Error ? error.message : String(error)
     throw error
   }
 }

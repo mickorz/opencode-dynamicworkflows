@@ -214,6 +214,16 @@ function RunTree(props: {
       <Show when={!collapsed()}>
         <For each={rows()}>
           {(row) => {
+            if (row.kind === "workflow") {
+              // 子流程一级分组行（v0.9）：粗体标识，区别于 phase 标题行
+              return (
+                <box paddingLeft={1} paddingTop={1}>
+                  <text fg={theme().text}>
+                    <b>{row.title}</b>
+                  </text>
+                </box>
+              )
+            }
             if (row.kind === "phase") {
               // phase 行耗时：组内节点现算（running 递增 / 完成定格；无 startedAt 不显示）
               const phaseMs = phaseElapsedMs(
@@ -426,6 +436,15 @@ function RouteView(props: { api: TuiPluginApi; sessionID?: string }) {
             if (row.kind === "run") {
               return (
                 <box paddingTop={1} paddingLeft={depthIndent}>
+                  <text fg={theme().text}>
+                    <b>{row.title}</b>
+                  </text>
+                </box>
+              )
+            }
+            if (row.kind === "workflow") {
+              return (
+                <box paddingLeft={depthIndent} paddingTop={1}>
                   <text fg={theme().text}>
                     <b>{row.title}</b>
                   </text>
