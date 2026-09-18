@@ -140,9 +140,16 @@ test("深度限制：child 内再调 workflow() 报超限", async () => {
   await assert.rejects(run(parent, dir), /嵌套深度超限/)
 })
 
-test("自环拒绝：child 调用自身脚本（大小写变体也被归一拦下）", async () => {
+test("自环拒绝：child 用相同路径调用自身", async () => {
   const dir = tmpProject()
-  // root 是内联脚本无路径；真正的自环 = child 文件内两用大小写变体调用自己
+  // root 是内联脚本无路径；真正的自环 = child 文件内调用自己（相同路径，全平台命中）
+  put(dir, "self.js", `export const meta = { name: 'self' }\nawait agent('first')\nreturn await workflow('./self.js')`)
+  const parent = `export const meta = { name: 'p' }\nreturn await workflow('./self.js')`
+  await assert.rejects(run(parent, dir), /不能调用自身或祖先/)
+})
+
+test("自环拒绝：大小写变体归一（仅 Windows，文件系统不区分大小写）", { skip: process.platform !== "win32" }, async () => {
+  const dir = tmpProject()
   put(dir, "self.js", `export const meta = { name: 'self' }\nawait agent('first')\nreturn await workflow('./SELF.js')`)
   const parent = `export const meta = { name: 'p' }\nreturn await workflow('./self.js')`
   await assert.rejects(run(parent, dir), /不能调用自身或祖先/)
