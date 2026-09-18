@@ -16,7 +16,7 @@ import type { PluginInput } from "@opencode-ai/plugin"
 import { ScheduleRuntime } from "../src/schedule/runtime.js"
 import { BackgroundRunManager } from "../src/tools/background-runs.js"
 import { saveSchedule } from "../src/schedule/store.js"
-import { workflowsDir } from "../src/schedule/registry.js"
+import { workflowsDir } from "../src/runtime/workflow-registry.js"
 import { latestRecord, writeRecord } from "../src/schedule/record.js"
 import type { Schedule } from "../src/schedule/types.js"
 

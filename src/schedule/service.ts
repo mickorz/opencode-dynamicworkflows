@@ -6,7 +6,7 @@
  */
 
 import { validateCron, nextRun } from "./cron.js"
-import { loadRegistry } from "./registry.js"
+import { loadRegistry } from "../runtime/workflow-registry.js"
 import { listSchedules, getSchedule, saveSchedule, deleteScheduleFile } from "./store.js"
 import { latestRecord, listRecords } from "./record.js"
 import type { Schedule, ScheduleRun, ScheduleView } from "./types.js"

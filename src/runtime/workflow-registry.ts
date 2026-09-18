@@ -9,7 +9,7 @@
 
 import fs from "node:fs"
 import path from "node:path"
-import { parseWorkflowScript } from "../runtime/vm.js"
+import { parseWorkflowScript } from "./vm.js"
 
 export interface RegisteredWorkflow {
   id: string

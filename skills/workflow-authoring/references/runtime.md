@@ -123,6 +123,17 @@ await agent('重构 src/player.ts 并提交修改说明', { isolation: 'worktree
 | 只是并行多个 **agent**（无子脚本） | 不要用 workflow()，直接 parallel + agent |
 | 需要子流程可独立单独跑/单独定时 | 拆子脚本后既可被 workflow() 组合，也可直接跑或配 Schedule |
 
+### 两种引用方式（v0.10 Registry）
+
+```js
+await workflow('./scripts/1-spec.js')          // 路径：./ ../ 或绝对路径
+await workflow('daily-review', args)           // 注册名：.opencode-workflows/workflows/ 下
+await workflow('ui/main-menu')                 // 含斜杠的注册名也合法（按 meta.id ?? meta.name 寻址）
+await workflow({ scriptPath: 'daily-review', label: 'deepseek' }, args)  // 名字 + 实例显示名
+```
+
+名字解析 per-run 缓存（首查扫描注册目录，运行中新增脚本不影响进行中 run）；与 Schedule 的 workflowId 同一体系——同一脚本既能定时也能被组合引用。未找到时报错并列出已知名。
+
 不再需要经 general 子代理转发——直接在脚本内调用：
 
 ```js

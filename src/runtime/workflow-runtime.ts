@@ -39,6 +39,7 @@ import type {
 } from "../types/index.js"
 import { buildOutputPreview, truncatePromptForJournal } from "./agent-result.js"
 import { createHash } from "node:crypto"
+import { loadRegistry, workflowsDir } from "./workflow-registry.js"
 
 /** 运行时最大并发（与 Claude Code / Pi 一致） */
 export const MAX_CONCURRENCY = 16
@@ -169,6 +170,8 @@ interface SharedRunContext {
   onAgentExecution?: (payload: { key: string; execution: AgentExecutionRecord }) => void
   onAgentUpdate?: (record: AgentRecord) => void
   cwd: string
+  /** workflow 名字引用缓存（v0.10 Registry）：workflowId -> 脚本绝对路径；首查扫描 .opencode-workflows/workflows/，运行中不重扫（子脚本增删不影响进行中 run） */
+  registryCache?: Map<string, string>
 }
 
 /** 单个 workflow invocation 的私有身份与游标 */
@@ -596,6 +599,29 @@ async function executeWorkflow(
     return resolved
   }
 
+  /** 显式路径判定（v0.10）：./ ../ 与绝对路径为路径语义；其余（含斜杠名如 ui/main-menu）查 registry */
+  const isExplicitPath = (ref: string): boolean =>
+    ref.startsWith("./") || ref.startsWith("../") || path.isAbsolute(ref)
+
+  /** 名字解析：registry 缓存懒加载（首查扫描），未命中报错并列已知名 */
+  const resolveByName = (workflowId: string): string => {
+    if (!shared.registryCache) {
+      shared.registryCache = new Map(
+        Array.from(loadRegistry(shared.cwd).entries()).map(([id, wf]) => [id, wf.filePath]),
+      )
+    }
+    const found = shared.registryCache.get(workflowId)
+    if (!found) {
+      const known = Array.from(shared.registryCache.keys()).join(", ") || "（目录为空或不存在）"
+      throw new WorkflowError(
+        `WORKFLOW_NOT_FOUND：workflow() 未找到名为 "${workflowId}" 的子流程（目录 ${workflowsDir(shared.cwd)}，已知 id：${known}；脚本需含 export const meta = { id 或 name }）`,
+        WorkflowErrorCode.SCRIPT_VALIDATION_ERROR,
+        { recoverable: false },
+      )
+    }
+    return found
+  }
+
   const workflow = async (ref: WorkflowRef, childArgs?: unknown): Promise<unknown> => {
     throwIfAborted()
     // [关键] 同步阶段首行领号：childSeq++ 必须发生在任何 await 之前——
@@ -620,7 +646,7 @@ async function executeWorkflow(
       )
     }
 
-    const canonical = canonicalWorkflowPath(scriptPath)
+    const canonical = isExplicitPath(scriptPath) ? canonicalWorkflowPath(scriptPath) : canonicalWorkflowPath(resolveByName(scriptPath))
     // 自环检查（先于深度检查："child 调祖先"报更具体的自环错而非深度错）：沿 scope 链比对（顺带为 P2 多层备好环检测）
     for (let s: WorkflowScope | undefined = scope; s; s = s.parent) {
       if (s.canonicalPath && s.canonicalPath === canonical) {

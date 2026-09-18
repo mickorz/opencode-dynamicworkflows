@@ -17,7 +17,7 @@ const DESCRIPTION = [
   "parallel()/pipeline() 组合调度，脚本内变量汇总后仅返回最终结果，避免大量子代理上下文污染主会话。",
   "适用形态：全仓检查、独立并行调研、多视角评审、扇出汇总。编写脚本前先加载 workflow-authoring skill。",
   "脚本规则：首条语句 export const meta = { name, description }；可用全局 agent/parallel/pipeline/phase/log/args/setConcurrency/verify/judgePanel/retry/checkpoint/workflow；",
-  "workflow(scriptPath 或 {scriptPath,label}, args) 为原生子工作流原语：同 run 共享并发配额与中断，父子 phase 自动带 ▸ 前缀分组；父脚本可纯编排（不直接调 agent）；仅支持一层嵌套；",
+  "workflow(路径或注册名或 {scriptPath,label}, args) 为原生子工作流原语：路径为 ./ ../ 绝对路径，其余按注册名查 .opencode-workflows/workflows/（meta.id ?? meta.name，含斜杠名合法）；同 run 共享并发配额与中断，父子 phase 自动带 ▸ 前缀分组；父脚本可纯编排（不直接调 agent）；仅支持一层嵌套；",
   "禁止 import/require/Date.now()/Math.random()/new Date()；agent() 至少调用一次。",
   "agent() 缺省用只读的 explore 子代理，写文件类任务显式传 { agentType: 'general' }。",
   "缺省后台运行：立即返回 runId 不阻塞，完成后结果自动发回本会话。需要同步拿结果或 checkpoint 人工确认时显式传 background:false 走前台。",

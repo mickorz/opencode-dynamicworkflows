@@ -17,7 +17,7 @@ import {
   removeSchedule,
 } from "../src/schedule/service.js"
 import { getSchedule } from "../src/schedule/store.js"
-import { workflowsDir } from "../src/schedule/registry.js"
+import { workflowsDir } from "../src/runtime/workflow-registry.js"
 import { ScheduleRuntime } from "../src/schedule/runtime.js"
 import { BackgroundRunManager } from "../src/tools/background-runs.js"
 import { latestRecord } from "../src/schedule/record.js"
