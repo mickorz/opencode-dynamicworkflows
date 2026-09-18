@@ -44,7 +44,7 @@ const rs = await parallel([
 ```
 
 关键约束（细节见 references/runtime.md）：
-- scriptPath 相对项目根目录；仅支持一层嵌套；禁止调用自身/祖先脚本
+- scriptPath 相对项目根目录（或按注册名引用）；嵌套默认最多 3 层（workflow 工具的 maxWorkflowDepth 可调）；禁止调用自身/祖先脚本（沿链检查，隔层祖先也拦）
 - args 与返回值必须是可克隆数据（对象/数组/标量）；子内修改不影响父对象
 - 子脚本错误直接上抛，父 try-catch 自理；返回 `{ok:false}` 之类的业务结果不影响执行成功
 - 同 run 共享并发配额与中断；子内 phase 自动带 `▸ label / ` 前缀分组；结果带「子流程耗时」段（wall-clock，并行对比的正确口径）

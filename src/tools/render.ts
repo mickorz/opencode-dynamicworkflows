@@ -42,7 +42,12 @@ export function renderWorkflowResult(
     lines.push("")
     lines.push("子流程耗时（wall-clock ≠ agent 时长之和，并行时以 wall 为准）:")
     for (const w of childWfs) {
-      const wfAgents = result.agents.filter((a) => a.workflowScopePath?.includes(w.keySegment))
+      // 前缀匹配（分支 A 修复）：深层 keySegment 不唯一（两个 wf0），includes 会互相污染；
+      // w.scopePath 是 agent.workflowScopePath 的前缀才计入（子树语义，与 wall-clock 对应）
+      const wfAgents = result.agents.filter((a) => {
+        if (!a.workflowScopePath || a.workflowScopePath.length < w.scopePath.length) return false
+        return w.scopePath.every((seg, i) => a.workflowScopePath![i] === seg)
+      })
       const agentSum = wfAgents.reduce((s, a) => s + (a.durationMs ?? 0), 0)
       const wfTokens = wfAgents.reduce((s, a) => s + (a.tokens ?? 0), 0)
       const wfCost = wfAgents.reduce((s, a) => s + (a.cost ?? 0), 0)

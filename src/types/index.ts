@@ -127,6 +127,8 @@ export interface JournalEntry {
   result: unknown
   model?: string
   label?: string
+  /** 所属子 workflow 的实例显示名（分支 A：断点反查哪个子流程的哪一步；root 的 agent 无此字段） */
+  workflowLabel?: string
   phase?: string
   agentType?: string
   /** 原始 prompt（4KB 截断，仅展示用；不参与 hash 身份） */

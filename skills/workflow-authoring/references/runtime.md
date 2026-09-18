@@ -167,7 +167,9 @@ const rs = await parallel([
 - args 与返回值经 structuredClone 隔离（子内修改不影响父对象）；须为可克隆数据（对象/数组/标量）
 - 子内 phase 自动带 `▸ label / ` 前缀，TUI 按前缀分组；同定义多实例靠 label 区分
 - journal key：root 为 `runId:N`（旧格式兼容），child 为 `runId:wfK:N`（按调用顺序编号，稳定可 resume）
-- 错误直接上抛（父 try-catch 自理）；仅支持一层嵌套；禁止调用自身/祖先脚本
+- 错误直接上抛（父 try-catch 自理）；嵌套默认最多 3 层（workflow 工具 maxWorkflowDepth 可调）；禁止调用自身/祖先脚本（沿链检查，隔层祖先也拦）
+- journal key 全链段：root 为 `runId:N`，child 为 `runId:wfK:wfM:N`（深层不碰撞）；journal entry 带 `workflowLabel`（断点反查哪个子流程的哪一步）
+- resume 组合语义（锚定）：孙层 agent 变更只重跑该 scope、其余层回放；**父调换 child 顺序 = wfN 重排、全部 child 重跑**（位置寻址，不做内容寻址）
 - 父脚本可纯编排（零 agent，全部经子 workflow dispatch）
 
 常见报错速查：

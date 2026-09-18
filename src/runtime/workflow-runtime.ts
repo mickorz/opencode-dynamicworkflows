@@ -47,8 +47,8 @@ export const MAX_CONCURRENCY = 16
 export const MAX_AGENTS_PER_RUN = 1000
 /** 可恢复失败的最大自动重试次数（与 Pi 一致） */
 export const MAX_AGENT_RETRIES = 3
-/** 子 workflow 嵌套深度上限（P1：仅一层 child） */
-export const MAX_WORKFLOW_DEPTH = 1
+/** 子 workflow 嵌套深度上限（分支 A：默认 3 层，可经 WorkflowRunOptions.maxWorkflowDepth 覆盖） */
+export const MAX_WORKFLOW_DEPTH = 3
 
 /** 脚本内 agent() 的可选项（比 AgentRunOptions 少 signal/onUsage 等宿主注入项） */
 export interface ScriptAgentOptions {
@@ -107,6 +107,8 @@ export interface WorkflowRunOptions {
     scheduleId?: string
     scheduledAt?: string
   }
+  /** 子 workflow 嵌套深度上限（缺省 MAX_WORKFLOW_DEPTH=3） */
+  maxWorkflowDepth?: number
 }
 
 /** checkpoint() 的可选项（P1-4，仅确认型：OpenCode 无自由文本 UI 通道） */
@@ -172,6 +174,8 @@ interface SharedRunContext {
   cwd: string
   /** workflow 名字引用缓存（v0.10 Registry）：workflowId -> 脚本绝对路径；首查扫描 .opencode-workflows/workflows/，运行中不重扫（子脚本增删不影响进行中 run） */
   registryCache?: Map<string, string>
+  /** 子 workflow 嵌套深度上限（分支 A） */
+  maxWorkflowDepth: number
 }
 
 /** 单个 workflow invocation 的私有身份与游标 */
@@ -225,6 +229,7 @@ function createSharedRunContext(options: WorkflowRunOptions, runId: string): Sha
     onAgentExecution: options.onAgentExecution,
     onAgentUpdate: options.onAgentUpdate,
     cwd: options.cwd ?? process.cwd(),
+    maxWorkflowDepth: options.maxWorkflowDepth ?? MAX_WORKFLOW_DEPTH,
   }
   const initial = normalizeConcurrency(
     options.concurrency ?? Math.max(1, (globalThis.navigator?.hardwareConcurrency ?? 8) - 2),
@@ -235,9 +240,9 @@ function createSharedRunContext(options: WorkflowRunOptions, runId: string): Sha
   return shared
 }
 
-/** journal key：root 保持 runId:N（旧 journal 兼容），child 为 runId:wfK:N */
+/** journal key：root 为 runId:N（旧格式兼容）；child 为全链段 runId:wfK:wfM:N（深层不碰撞） */
 function scopedKey(shared: SharedRunContext, scope: WorkflowScope, callIndex: number): string {
-  return scope.keySegment ? `${shared.runId}:${scope.keySegment}:${callIndex}` : `${shared.runId}:${callIndex}`
+  return scope.keySegment ? `${shared.runId}:${scope.pathKeys!.slice(1).join(":")}:${callIndex}` : `${shared.runId}:${callIndex}`
 }
 
 export async function runWorkflow<T = unknown>(
@@ -532,6 +537,7 @@ async function executeWorkflow(
                 result: value,
                 model: modelSpec,
                 label,
+                workflowLabel: scope.parent ? scope.label : undefined,
                 phase: displayPhase,
                 agentType: scriptOptions.agentType,
                 sessionId: execution.sessionId,
@@ -658,10 +664,10 @@ async function executeWorkflow(
       }
     }
 
-    // 深度限制（P1 仅一层 child）
-    if (scope.depth >= MAX_WORKFLOW_DEPTH) {
+    // 深度限制（分支 A：默认 3 层，可配）
+    if (scope.depth >= shared.maxWorkflowDepth) {
       throw new WorkflowError(
-        `workflow() 嵌套深度超限（当前最多 ${MAX_WORKFLOW_DEPTH} 层子 workflow）`,
+        `workflow() 嵌套深度超限（当前最多 ${shared.maxWorkflowDepth} 层子 workflow；可用 maxWorkflowDepth 参数调整）`,
         WorkflowErrorCode.SCRIPT_VALIDATION_ERROR,
         { recoverable: false },
       )

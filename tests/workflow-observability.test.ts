@@ -125,7 +125,11 @@ test("同 label 多实例：displayPath 重复但 scopePath 唯一（机器去�
   assert.deepEqual(children.map((c) => c.displayPath), [["cmp", "worker"], ["cmp", "worker"]], "displayPath 可重复")
   assert.deepEqual(children.map((c) => c.scopePath), [["root", "wf0"], ["root", "wf1"]], "scopePath 唯一")
   // 按 scopePath 聚合 token 不混
-  const perChild = children.map((c) => result.agents.filter((a) => a.workflowScopePath?.includes(c.keySegment)).length)
+  const perChild = children.map(
+    (c) =>
+      result.agents.filter((a) => a.workflowScopePath && c.scopePath.every((seg, i) => a.workflowScopePath![i] === seg))
+        .length,
+  )
   assert.deepEqual(perChild, [1, 1])
 })
 

@@ -152,8 +152,8 @@ export function findWorkflowMetadata(
 }
 
 /**
- * 组装 sidebar 展示行（两级分组，v0.9）：按执行顺序遍历节点，
- * 子流程一级分组（workflowPath[0]）变化时插 workflow 行，phase 变化时插 phase 行；
+ * 组装 sidebar 展示行（两级分组 + 全链，分支 A）：按执行顺序遍历节点，
+ * 子流程分组键用 workflowPath 全链 join（深层唯一不碰撞），行标题显示完整链（a / b）；
  * root 节点（无 workflowPath）直接按 phase 平铺（旧行为兼容）。
  * 交错场景（并行 child 网络序）同一 workflow 行可能重复出现——与 phase 行同为时间线式语义。
  */
@@ -162,9 +162,9 @@ export function buildSidebarRows(progress: WorkflowProgress): SidebarRow[] {
   let currentWorkflow: string | undefined
   let currentPhase: string | undefined
   for (const node of progress.nodes) {
-    const wfGroup = node.workflowPath?.[0]
+    const wfGroup = node.workflowPath?.length ? node.workflowPath.join("\u0000") : undefined
     if (wfGroup && wfGroup !== currentWorkflow) {
-      rows.push({ kind: "workflow", title: wfGroup })
+      rows.push({ kind: "workflow", title: node.workflowPath!.join(" / ") })
       currentWorkflow = wfGroup
       currentPhase = undefined // 换组后 phase 重新起头
     }

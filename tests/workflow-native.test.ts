@@ -132,11 +132,14 @@ test("child 返回 {ok:false} 不影响 runtime 完成（业务字段与执行�
   assert.deepEqual(result.result, { ok: false, reason: "产物闸门未过" }, "返回值直通，runtime 正常 success")
 })
 
-test("深度限制：child 内再调 workflow() 报超限", async () => {
+test("深度限制：超过 maxWorkflowDepth（默认 3）报超限", async () => {
   const dir = tmpProject()
-  put(dir, "inner.js", `export const meta = { name: 'inner' }\nreturn await workflow('./inner2.js')`)
-  put(dir, "inner2.js", CHILD("inner2"))
-  const parent = `export const meta = { name: 'p' }\nawait workflow('./inner.js')`
+  // 四层链：root -> l1 -> l2 -> l3（l2 内调 l3 时 depth=2 未超，l3 内再调时 depth=3 超限）
+  put(dir, "l3.js", `export const meta = { name: 'l3' }\nreturn await workflow('./leaf.js')`)
+  put(dir, "leaf.js", CHILD("leaf"))
+  put(dir, "l2.js", `export const meta = { name: 'l2' }\nreturn await workflow('./l3.js')`)
+  put(dir, "l1.js", `export const meta = { name: 'l1' }\nreturn await workflow('./l2.js')`)
+  const parent = `export const meta = { name: 'p' }\nawait workflow('./l1.js')`
   await assert.rejects(run(parent, dir), /嵌套深度超限/)
 })
 
