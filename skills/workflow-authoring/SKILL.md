@@ -10,7 +10,7 @@ description: 编写 OpenCode 动态工作流 JavaScript 脚本时加载。涉及
 ## 不变量（违反即报错）
 
 1. 脚本首条语句必须是 `export const meta = { name: 'short_snake_case', description: '一句话说明' }`
-2. `agent()` 至少调用一次；纯计算不要用 workflow
+2. 整个 run 至少一次 agent dispatch：直接调 `agent()`，或经 `workflow()` 子流程间接（纯编排父脚本合法）；两者都没有的纯计算不要用 workflow
 3. 禁止 `import` / `require` / `Date.now()` / `Math.random()` / `new Date()`（可确定性重放要求）
 4. `parallel()` 接收函数数组，不是 Promise 数组：`() => agent(...)`，返回结果按输入顺序
 5. `agent()` 缺省用只读的 explore 子代理；需要写文件时显式传 `{ agentType: 'general' }`
@@ -21,6 +21,33 @@ description: 编写 OpenCode 动态工作流 JavaScript 脚本时加载。涉及
 `setConcurrency(n)`（运行中调并发上限：正整数、钳 16；调大立即放行排队者，调小不抢占存量）
 `verify(item, opts?)` `judgePanel(attempts, opts?)` `retry(fn, opts?)` `checkpoint(promptText, opts?)`
 `workflow(scriptPath 或 {scriptPath, label?}, args?)`（原生子工作流：同 run 共享配额/中断/journal；args 与返回值克隆隔离；仅一层嵌套；父可纯编排；详见 references/runtime.md）
+
+## 子 workflow 组合（workflow 原语）
+
+遇到以下需求时用 `workflow()` 原语，**不要**让 agent 转发调用 workflow 工具（旧方案已 legacy）：
+
+- 多阶段流水线：需求分析 -> 设计 -> 编码，各阶段已是独立 workflow 脚本
+- 同一子脚本多配置/多模型对比（同定义多实例，label 区分）
+- 复用既有稳定 workflow 作为大流程的一环
+- 纯编排：父脚本只做组装/传参/汇总，自己不调 agent
+
+```javascript
+// 串行：上段结果传入下段；父脚本零 agent 合法
+const spec = await workflow('./scripts/1-spec.js')
+const design = await workflow('./scripts/2-design.js', { brief: spec.brief })
+
+// 并行：同脚本三实例，label 区分（UI/phase/journal 身份）
+const rs = await parallel([
+  () => workflow({ scriptPath: './sub.js', label: 'deepseek' }, args),
+  () => workflow({ scriptPath: './sub.js', label: 'gpt' }, args),
+])
+```
+
+关键约束（细节见 references/runtime.md）：
+- scriptPath 相对项目根目录；仅支持一层嵌套；禁止调用自身/祖先脚本
+- args 与返回值必须是可克隆数据（对象/数组/标量）；子内修改不影响父对象
+- 子脚本错误直接上抛，父 try-catch 自理；返回 `{ok:false}` 之类的业务结果不影响执行成功
+- 同 run 共享并发配额与中断；子内 phase 自动带 `▸ label / ` 前缀分组
 
 ## 典型形态
 
@@ -37,6 +64,17 @@ const findings = await parallel(
 
 phase('Synthesize')
 return await agent('综合以下审计结果，输出风险清单：\n' + findings.join('\n'))
+```
+
+纯编排父（零 agent，全部经子 workflow，返回值直接组装）：
+
+```javascript
+export const meta = { name: 'full_pipeline', description: '三段式流水线父编排' }
+phase('编排')
+const spec = await workflow('./scripts/1-spec.js')
+const design = await workflow('./scripts/2-design.js', { brief: spec.brief })
+const code = await workflow('./scripts/3-code.js', { design: design.design })
+return { brief: spec.brief, design: design.design, code: code.code }
 ```
 
 ## agent() 选项

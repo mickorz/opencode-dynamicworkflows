@@ -112,7 +112,18 @@ await agent('重构 src/player.ts 并提交修改说明', { isolation: 'worktree
 
 ## 嵌套工作流（原生 workflow 原语，v0.8 推荐）
 
-不再需要经 general 子代理转发——直接在脚本内调用 `workflow()`：
+### 何时选 workflow()
+
+| 需求形态 | 用法 |
+|----------|------|
+| 多阶段流水线（各阶段已独立成脚本） | 串行 await，上段返回值作下段 args |
+| 同一子脚本多配置/多模型对比 | parallel 包裹，label 区分实例 |
+| 复用既有稳定 workflow 作大流程一环 | 单点 await 直入 |
+| 纯编排（父只组装/汇总，自己不调 agent） | 父零 agent 合法（不变量校验的是整个 run） |
+| 只是并行多个 **agent**（无子脚本） | 不要用 workflow()，直接 parallel + agent |
+| 需要子流程可独立单独跑/单独定时 | 拆子脚本后既可被 workflow() 组合，也可直接跑或配 Schedule |
+
+不再需要经 general 子代理转发——直接在脚本内调用：
 
 ```js
 // 串行：上段结果传入下段
@@ -133,6 +144,17 @@ const rs = await parallel([
 - journal key：root 为 `runId:N`（旧格式兼容），child 为 `runId:wfK:N`（按调用顺序编号，稳定可 resume）
 - 错误直接上抛（父 try-catch 自理）；仅支持一层嵌套；禁止调用自身/祖先脚本
 - 父脚本可纯编排（零 agent，全部经子 workflow dispatch）
+
+常见报错速查：
+
+| 报错 | 原因 |
+|------|------|
+| `子脚本不存在或不可读` | scriptPath 相对基准是**项目根目录**，检查路径 |
+| `structured-clone-compatible` | args 传了函数/Promise/类实例；只允许对象/数组/标量 |
+| `不能调用自身或祖先` | 子脚本调用了自己或上层脚本（大小写变体同样拦） |
+| `嵌套深度超限` | 子内又嵌了一层（P1 限一层）；把孙层逻辑并入子脚本 |
+| `至少调用一次 agent` | 整个 run（含子流程）一次 agent 都没调，也没 checkpoint |
+| resume 后子流程没回放 | 子脚本内容变了致 agent hash 不匹配（预期：resume 只认 agent 调用内容） |
 
 ## 嵌套工作流（旧方案：general 子代理转发，legacy）
 
