@@ -123,6 +123,20 @@ await agent('重构 src/player.ts 并提交修改说明', { isolation: 'worktree
 | 只是并行多个 **agent**（无子脚本） | 不要用 workflow()，直接 parallel + agent |
 | 需要子流程可独立单独跑/单独定时 | 拆子脚本后既可被 workflow() 组合，也可直接跑或配 Schedule |
 
+### 子流程观测（v0.9）
+
+含子流程的 run，结果自带「子流程耗时」段：
+
+```
+子流程耗时（wall-clock ≠ agent 时长之和，并行时以 wall 为准）:
+  native_compare / lane_a：wall 10.3s，agent 合 10.3s，101 tokens
+  native_compare / lane_b：wall 164.7s，agent 合 164.6s，585 tokens
+```
+
+- **对比多配置/多模型时以 wall-clock 为准**（agent 时长之和会把并行的重叠时间重复计入）
+- TUI 按子流程一级分组（粗体行）+ phase 二级；journal 的 agent 记录带 `workflowPath`（label 链）与 `workflowScopePath`（keySegment 链）双身份
+- 子流程执行态只描述 runtime（正常 return 即 ok，`{ok:false}` 之类的业务结果不影响）；`meta.id` 会被记录进执行记录（无则缺省）
+
 ### 两种引用方式（v0.10 Registry）
 
 ```js

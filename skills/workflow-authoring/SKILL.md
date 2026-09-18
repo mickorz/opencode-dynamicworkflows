@@ -9,7 +9,7 @@ description: 编写 OpenCode 动态工作流 JavaScript 脚本时加载。涉及
 
 ## 不变量（违反即报错）
 
-1. 脚本首条语句必须是 `export const meta = { name: 'short_snake_case', description: '一句话说明' }`
+1. 脚本首条语句必须是 `export const meta = { name: 'short_snake_case', description: '一句话说明' }`；可选 `id`（稳定标识，可含斜杠如 `ui/main-menu`，供按名引用与定时寻址；缺省回落 name）
 2. 整个 run 至少一次 agent dispatch：直接调 `agent()`，或经 `workflow()` 子流程间接（纯编排父脚本合法）；两者都没有的纯计算不要用 workflow
 3. 禁止 `import` / `require` / `Date.now()` / `Math.random()` / `new Date()`（可确定性重放要求）
 4. `parallel()` 接收函数数组，不是 Promise 数组：`() => agent(...)`，返回结果按输入顺序
@@ -47,7 +47,7 @@ const rs = await parallel([
 - scriptPath 相对项目根目录；仅支持一层嵌套；禁止调用自身/祖先脚本
 - args 与返回值必须是可克隆数据（对象/数组/标量）；子内修改不影响父对象
 - 子脚本错误直接上抛，父 try-catch 自理；返回 `{ok:false}` 之类的业务结果不影响执行成功
-- 同 run 共享并发配额与中断；子内 phase 自动带 `▸ label / ` 前缀分组
+- 同 run 共享并发配额与中断；子内 phase 自动带 `▸ label / ` 前缀分组；结果带「子流程耗时」段（wall-clock，并行对比的正确口径）
 
 ## 典型形态
 
