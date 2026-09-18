@@ -113,8 +113,9 @@ export async function runInstall(): Promise<void> {
   ]
   if (mode === "locked") lines.unshift(`执行  npm install ${PKG_NAME}（在 ${cwd}）`)
   if (withSkill) {
-    const base = skillTargets(cwd, mode)[0].destDir
-    lines.push(`拷贝  ${join(cliPackageRoot(), "skills")}/ 下两个 skill 到 ${base}/`)
+    const targets = skillTargets(cwd, mode)
+    const lines2 = targets.map((t) => `拷贝  skill ${t.name} → ${t.destDir}`)
+    lines.push(...lines2)
   }
   p.note(lines.join("\n"), "将修改以下内容（原文件会留 .bak 备份）")
 
@@ -163,9 +164,9 @@ export async function runInstall(): Promise<void> {
       }
     }
 
-    // 拷贝 /schedule command 模板（单文件覆盖，随安装方式选目录）
-    copyCommands(cwd, mode)
-    p.log.info(`已拷贝 /schedule command → ${commandTargetDir(cwd, mode)}/schedule.md`)
+    // 拷贝 /schedule command 模板（单文件覆盖；检测到 .opencode 下旧位置时覆盖旧位置防双份）
+    const commandTarget = copyCommands(cwd, mode)
+    p.log.info(`已拷贝 /schedule command → ${commandTarget}`)
   } catch (error) {
     s.stop("安装失败")
     p.log.error(error instanceof Error ? error.message : String(error))

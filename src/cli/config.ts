@@ -10,7 +10,7 @@
  * 安装方式与条目匹配规则见 Docs/npx cli安装方式-交互式安装器实施方案.md 第 2 节。
  */
 
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, type Dirent } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { dirname, isAbsolute, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -88,21 +88,50 @@ export function commandTargetDir(cwd: string, mode: "global" | "project" | "lock
   return mode === "global" ? join(globalConfigDir(), "commands") : join(cwd, ".opencode", "commands")
 }
 
-/** 拷贝 command 模板（单文件，覆盖式） */
-export function copyCommands(cwd: string, mode: "global" | "project" | "locked"): void {
-  const sourceBase = join(cliPackageRoot(), "commands")
-  const destDir = commandTargetDir(cwd, mode)
-  mkdirSync(destDir, { recursive: true })
-  for (const name of COMMAND_NAMES) {
-    copyFileSync(join(sourceBase, name), join(destDir, name))
+/**
+ * 在 <root> 下任意深度查找既存 command 文件（如旧版/其他来源装到 .opencode/commands/sub/schedule.md）。
+ * 命中返回完整路径；未命中 undefined。防双份冲突：安装时优先覆盖旧位置而非再装默认位置。
+ */
+function findExistingCommandFile(root: string, fileName: string): string | undefined {
+  if (!existsSync(root)) return undefined
+  const queue: string[] = [root]
+  while (queue.length > 0) {
+    const dir = queue.shift()!
+    let entries: Dirent[]
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      const full = join(dir, entry.name)
+      if (entry.isFile() && entry.name === fileName) return full
+      if (entry.isDirectory()) queue.push(full)
+    }
   }
+  return undefined
 }
 
-/** 删除已拷贝的 command 模板 */
-export function removeCommands(cwd: string, mode: "global" | "project" | "locked"): void {
-  const destDir = commandTargetDir(cwd, mode)
+/** 拷贝 command 模板（单文件，覆盖式）；检测到 .opencode 下旧位置（含嵌套）时直接覆盖到旧位置；返回实际写入路径 */
+export function copyCommands(cwd: string, mode: "global" | "project" | "locked"): string {
+  const sourceBase = join(cliPackageRoot(), "commands")
+  let written = ""
   for (const name of COMMAND_NAMES) {
-    rmSync(join(destDir, name), { force: true })
+    // 旧位置探测：命中则覆盖该处，不再装默认位置（防双份冲突）
+    const existing = mode === "global" ? undefined : findExistingCommandFile(join(cwd, ".opencode", "commands"), name)
+    const target = existing ?? join(commandTargetDir(cwd, mode), name)
+    mkdirSync(dirname(target), { recursive: true })
+    copyFileSync(join(sourceBase, name), target)
+    written = target
+  }
+  return written
+}
+
+/** 删除已拷贝的 command 模板（含旧位置探测清理） */
+export function removeCommands(cwd: string, mode: "global" | "project" | "locked"): void {
+  for (const name of COMMAND_NAMES) {
+    const existing = mode === "global" ? undefined : findExistingCommandFile(join(cwd, ".opencode", "commands"), name)
+    rmSync(existing ?? join(commandTargetDir(cwd, mode), name), { force: true })
   }
 }
 
@@ -333,9 +362,37 @@ export interface SkillCopyTarget {
 }
 
 /** 计算 skill 拷贝目标列表：global 模式到 ~/.config/opencode/skills，其余到 .agents/skills */
+/**
+ * 在 <root> 下任意深度查找既存 skill 目录（含 SKILL.md 判定；如 .opencode/skills/sub/<name>/SKILL.md）。
+ * 命中返回该 skill 目录路径；未命中 undefined。防双份冲突：安装时优先覆盖旧位置。
+ */
+function findExistingSkillDir(root: string, skillName: string): string | undefined {
+  if (!existsSync(root)) return undefined
+  const queue: string[] = [root]
+  while (queue.length > 0) {
+    const dir = queue.shift()!
+    const candidate = join(dir, skillName)
+    if (existsSync(join(candidate, "SKILL.md"))) return candidate
+    let entries: Dirent[]
+    try {
+      entries = readdirSync(dir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) queue.push(join(dir, entry.name))
+    }
+  }
+  return undefined
+}
+
 export function skillTargets(cwd: string, mode: "global" | "project" | "locked"): SkillCopyTarget[] {
   const base = mode === "global" ? globalSkillsTargetDir() : projectSkillsTargetDir(cwd)
-  return SKILL_NAMES.map((name) => ({ name, destDir: join(base, name) }))
+  return SKILL_NAMES.map((name) => {
+    // 旧位置探测（project/locked）：.opencode/skills 下任意深度已装过同名 skill 时，目标改为旧位置（覆盖，防双份）
+    const existing = mode === "global" ? undefined : findExistingSkillDir(join(cwd, ".opencode", "skills"), name)
+    return { name, destDir: existing ?? join(base, name) }
+  })
 }
 
 /** 递归拷贝单个 skill 目录到目标（目标父目录自动创建；已存在时整体替换） */
