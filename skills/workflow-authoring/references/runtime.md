@@ -110,7 +110,31 @@ await agent('重构 src/player.ts 并提交修改说明', { isolation: 'worktree
 
 适用：长跑批量任务（大扇出分析、全仓审计）且期间想继续对话。后台 run 的 checkpoint 走 headless 默认值（无人工弹窗）；需要 checkpoint 人工确认或同步拿结果时显式传 `background: false` 走前台。两个例外即使显式传 true 也强制前台：agent 嵌套会话内调用（中间层需同步拿结果继续编排）、resumeFromRunId 续跑（后台未接 journal 回放）。
 
-## 嵌套工作流（经 general 子代理）
+## 嵌套工作流（原生 workflow 原语，v0.8 推荐）
+
+不再需要经 general 子代理转发——直接在脚本内调用 `workflow()`：
+
+```js
+// 串行：上段结果传入下段
+const spec = await workflow('./scripts/1-spec.js')
+const design = await workflow('./scripts/2-design.js', { brief: spec.brief })
+
+// 并行：同脚本多实例，label 区分（UI/phase/journal 身份）
+const rs = await parallel([
+  () => workflow({ scriptPath: './sub.js', label: 'deepseek' }, args),
+  () => workflow({ scriptPath: './sub.js', label: 'gpt' }, args),
+])
+```
+
+约定：
+- 一个 Root Run：父子共享并发配额（maxAgents）、中断信号、journal 与统计；子 workflow 不占并发额度（只限 agent）
+- args 与返回值经 structuredClone 隔离（子内修改不影响父对象）；须为可克隆数据（对象/数组/标量）
+- 子内 phase 自动带 `▸ label / ` 前缀，TUI 按前缀分组；同定义多实例靠 label 区分
+- journal key：root 为 `runId:N`（旧格式兼容），child 为 `runId:wfK:N`（按调用顺序编号，稳定可 resume）
+- 错误直接上抛（父 try-catch 自理）；仅支持一层嵌套；禁止调用自身/祖先脚本
+- 父脚本可纯编排（零 agent，全部经子 workflow dispatch）
+
+## 嵌套工作流（旧方案：general 子代理转发，legacy）
 
 脚本沙箱内没有 `workflow()` 全局；要串联多层大流程，让 `agentType: 'general'` 的子代理去调用 workflow 工具（general 与主会话一样可用插件工具，缺省的 explore 只读白名单调不了）：
 

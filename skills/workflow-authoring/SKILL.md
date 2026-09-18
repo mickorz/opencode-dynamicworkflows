@@ -20,6 +20,7 @@ description: 编写 OpenCode 动态工作流 JavaScript 脚本时加载。涉及
 `agent(prompt, opts?)` `parallel(thunks)` `pipeline(items, ...stages)` `phase(title)` `log(msg)` `args`
 `setConcurrency(n)`（运行中调并发上限：正整数、钳 16；调大立即放行排队者，调小不抢占存量）
 `verify(item, opts?)` `judgePanel(attempts, opts?)` `retry(fn, opts?)` `checkpoint(promptText, opts?)`
+`workflow(scriptPath 或 {scriptPath, label?}, args?)`（原生子工作流：同 run 共享配额/中断/journal；args 与返回值克隆隔离；仅一层嵌套；父可纯编排；详见 references/runtime.md）
 
 ## 典型形态
 

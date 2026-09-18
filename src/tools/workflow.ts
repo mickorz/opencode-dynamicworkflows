@@ -16,7 +16,8 @@ const DESCRIPTION = [
   "运行动态工作流：执行一段 JavaScript 编排脚本，通过 agent() 将任务分发给子代理（独立会话）并行执行，",
   "parallel()/pipeline() 组合调度，脚本内变量汇总后仅返回最终结果，避免大量子代理上下文污染主会话。",
   "适用形态：全仓检查、独立并行调研、多视角评审、扇出汇总。编写脚本前先加载 workflow-authoring skill。",
-  "脚本规则：首条语句 export const meta = { name, description }；可用全局 agent/parallel/pipeline/phase/log/args/setConcurrency/verify/judgePanel/retry/checkpoint；",
+  "脚本规则：首条语句 export const meta = { name, description }；可用全局 agent/parallel/pipeline/phase/log/args/setConcurrency/verify/judgePanel/retry/checkpoint/workflow；",
+  "workflow(scriptPath 或 {scriptPath,label}, args) 为原生子工作流原语：同 run 共享并发配额与中断，父子 phase 自动带 ▸ 前缀分组；父脚本可纯编排（不直接调 agent）；仅支持一层嵌套；",
   "禁止 import/require/Date.now()/Math.random()/new Date()；agent() 至少调用一次。",
   "agent() 缺省用只读的 explore 子代理，写文件类任务显式传 { agentType: 'general' }。",
   "缺省后台运行：立即返回 runId 不阻塞，完成后结果自动发回本会话。需要同步拿结果或 checkpoint 人工确认时显式传 background:false 走前台。",
@@ -28,7 +29,7 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
 
     args: {
       script: tool.schema.string().optional().describe(
-        "JavaScript 工作流脚本原文，无 markdown 围栏。首条语句必须是 export const meta = { name: 'short_snake_case', description: '...' }。可用全局：agent(prompt, opts) / parallel(函数数组) / pipeline(items, ...stages) / phase(title) / log(msg) / args / setConcurrency(n)。详见 workflow-authoring skill。",
+        "JavaScript 工作流脚本原文，无 markdown 围栏。首条语句必须是 export const meta = { name: 'short_snake_case', description: '...' }。可用全局：agent(prompt, opts) / parallel(函数数组) / pipeline(items, ...stages) / phase(title) / log(msg) / args / setConcurrency(n) / workflow(scriptPath 或 {scriptPath,label}, args)（原生子工作流）。详见 workflow-authoring skill。",
       ),
       scriptPath: tool.schema.string().optional().describe(
         "脚本文件路径（相对项目目录或绝对路径），服务端执行时读盘拿最新内容；与 script 二选一。执行 scripts 目录里的示例脚本时优先用它，避免粘贴原文导致的陈旧缓存与改写失真。",
