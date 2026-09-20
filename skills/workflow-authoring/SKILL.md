@@ -106,6 +106,18 @@ const out = await retry(() => agent('生成'), { attempts: 3, until: (r) => r &&
 if (!await checkpoint('即将改动生产配置，确认？')) return '已取消'
 ```
 
+## 交付前语法自检（必做）
+
+生成或修改 workflow 脚本后、写盘交付前，先跑本 skill 自带的语法检查：
+
+```bash
+node <skill 目录>/scripts/wf-syntax-check.cjs <脚本路径> [更多脚本...]
+```
+
+- 检查原理：`export const meta` 降级为 `const meta` 后包进 async IIFE，用 vm 编译——支持 workflow 的顶层 await 与 return（`node --check` 不支持顶层 return，故不能替代）
+- 退出码 0 全通过；1 时按报错（含行号）修完再交付
+- 典型拦获：括号不闭合、await 漏包、引号错配、模板字符串反引号丢失
+
 ## 参考
 
 - [runtime API 详解](references/runtime.md)
