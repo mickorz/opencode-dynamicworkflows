@@ -319,3 +319,98 @@ return 'never'`,
     /abort/i,
   )
 })
+
+// ── P0-5：journal / resume 兼容（sequence 对 journal 透明） ──
+
+/** 单次运行并采集 journal */
+async function runOnce(script: string, dir: string) {
+  const journal = new Map<string, JournalEntry>()
+  const runner: AgentSessionRunner = {
+    async run(prompt) {
+      return { value: `ok:${prompt}`, sessionId: "s", type: "text" }
+    },
+  }
+  const result = await runWorkflow(script, {
+    agent: runner,
+    cwd: dir,
+    onAgentJournal: (entry) => journal.set(entry.key, entry),
+  })
+  return { result, journal }
+}
+
+test("sequence 不占 journal callIndex：key 形态与裸 await 完全一致", async () => {
+  const dir = tmpProject()
+  const { result, journal } = await runOnce(
+    `export const meta = { name: 'seq_journal' }
+await sequence([
+  () => agent('A'),
+  () => agent('B'),
+])
+await agent('C')
+return 'done'`,
+    dir,
+  )
+  assert.deepEqual(
+    [...journal.keys()],
+    [`${result.runId}:0`, `${result.runId}:1`, `${result.runId}:2`],
+    "sequence 自身不产生 journal 记录，agent 按位置连续编号",
+  )
+})
+
+test("sequence 内 agent 与 checkpoint 全量 resume 回放", async () => {
+  const dir = tmpProject()
+  const script = `export const meta = { name: 'seq_resume' }
+const a = await sequence([
+  () => agent('first'),
+  (prev) => agent('second ' + prev.slice(0, 4)),
+])
+const gate = await checkpoint('人工闸门')
+return { a, gate }`
+  const { result, journal } = await runOnce(script, dir)
+  assert.equal(journal.size, 3, "2 个 agent + 1 个 checkpoint")
+
+  // 同 runId 续跑：全部回放，不触发真实调用
+  const calls: string[] = []
+  const confirms: string[] = []
+  const resumed = await runWorkflow(script, {
+    agent: {
+      async run(prompt) {
+        calls.push(prompt)
+        return { value: "should-not-run", sessionId: "s", type: "text" }
+      },
+    },
+    confirm: async (p) => {
+      confirms.push(p)
+      return "confirmed"
+    },
+    runId: result.runId,
+    resumeJournal: journal,
+    cwd: dir,
+  })
+  assert.equal(calls.length, 0, "sequence 内 agent 全部回放")
+  assert.equal(confirms.length, 0, "sequence 后的 checkpoint 同样回放")
+  assert.deepEqual(
+    (resumed.result as any).a,
+    (result.result as any).a,
+    "回放结果与首跑一致（prev 传递链路在回放下不变）",
+  )
+})
+
+test("sequence 内 child workflow 的 journal key 仍为 wfK 寻址", async () => {
+  const dir = tmpProject()
+  put(dir, "c.js", `export const meta = { name: 'c' }\nreturn await agent('inner')`)
+  const { result, journal } = await runOnce(
+    `export const meta = { name: 'seq_wf_journal' }
+await sequence([
+  () => workflow('./c.js'),
+  () => workflow('./c.js'),
+])
+return 'done'`,
+    dir,
+  )
+  assert.deepEqual(
+    [...journal.keys()],
+    [`${result.runId}:wf0:0`, `${result.runId}:wf1:0`],
+    "child agent 的 journal key 不受 sequence 影响",
+  )
+})
