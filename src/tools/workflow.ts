@@ -10,7 +10,7 @@ import { lookupRootSessionId, registerAgentSession, unregisterAgentSessions } fr
 import { parseWorkflowScript } from "../runtime/vm.js"
 import { resolveScriptText } from "./script-source.js"
 import { BackgroundRunManager } from "./background-runs.js"
-import type { JournalEntry, AgentRecord, AgentExecutionRecord } from "../types/index.js"
+import type { JournalEntry, AgentRecord, AgentExecutionRecord, CompositeRecord } from "../types/index.js"
 
 const DESCRIPTION = [
   "运行动态工作流：执行一段 JavaScript 编排脚本，通过 agent() 将任务分发给子代理（独立会话）并行执行，",
@@ -29,7 +29,7 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
 
     args: {
       script: tool.schema.string().optional().describe(
-        "JavaScript 工作流脚本原文，无 markdown 围栏。首条语句必须是 export const meta = { name: 'short_snake_case', description: '...' }。可用全局：agent(prompt, opts) / parallel(函数数组) / pipeline(items, ...stages) / phase(title) / log(msg) / args / setConcurrency(n) / workflow(scriptPath 或 {scriptPath,label}, args)（原生子工作流）。详见 workflow-authoring skill。",
+        "JavaScript 工作流脚本原文，无 markdown 围栏。首条语句必须是 export const meta = { name: 'short_snake_case', description: '...' }。可用全局：agent(prompt, opts) / parallel(函数数组) / pipeline(items, ...stages) / sequence(nodes) / fallback(nodes) / race(nodes) / check(cond, msg) / phase(title) / log(msg) / args / setConcurrency(n) / workflow(scriptPath 或 {scriptPath,label}, args)（原生子工作流）。详见 workflow-authoring skill。",
       ),
       scriptPath: tool.schema.string().optional().describe(
         "脚本文件路径（相对项目目录或绝对路径），服务端执行时读盘拿最新内容；与 script 二选一。执行 scripts 目录里的示例脚本时优先用它，避免粘贴原文导致的陈旧缓存与改写失真。",
@@ -128,6 +128,8 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
       // 完成态仍走 tool 返回值 metadata（下方 return，C 通道兜底）。
       cleanupRunSnapshots(context.directory, context.sessionID)
       const progressRecords: AgentRecord[] = []
+      // 组合节点记录（P2-3）：onCompositeUpdate 维护，随快照供 TUI 组合树渲染
+      const progressComposites: CompositeRecord[] = []
       // 血统注册面：本 run 创建的 agent 子会话 -> rootSessionId；run 结束统一注销（见 finally）
       const registeredSessions = new Set<string>()
       const writeTerminalSnapshot = (records: ReadonlyArray<AgentRecord>, status: WorkflowProgressStatus) => {
@@ -140,6 +142,7 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
             name: workflowName,
             status,
             records,
+            composites: progressComposites,
             time: Date.now(),
           }),
         )
@@ -225,6 +228,11 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
             }
             writeTerminalSnapshot(progressRecords, "running")
           },
+          onCompositeUpdate: (record) => {
+            const index = progressComposites.findIndex((c) => c.id === record.id)
+            if (index >= 0) progressComposites[index] = record
+            else progressComposites.push(record)
+          },
         })
         // 结构化降级可观测性：附在日志尾部（P1-2）
         for (const note of degradeNotes) result.logs.push(note)
@@ -236,7 +244,13 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
           ...rendered,
           metadata: {
             ...rendered.metadata,
-            ...buildProgressMetadata({ runId, name: workflowName, status: "completed", records: result.agents }),
+            ...buildProgressMetadata({
+              runId,
+              name: workflowName,
+              status: "completed",
+              records: result.agents,
+              composites: result.composites,
+            }),
           },
         }
       } catch (error) {
@@ -255,6 +269,7 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
               name: workflowName,
               status: "aborted",
               records: progressRecords,
+              composites: progressComposites,
             }),
           }
         }

@@ -14,7 +14,7 @@
  * 后台 run 不走本通道（ctx.metadata 在 tool 返回后是闭包过期状态，见需求文档 9.6）。
  */
 
-import type { AgentRecord } from "../types/index.js"
+import type { AgentRecord, CompositeRecord } from "../types/index.js"
 
 export type WorkflowProgressStatus = "running" | "completed" | "aborted" | "failed"
 
@@ -47,6 +47,8 @@ export function buildProgressMetadata(input: {
   name?: string
   status: WorkflowProgressStatus
   records: ReadonlyArray<AgentRecord>
+  /** 组合节点记录（P2-3 可选；TUI 组合树源） */
+  composites?: ReadonlyArray<CompositeRecord>
 }): WorkflowProgressMetadata {
   const running = input.records.filter((r) => r.status === "running").length
   const completed = input.records.filter((r) => r.status === "ok").length
@@ -57,6 +59,7 @@ export function buildProgressMetadata(input: {
     status: input.status,
     phases: derivePhases(input.records),
     agents: input.records,
+    ...(input.composites?.length ? { composites: input.composites } : {}),
     running,
     completed,
     failed,

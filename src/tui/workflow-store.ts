@@ -38,6 +38,10 @@ export interface WorkflowNode {
   outputPreview?: string
   inputTokens?: number
   outputTokens?: number
+  /** 组合链（cmpN；在 sequence/fallback/race 内执行时携带，P2-3 展示用） */
+  compositePath?: string[]
+  /** 节点类型（P2-4）：缺省普通 agent；checkpoint 用于区分「等待人工」与执行中 */
+  kind?: "checkpoint"
 }
 
 export interface WorkflowProgress {
@@ -55,13 +59,45 @@ export interface WorkflowProgress {
   time?: number
   /** 触发本 run 的会话（B2 层级显示）：顶层 run 等于当前会话，嵌套 run 为某节点的子会话；缺省视为顶层 */
   parentSessionId?: string
+  /** 组合节点执行记录（P2-3 可选；旧快照无此字段） */
+  composites?: CompositeInfo[]
 }
 
-/** sidebar 展示行：workflow 分组行（子流程一级）/ phase 标题行 / agent 节点行 */
+/** 组合节点记录（server CompositeRecord 的 TUI 宽松拷贝；禁止 import server 模块） */
+export interface CompositeInfo {
+  id: string
+  kind: "sequence" | "fallback" | "race"
+  label: string
+  status: "running" | "ok" | "failed" | "aborted"
+  compositePath: string[]
+}
+
+/** sidebar 展示行：workflow 分组行（子流程一级）/ composite 组合行（P2-3）/ phase 标题行 / agent 节点行 */
 export type SidebarRow =
   | { kind: "workflow"; title: string }
+  | { kind: "composite"; title: string }
   | { kind: "phase"; title: string }
   | { kind: "node"; node: WorkflowNode }
+
+/** composites 数组宽松解析（P2-3）：坏形状条目静默跳过；返回空数组时调用方不写字段 */
+export function parseCompositeInfos(raw: unknown[]): CompositeInfo[] {
+  const out: CompositeInfo[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue
+    const c = item as Record<string, unknown>
+    if (typeof c.id !== "string" || !c.id) continue
+    if (c.kind !== "sequence" && c.kind !== "fallback" && c.kind !== "race") continue
+    if (!Array.isArray(c.compositePath)) continue
+    out.push({
+      id: c.id,
+      kind: c.kind,
+      label: typeof c.label === "string" && c.label ? c.label : c.id,
+      status: c.status === "running" || c.status === "ok" || c.status === "failed" || c.status === "aborted" ? c.status : "running",
+      compositePath: c.compositePath.filter((x): x is string => typeof x === "string"),
+    })
+  }
+  return out
+}
 
 /** ToolPart.metadata 是 any（无类型约束），形状校验失败一律返回 null 防崩（旧结构/异构数据） */
 export function parseWorkflowMetadata(raw: unknown): WorkflowProgress | null {
@@ -98,6 +134,10 @@ export function parseWorkflowMetadata(raw: unknown): WorkflowProgress | null {
       outputPreview: typeof n.outputPreview === "string" ? n.outputPreview : undefined,
       inputTokens: typeof n.inputTokens === "number" ? n.inputTokens : undefined,
       outputTokens: typeof n.outputTokens === "number" ? n.outputTokens : undefined,
+      compositePath: Array.isArray(n.compositePath)
+        ? n.compositePath.filter((p): p is string => typeof p === "string")
+        : undefined,
+      ...(n.kind === "checkpoint" ? { kind: "checkpoint" as const } : {}),
     })
   }
   if (nodes.length === 0) return null
@@ -114,6 +154,7 @@ export function parseWorkflowMetadata(raw: unknown): WorkflowProgress | null {
     status,
     phases,
     nodes,
+    ...(Array.isArray(rec.composites) ? { composites: parseCompositeInfos(rec.composites) } : {}),
     running: nodes.filter((n) => n.status === "running").length,
     completed: nodes.filter((n) => n.status === "ok").length,
     failed: nodes.filter((n) => n.status === "failed").length,
@@ -159,14 +200,36 @@ export function findWorkflowMetadata(
  */
 export function buildSidebarRows(progress: WorkflowProgress): SidebarRow[] {
   const rows: SidebarRow[] = []
+  const compositeLabels = new Map<string, string>()
+  for (const c of progress.composites ?? []) {
+    if (c && typeof c.id === "string" && typeof c.label === "string") compositeLabels.set(c.id, c.label)
+  }
   let currentWorkflow: string | undefined
+  let currentComposite: string | undefined
   let currentPhase: string | undefined
   for (const node of progress.nodes) {
     const wfGroup = node.workflowPath?.length ? node.workflowPath.join("\u0000") : undefined
     if (wfGroup && wfGroup !== currentWorkflow) {
       rows.push({ kind: "workflow", title: node.workflowPath!.join(" / ") })
       currentWorkflow = wfGroup
+      currentComposite = undefined // 换组后组合链重新起头
       currentPhase = undefined // 换组后 phase 重新起头
+    }
+    // 组合链分组（P2-3）：链变化时为新进入的段发 composite 行；退出组合（undefined）不发
+    const cmpChain = node.compositePath?.length ? node.compositePath.join("\u0000") : undefined
+    if (cmpChain !== currentComposite) {
+      const prev = currentComposite ? currentComposite.split("\u0000") : []
+      for (const segment of node.compositePath ?? []) {
+        if (!prev.includes(segment)) {
+          const depth = (node.compositePath ?? []).indexOf(segment)
+          rows.push({
+            kind: "composite",
+            title: `${"  ".repeat(Math.max(0, depth))}${compositeLabels.get(segment) ?? segment}`,
+          })
+        }
+      }
+      currentComposite = cmpChain
+      currentPhase = undefined // 换组合后 phase 重新起头
     }
     if (node.phase && node.phase !== currentPhase) {
       rows.push({ kind: "phase", title: node.phase })
@@ -188,6 +251,23 @@ export function nodeLine(node: WorkflowNode): string {
   const replayed = node.replayed ? " ·缓存" : ""
   const durationPart = duration ? ` ·${duration}` : ""
   const tokensPart = tokens ? ` ·${tokens} tok` : ""
+  // checkpoint 节点（P2-4）：状态词前缀区分「等待人工」与执行中，等待时不显示耗时避免误读为卡死
+  if (node.kind === "checkpoint") {
+    const state =
+      node.status === "running"
+        ? "[等待人工确认]"
+        : node.status === "ok"
+          ? node.replayed
+            ? "[已批准·缓存]"
+            : "[已批准]"
+          : node.status === "failed"
+            ? node.error?.includes("人工拒绝")
+              ? "[被拒绝]"
+              : "[失败]"
+            : "[已中止]"
+    if (node.status === "running") return `${state} ${node.label}`
+    return `${state} ${node.label}${durationPart}`
+  }
   return `${node.label}${durationPart}${tokensPart}${replayed}`
 }
 

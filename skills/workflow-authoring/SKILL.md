@@ -17,9 +17,10 @@ description: 编写 OpenCode 动态工作流 JavaScript 脚本时加载。涉及
 
 ## 可用全局
 
-`agent(prompt, opts?)` `parallel(thunks)` `pipeline(items, ...stages)` `phase(title)` `log(msg)` `args`
+`agent(prompt, opts?)` `parallel(thunks)` `pipeline(items, ...stages)`（等价于 parallel+sequence 组合，新脚本优先组合写法） `phase(title)` `log(msg)` `args`
 `setConcurrency(n)`（运行中调并发上限：正整数、钳 16；调大立即放行排队者，调小不抢占存量）
 `verify(item, opts?)` `judgePanel(attempts, opts?)` `retry(fn, opts?)` `checkpoint(promptText, opts?)`
+`sequence(nodes)` `fallback(nodes)` `race(nodes)`（Composite 组合控制流，见下下节）`check(cond, msg?)`（确定性事实验证）
 `workflow(ref, args?)`（原生子工作流：ref 为脚本路径（`./x.js`/`../x.js`/绝对路径）或**注册名**（`.opencode-workflows/workflows/` 下脚本的 meta.id ?? meta.name，含斜杠名合法）；可传 `{ scriptPath, label? }` 带实例显示名；同 run 共享配额/中断/journal；args 与返回值克隆隔离；仅一层嵌套；父可纯编排；详见 references/runtime.md）
 
 ## 子 workflow 组合（workflow 原语）
@@ -48,6 +49,45 @@ const rs = await parallel([
 - args 与返回值必须是可克隆数据（对象/数组/标量）；子内修改不影响父对象
 - 子脚本错误直接上抛，父 try-catch 自理；返回 `{ok:false}` 之类的业务结果不影响执行成功
 - 同 run 共享并发配额与中断；子内 phase 自动带 `▸ label / ` 前缀分组；结果带「子流程耗时」段（wall-clock，并行对比的正确口径）
+
+## 组合控制流（Composite：sequence / fallback / race）
+
+**使用边界（重要，不要滥用）：**
+
+- 简单串行（A 完了接 B）→ **继续用普通 await 链**，不要机械地把所有 await 包进 sequence
+- Composite 只在这些场景用：多级候选降级（fallback）、多路竞争择优（race）、与 sequence/parallel 嵌套组成结构化控制流（如「失败后修复再验」链、决策树）
+
+```javascript
+// 降级链：快模型不行换强模型，再不行规则兜底；任一成功即返回其结果
+const result = await fallback([
+  () => workflow('./fast.js'),
+  () => workflow('./strong.js'),
+  () => ({ source: 'rule-based', data: [] }),
+])
+if (!result) return '全部降级路径失败'
+
+// 多路竞争：任一成功即胜出，其余自动取消（不浪费 token）
+const best = await race([
+  () => workflow('./model-a.js'),
+  () => workflow('./model-b.js'),
+])
+
+// 嵌套组合：「失败后修复再验」的链，作为 fallback 的第二候选
+await fallback([
+  () => workflow('./verify.js'),
+  () => sequence([
+    () => workflow('./fix.js'),
+    (prev) => workflow('./verify.js', { fixed: prev }),
+  ]),
+])
+```
+
+语义规则（细节见 references/runtime.md）：
+- 节点返回任意值（含 `null` / `false` / `{ok:false}`）都是**执行成功**；业务否决自己写 if 判断，不要指望组合节点替你判断
+- 可恢复失败：sequence 立即停止返回 `null`；fallback 换下一候选；race 等其余候选——三者与 `agent()` 可恢复失败返回 `null` 同构，`if (!r)` 判断即可
+- 拼错脚本名 / 嵌套超限 / 非函数数组等**结构性错误直接抛错**，不会被 fallback 吞掉伪装成降级
+- race 胜出后其余候选被局部取消（仅限 race 内部，不中断整个 run）
+- 三者不占 journal 位，resume 行为与普通 await 链一致
 
 ## 典型形态
 
@@ -90,6 +130,17 @@ return { brief: spec.brief, design: design.design, code: code.code }
 | `retries` | 可恢复失败重试次数（上限 3） |
 | `phase` | 显式归属阶段（缺省用当前 phase） |
 
+## 确定性验证
+
+可用 helper（VM 沙箱无 fs/进程能力，由 runtime 注入）：`fileExists(path)`（相对项目根）、`commandSuccess(cmd, timeoutMs?)`（退出码 0）
+
+```javascript
+// check：客观事实验证（true=过，false=可恢复失败：sequence 停 / fallback 换候选）
+await check(() => args.config.debug !== undefined, 'config.debug 必须存在')
+// 条件函数自身 throw = 结构性错误（检查代码 bug），不会被当作「验证未过」
+// 职责边界：check=客观事实 / verify=AI 质量判断 / checkpoint=人工决定
+```
+
 ## 质量与控制助手
 
 ```javascript
@@ -102,8 +153,11 @@ const best = await judgePanel([方案A, 方案B], { judges: 3, rubric: '正确�
 // 有界重试：until 通过即停，耗尽返回最后一次结果
 const out = await retry(() => agent('生成'), { attempts: 3, until: (r) => r && r.ok })
 
-// 人工确认点：会弹权限确认（允许=true）；回放时不再询问，不花 token
-if (!await checkpoint('即将改动生产配置，确认？')) return '已取消'
+// 人工确认点（Human Gate）：允许=true 继续；拒绝=强停止（抛 CHECKPOINT_REJECTED，
+// 不可被 fallback/parallel 吞掉）；回放时不再询问、拒绝确定性重现（改 prompt 文本才会重问）
+await checkpoint('即将改动生产配置，确认？')
+// 需要优雅处理拒绝时自己 try/catch：
+try { await checkpoint('即将改动生产配置，确认？') } catch { return '已取消' }
 ```
 
 ## 交付前语法自检（必做）

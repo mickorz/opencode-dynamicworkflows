@@ -16,7 +16,7 @@
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
-import type { AgentRecord } from "../types/index.js"
+import type { AgentRecord, CompositeRecord } from "../types/index.js"
 import { buildProgressMetadata, type WorkflowProgressStatus } from "./workflow-progress.js"
 
 export const RUN_SNAPSHOT_VERSION = 2
@@ -54,6 +54,7 @@ export function buildRunSnapshot(input: {
   name?: string
   status: WorkflowProgressStatus
   records: ReadonlyArray<AgentRecord>
+  composites?: ReadonlyArray<CompositeRecord>
   time: number
 }): RunSnapshot {
   const progress = buildProgressMetadata({
@@ -66,6 +67,7 @@ export function buildRunSnapshot(input: {
     version: RUN_SNAPSHOT_VERSION,
     parentSessionId: input.parentSessionId,
     ...(input.rootSessionId ? { rootSessionId: input.rootSessionId } : {}),
+    ...(input.composites?.length ? { composites: input.composites } : {}),
     time: input.time,
     ...progress,
   }

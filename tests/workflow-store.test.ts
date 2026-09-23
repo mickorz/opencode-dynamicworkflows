@@ -301,3 +301,65 @@ test("progressViewKey：混入 time，仅心跳时间变化也触发重渲染", 
   // metadata 通道无 time（undefined）与 0 等价，保持稳定
   assert.equal(progressViewKey({ ...base }), progressViewKey({ ...base, time: undefined }))
 })
+
+test("buildSidebarRows：composite 链分组行（P2-3）——进入插行、嵌套缩进、退出不发、重入重发", () => {
+  const agents = [
+    { ...VALID.agents[0], compositePath: ["cmp0"] },
+    { ...VALID.agents[1], compositePath: ["cmp0"] },
+    { ...VALID.agents[2], compositePath: ["cmp0", "cmp1"] },
+    { ...VALID.agents[0] },
+    { ...VALID.agents[1], compositePath: ["cmp0"] },
+  ]
+  const rows = buildSidebarRows(
+    parseWorkflowMetadata({
+      runId: "r3",
+      agents,
+      composites: [
+        { id: "cmp0", kind: "sequence", label: "Sequence", status: "ok", compositePath: ["cmp0"] },
+        { id: "cmp1", kind: "fallback", label: "Fallback", status: "ok", compositePath: ["cmp0", "cmp1"] },
+      ],
+    })!,
+  )
+  const shape = rows.map((r) =>
+    r.kind === "composite" ? `[${r.title}]` : r.kind === "node" ? r.node.label : `#${r.title}`,
+  )
+  assert.deepEqual(shape, [
+    "[Sequence]",
+    "#Analyze",
+    "解释1",
+    "解释2",
+    "[  Fallback]", // 嵌套第二段：深度 1 缩进
+    "#Summarize",
+    "汇总",
+    "#Analyze", // 退出组合：不发关闭行，phase 正常变化
+    "解释1",
+    "[Sequence]", // 重入 cmp0：重新发分组行（时间线式语义，与 workflow 行一致）
+    "#Analyze", // 换组合后 phase 重新起头（与 workflow 换组行为一致）
+    "解释2",
+  ])
+})
+
+test("buildSidebarRows：composites 记录缺失时用段 id 兜底显示", () => {
+  const rows = buildSidebarRows(
+    parseWorkflowMetadata({
+      runId: "r4",
+      agents: [{ ...VALID.agents[0], compositePath: ["cmp7"] }],
+    })!,
+  )
+  assert.deepEqual(
+    rows.map((r) => (r.kind === "composite" ? r.title : r.kind === "phase" ? `#${r.title}` : r.node.label)),
+    ["cmp7", "#Analyze", "解释1"],
+  )
+})
+
+test("nodeLine：checkpoint 节点状态词前缀（等待/批准/拒绝/中止），等待时无耗时", async () => {
+  const { nodeLine } = await import("../src/tui/workflow-store.js")
+  const mk = (status: string, extra: Record<string, unknown> = {}) =>
+    ({ id: "r:0", label: "是否发布", status, kind: "checkpoint", ...extra }) as any
+  assert.equal(nodeLine(mk("running", { startedAt: Date.now() - 5000 })), "[等待人工确认] 是否发布")
+  assert.equal(nodeLine(mk("ok", { durationMs: 1200 })), "[已批准] 是否发布 ·1.2s")
+  assert.equal(nodeLine(mk("failed", { error: "人工拒绝" })), "[被拒绝] 是否发布")
+  assert.equal(nodeLine(mk("aborted")), "[已中止] 是否发布")
+  // 普通 agent 不受影响
+  assert.match(nodeLine({ id: "r:1", label: "干活", status: "ok", durationMs: 900 } as any), /^干活 ·900ms/)
+})

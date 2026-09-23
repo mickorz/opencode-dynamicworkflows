@@ -54,6 +54,45 @@ const reports = await pipeline(
 )
 ```
 
+与 Composite 的关系：`pipeline(items, A, B)` 等价于 `parallel(items.map(item => () => sequence([...])))`（等价性 A/B 已验证，见仓库 Docs/02_设计与说明/Pipeline等价性AB报告.md）；简单场景继续用 pipeline 更简短，复杂控制流用组合写法。
+
+## sequence(nodes) / fallback(nodes) / race(nodes)（Composite 组合控制流）
+
+三者接收非空函数数组（节点），节点签名 `(prev) => value | Promise`，可包 agent/workflow/parallel/纯 JS/互相嵌套。
+
+|          | 全部执行                                    | 选一个                             |
+| -------- | ------------------------------------------- | ---------------------------------- |
+| 串行     | `sequence`（prev 链传递，返回末节点值）     | `fallback`（依次尝试，首成功返回） |
+| 并行     | `parallel`（已有，返回数组）                | `race`（并发竞争，首成功胜出并取消其余） |
+
+```javascript
+// sequence：上节点返回值作为下节点入参（首节点 prev 为 undefined）
+const code = await sequence([
+  () => workflow('./1-spec.js'),
+  (spec) => workflow('./2-design.js', { brief: spec.brief }),
+  (design) => workflow('./3-code.js', { design: design.design }),
+])
+
+// fallback：可恢复失败换下一候选；全败返回 null
+const result = await fallback([
+  () => workflow('./fast.js'),
+  () => workflow('./strong.js'),
+])
+
+// race：首个成功者胜出，其余候选局部取消
+const best = await race([
+  () => workflow('./model-a.js'),
+  () => workflow('./model-b.js'),
+])
+```
+
+三态规则（三者一致）：
+- 节点返回任意值（含 null/false/{ok:false}）= 执行成功，业务否决自己 if 判断
+- 可恢复失败：sequence 停止返回 null；fallback 换候选；race 等其余。全败均返回 null（与 agent 可恢复失败返回 null 同构）
+- 结构性错误（脚本拼错/嵌套超限/非函数数组/子脚本 throw）：直接上抛终止 run，不被吞掉
+- run 级中止：上抛 WORKFLOW_ABORTED；race 局部取消不碰 root
+- 不占 journal 位：resume 行为与普通 await 链一致（首变调用及之后重跑的标准语义不变）
+
 ## phase(title)
 
 标记当前阶段；之后的 agent 归入该阶段（metadata 与摘要展示用）。
@@ -67,9 +106,28 @@ const reports = await pipeline(
 
 ## 错误处理约定
 
-- `parallel` / `pipeline` 中单个 agent 的可恢复失败 -> 该槽位为 `null`，其余照常
+- `parallel` / `pipeline` 中单个 agent 的可恢复失败 -> 该槽位为 `null`，其余照常；子脚本 throw 属可恢复失败，同样塌缩为 null（兄弟分支不受影响）
+- `sequence` / `fallback` / `race` 的可恢复失败 -> 返回 null / 换候选 / 等其余（见上节三态规则）
 - 需要"失败即终止"的调用，直接 `await agent(...)`（不放进 parallel）
-- 脚本内可对 agent 调用自行 try/catch 实现自定义降级
+- 脚本内可对 agent / workflow 调用自行 try/catch 实现自定义降级；child 失败不再污染整 run，捕获后可继续执行
+
+## check(condition, message?) -> Promise<true>
+
+确定性事实验证节点（P1-1）：`condition` 为返回 boolean 的同步/异步函数。
+
+- `true` -> SUCCESS（节点值 true，可作 prev 传递）
+- `false` -> 可恢复失败（CHECK_FAILED）：sequence 停止返回 null、fallback 换候选、parallel 塌缩 null
+- `condition` 自身 throw -> 结构性错误上抛（检查代码的 bug 不伪装成验证未通过）
+
+```javascript
+await sequence([
+  () => agent('修改 src/login.ts'),
+  () => check(() => typeof args.expect === 'string', '必须提供 expect 参数'),
+  () => workflow('./compile.js'),
+])
+```
+
+职责固定：`check`=客观事实 / `verify`=AI 质量判断 / `checkpoint`=人工决定，不要互相代替。
 
 ## verify(item, opts?) -> Promise<{ real, realCount, total, votes }>
 
@@ -86,6 +144,14 @@ const reports = await pipeline(
 ## checkpoint(promptText, opts?) -> Promise<unknown>
 
 人工确认点（仅确认型）：有 UI 通道时弹权限确认（允许=true/拒绝=false）；无通道时取 `opts.default`（缺省 true），`headless: "abort"` 则抛错终止。确认结果进 journal——resume 回放不再询问，不花 token。返回值是布尔，脚本按分支处理。
+
+
+Human Reject 强停止语义（Composite V1.1）：
+- 允许 -> 返回 true，sequence 等组合节点视为 success 继续执行
+- 拒绝 -> 抛 `CHECKPOINT_REJECTED`（非普通 failure）：终止 run，fallback 不换候选、parallel 不塌缩 null
+- 中止 -> WORKFLOW_ABORTED（与其他节点一致）
+- resume：approve/reject 均从 journal 复用不重问；拒绝确定性重现，修改 prompt 文本才会重新询问
+- 作为组合节点：`() => checkpoint('是否发布？')` 直接放进 sequence/fallback 数组即可
 
 ## 迭代与续跑（resume）
 

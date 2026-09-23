@@ -13,6 +13,9 @@
  *             -> workflow() 原语：同步阶段 childSeq++ 领号 -> canonical 路径 + 自环/深度检查
  *                  -> structuredClone 边界 -> 同 shared 下 executeWorkflow（不占 scheduler slot）
  *             -> parallel()/pipeline()：recoverable 失败塌缩为 null，non-recoverable 上抛
+ *             -> sequence()/fallback()：Composite 组合节点（V1）——经 executeNode 三态判定，
+ *                  success 继续 / 可恢复失败终止或换候选（返回 null，与 agent 可恢复失败对齐）/ 中止上抛；
+ *                  本身不占 callSeq/childSeq/journal，对 resume 透明
  *   -> 汇总 AgentRecord / logs / phases / token 用量 返回
  *
  * 一 Run 多 Scope（v0.8 设计，Docs/01_需求与规划/Native子工作流workflow原语执行计划.md）：
@@ -24,6 +27,7 @@
 
 import fs from "node:fs"
 import path from "node:path"
+import { exec } from "node:child_process"
 import { createLimiter } from "./semaphore.js"
 import { parseWorkflowScript, runScriptInVm } from "./vm.js"
 import { WorkflowError, WorkflowErrorCode, wrapError } from "./errors.js"
@@ -33,11 +37,13 @@ import type {
   AgentRecord,
   AgentExecutionRecord,
   AgentUsage,
+  CompositeRecord,
   JournalEntry,
   WorkflowExecutionRecord,
   WorkflowRunResult,
 } from "../types/index.js"
 import { buildOutputPreview, truncatePromptForJournal } from "./agent-result.js"
+import { createNodeExecutor, compositeScopeStorage, type WorkflowNode } from "./node-contract.js"
 import { createHash } from "node:crypto"
 import { loadRegistry, workflowsDir } from "./workflow-registry.js"
 
@@ -99,6 +105,8 @@ export interface WorkflowRunOptions {
   cwd?: string
   /** agent 记录到达终态（ok/failed/aborted，含缓存回放）时回调（P2 后台进度用） */
   onAgentUpdate?: (record: AgentRecord) => void
+  /** 组合节点记录创建与终态回调（P2-3 TUI 组合树用；与 onAgentUpdate 同模式） */
+  onCompositeUpdate?: (record: CompositeRecord) => void
   /** 每个 attempt 到达失败/中止终态时回调（FR-7 执行历史）；payload 绝不携带 hash/result，落盘不影响 resume */
   onAgentExecution?: (payload: { key: string; execution: AgentExecutionRecord }) => void
   /** 触发来源元数据（需求 26 Observability：manual / schedule / webhook...）；写入 run 日志首行 */
@@ -152,7 +160,7 @@ interface SharedRunContext {
   maxAgents: number
   /** 实际 agent dispatch 计数（root 级配额，含 child 与 checkpoint） */
   agentCount: number
-  /** 脚本异常即置位：与外部 signal 一起构成整 run 中止面 */
+  /** root 脚本异常即置位（child 失败不污染，V1 Composite 修正）：与外部 signal 一起构成整 run 中止面 */
   aborted: boolean
   signal?: AbortSignal
   agentRunner: AgentSessionRunner
@@ -171,6 +179,9 @@ interface SharedRunContext {
   onAgentJournal?: (entry: JournalEntry & { key: string }) => void
   onAgentExecution?: (payload: { key: string; execution: AgentExecutionRecord }) => void
   onAgentUpdate?: (record: AgentRecord) => void
+  onCompositeUpdate?: (record: CompositeRecord) => void
+  /** 全部组合节点执行记录（P2-3 观测；TUI 组合层级树源） */
+  composites: CompositeRecord[]
   cwd: string
   /** workflow 名字引用缓存（v0.10 Registry）：workflowId -> 脚本绝对路径；首查扫描 .opencode-workflows/workflows/，运行中不重扫（子脚本增删不影响进行中 run） */
   registryCache?: Map<string, string>
@@ -195,6 +206,8 @@ interface WorkflowScope {
   callSeq: number
   /** scope 私有 child 创建计数：与 callSeq 严格分离（journal 稳定性关键） */
   childSeq: number
+  /** scope 私有组合节点计数（P2-3 展示寻址 cmpN；与 callSeq/childSeq 严格分离，不进 journal key） */
+  compositeSeq: number
   /** journal key 段：root 为 undefined（旧格式兼容），child 为 wfN */
   keySegment?: string
   /** scope 私有回放边界：首个未命中 journal 的 callIndex */
@@ -228,6 +241,8 @@ function createSharedRunContext(options: WorkflowRunOptions, runId: string): Sha
     onAgentJournal: options.onAgentJournal,
     onAgentExecution: options.onAgentExecution,
     onAgentUpdate: options.onAgentUpdate,
+    onCompositeUpdate: options.onCompositeUpdate,
+    composites: [],
     cwd: options.cwd ?? process.cwd(),
     maxWorkflowDepth: options.maxWorkflowDepth ?? MAX_WORKFLOW_DEPTH,
   }
@@ -259,6 +274,7 @@ export async function runWorkflow<T = unknown>(
     phasePrefix: "",
     callSeq: 0,
     childSeq: 0,
+    compositeSeq: 0,
     firstMiss: Number.POSITIVE_INFINITY,
   }
   // 触发来源首行日志（需求 26 Observability：区分 manual / schedule 等）
@@ -285,6 +301,7 @@ export async function runWorkflow<T = unknown>(
     phases: shared.phases,
     agents: shared.agents,
     workflows: shared.workflows,
+    composites: shared.composites,
     agentCount: shared.agentCount,
     durationMs: Date.now() - started,
     runId,
@@ -329,7 +346,10 @@ async function executeWorkflow(
   const log = (message: string) => {
     shared.logs.push(String(message))
   }
-  const isAborted = () => shared.aborted || Boolean(shared.signal?.aborted)
+  const isAborted = () =>
+    shared.aborted ||
+    Boolean(shared.signal?.aborted) ||
+    Boolean(compositeScopeStorage.getStore()?.signal?.aborted)
   const throwIfAborted = () => {
     if (isAborted()) {
       throw new WorkflowError("workflow aborted", WorkflowErrorCode.WORKFLOW_ABORTED, { recoverable: true })
@@ -395,6 +415,8 @@ async function executeWorkflow(
     shared.agentCount++
     const label = scriptOptions.label?.trim() || defaultAgentLabel(assignedPhase, shared.agentCount)
 
+    // 组合链标记（P2-3）：在组合节点内执行时携带 cmpN 链（调用点同步读取，纯展示不进 journal key）
+    const compositePath = compositeScopeStorage.getStore()?.compositePath
     const record: AgentRecord = {
       id: scopedKey(shared, scope, callIndex),
       label,
@@ -402,6 +424,7 @@ async function executeWorkflow(
       status: "running",
       // 双身份（v0.9）：仅 child 填（root 的 agent 无此字段，旧数据兼容判断依据）
       ...(scope.parent ? { workflowPath: scope.pathLabels!, workflowScopePath: scope.pathKeys! } : {}),
+      ...(compositePath?.length ? { compositePath: [...compositePath] } : {}),
     }
     shared.agents.push(record)
     // 通知进行中状态：让后台 run 注册表能反映 running agent，进度展示才不会 done/total 永远相等
@@ -464,6 +487,9 @@ async function executeWorkflow(
           const attemptController = new AbortController()
           const onRunAbort = () => attemptController.abort()
           shared.signal?.addEventListener("abort", onRunAbort)
+          // Composite 局部中止面（P1-3）：race 等竞争节点的作用域 signal 同样接入本次 attempt，
+          // 胜出后 abort 只取消兄弟候选的进行中 agent，不碰 root
+          compositeScopeStorage.getStore()?.signal?.addEventListener("abort", onRunAbort)
           // 本次执行的标识与计时（FR-1：nodeId=runId:callIndex，executionId 追加 attempt 维度）
           const attemptStarted = Date.now()
           const executionId = `${deltaKey}:${attempt}`
@@ -581,6 +607,7 @@ async function executeWorkflow(
             log(`agent "${label}" 第 ${attempt} 次尝试失败，重试: ${workflowError.message}`)
           } finally {
             shared.signal?.removeEventListener("abort", onRunAbort)
+            compositeScopeStorage.getStore()?.signal?.removeEventListener("abort", onRunAbort)
           }
         }
         return null
@@ -707,6 +734,7 @@ async function executeWorkflow(
       phasePrefix: `▸ ${childLabel} / `,
       callSeq: 0,
       childSeq: 0,
+      compositeSeq: 0,
       keySegment,
       firstMiss: Number.POSITIVE_INFINITY,
       parent: scope,
@@ -778,11 +806,213 @@ async function executeWorkflow(
     )
   }
 
+  /** check：确定性事实验证（P1-1）。true=SUCCESS（返回 true）；false=FAILURE（可恢复失败，
+   *  与 agent 可恢复失败同构：sequence 停止返回 null、fallback 换候选、parallel 塌缩 null）；
+   *  condition 自身 throw=结构性错误（检查代码的 bug 不许伪装成「验证未通过」）。
+   *  职责分离：check 客观事实 / verify AI 质量判断 / checkpoint 人工决定 */
+  const check = async (
+    condition: () => boolean | Promise<boolean>,
+    message?: string,
+  ): Promise<boolean> => {
+    if (typeof condition !== "function") {
+      throw new WorkflowError("check(condition, message?) 需要函数条件", WorkflowErrorCode.SCRIPT_VALIDATION_ERROR, {
+        recoverable: false,
+      })
+    }
+    let passed: boolean
+    try {
+      passed = await condition()
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new WorkflowError(
+        `check 条件执行出错（不是验证未通过，是检查代码出错）：${reason}`,
+        WorkflowErrorCode.SCRIPT_VALIDATION_ERROR,
+        { recoverable: false },
+      )
+    }
+    if (passed === true) return true
+    throw new WorkflowError(
+      message ?? "check 验证未通过",
+      WorkflowErrorCode.CHECK_FAILED,
+      { recoverable: true },
+    )
+  }
+
+  // ── 确定性 check helpers（P2-3 最小集）：VM 沙箱无 fs/child_process，由 runtime 注入 ──
+  // fileChanged 需基线追踪（journal 状态耦合）、schemaValid 需校验器依赖，均暂缓（见 P2 决策纪要）
+
+  /** 文件/目录存在性（相对 shared.cwd）；供 check(() => fileExists(...)) 使用 */
+  const fileExists = (target: string): boolean => {
+    if (typeof target !== "string" || !target.trim()) return false
+    return fs.existsSync(path.resolve(shared.cwd, target))
+  }
+
+  /** 命令退出码为 0（async exec 不阻塞事件循环；超时视为失败）；供 check(() => commandSuccess(...)) 使用 */
+  const commandSuccess = (command: string, timeoutMs = 30_000): Promise<boolean> => {
+    return new Promise((resolve) => {
+      if (typeof command !== "string" || !command.trim()) {
+        resolve(false)
+        return
+      }
+      exec(
+        command,
+        { cwd: shared.cwd, timeout: timeoutMs, windowsHide: true },
+        (error) => resolve(!error),
+      )
+    })
+  }
+
   const consoleShim = {
     log,
     info: log,
     warn: (m: unknown) => log(`[warn] ${String(m)}`),
     error: (m: unknown) => log(`[error] ${String(m)}`),
+  }
+
+  // ── Composite 组合节点（V1 P0-3/P0-6/P1-2；P2-3 观测）：纯控制层，不碰 journal/callSeq/agentCount ──
+
+  /** 组合节点入参校验：函数数组（与 parallel 的 TypeError 语义一致，属结构性错误） */
+  const assertCompositeNodes = (nodes: unknown, api: string): Array<WorkflowNode> => {
+    if (!Array.isArray(nodes) || nodes.length === 0 || nodes.some((n) => typeof n !== "function")) {
+      throw new TypeError(`${api}(nodes) 期望非空函数数组，请用 () => agent(...) 或 prev => workflow(...) 包裹`)
+    }
+    return nodes as Array<WorkflowNode>
+  }
+
+  const executeNode = createNodeExecutor(isAborted)
+
+  /** 中止态统一上抛（与 agent() 的 WORKFLOW_ABORTED 同语义） */
+  const throwCancelled = (): never => {
+    throw new WorkflowError("workflow aborted", WorkflowErrorCode.WORKFLOW_ABORTED, { recoverable: true })
+  }
+
+  /** 组合节点公共骨架：同步领号 cmpN（compositeSeq，与 callSeq/childSeq 严格分离）、
+   *  记录 CompositeRecord（running -> 终态经 onCompositeUpdate 通知）、ALS 注入组合链与（race 的）局部 signal。
+   *  exec 返回 { value, failed } 显式区分「返回 null 的成功末节点」与「可恢复失败终止」 */
+  const runComposite = async (
+    kind: "sequence" | "fallback" | "race",
+    nodes: Array<WorkflowNode>,
+    exec: (list: Array<WorkflowNode>) => Promise<{ value: unknown; failed: boolean }>,
+    signal?: AbortSignal,
+  ): Promise<unknown> => {
+    throwIfAborted()
+    const list = assertCompositeNodes(nodes, kind)
+    const id = `cmp${scope.compositeSeq++}`
+    const parentPath = compositeScopeStorage.getStore()?.compositePath
+    const compositePath = [...(parentPath ?? []), id]
+    const record: CompositeRecord = {
+      id,
+      kind,
+      label: kind === "sequence" ? "Sequence" : kind === "fallback" ? "Fallback" : "Race",
+      status: "running",
+      scopePath: scope.pathKeys ?? ["root"],
+      compositePath,
+      startedAt: Date.now(),
+    }
+    shared.composites.push(record)
+    shared.onCompositeUpdate?.(record)
+    try {
+      const outcome = await compositeScopeStorage.run({ signal, compositePath }, () => exec(list))
+      record.status = outcome.failed ? "failed" : "ok"
+      record.durationMs = Date.now() - (record.startedAt ?? Date.now())
+      shared.onCompositeUpdate?.(record)
+      return outcome.value
+    } catch (error) {
+      record.status = isAborted() ? "aborted" : "failed"
+      record.durationMs = Date.now() - (record.startedAt ?? Date.now())
+      shared.onCompositeUpdate?.(record)
+      throw error
+    }
+  }
+
+  /** sequence：串行传递执行，前一个节点的返回值作为下一个节点的入参 */
+  const sequence = (nodes: Array<WorkflowNode>): Promise<unknown> =>
+    runComposite("sequence", nodes, async (list) => {
+      let value: unknown
+      for (const [index, node] of list.entries()) {
+        const r = await executeNode(node, value)
+        if (r.status === "success") {
+          value = r.value
+          continue
+        }
+        if (r.status === "cancelled") throwCancelled()
+        // 可恢复失败：序列立即停止，返回 null（与 agent 可恢复失败返回 null 对齐，脚本可 if (!r) 判断）
+        const message = r.error instanceof Error ? r.error.message : String(r.error)
+        log(`sequence[${index}] 失败，序列停止: ${message}`)
+        return { value: null, failed: true }
+      }
+      return { value, failed: false }
+    })
+
+  /** fallback：串行竞争，首个 success 结果返回；全部可恢复失败则返回 null */
+  const fallback = (nodes: Array<WorkflowNode>): Promise<unknown> =>
+    runComposite("fallback", nodes, async (list) => {
+      for (const [index, node] of list.entries()) {
+        const r = await executeNode(node, undefined)
+        if (r.status === "success") return { value: r.value, failed: false }
+        if (r.status === "cancelled") throwCancelled()
+        // 可恢复失败：尝试下一候选；结构性错误已由 executeNode 上抛，不会被吞噬
+        const message = r.error instanceof Error ? r.error.message : String(r.error)
+        log(`fallback[${index}] 失败，尝试下一候选: ${message}`)
+      }
+      log("fallback 全部候选失败，返回 null")
+      return { value: null, failed: true }
+    })
+
+  /** race：并行竞争，首个 success 胜出并取消其余候选（P1-2，依赖局部中止面 P1-3） */
+  const race = (nodes: Array<WorkflowNode>): Promise<unknown> => {
+    const controller = new AbortController()
+    return runComposite(
+      "race",
+      nodes,
+      (list) =>
+        new Promise<{ value: unknown; failed: boolean }>((resolve, reject) => {
+          let settled = false
+          let failureCount = 0
+          /** 首个结论生效：后续到达（含被取消兄弟的迟到失败/取消）全部忽略 */
+          const settle = (finish: () => void) => {
+            if (settled) return
+            settled = true
+            finish()
+          }
+          list.forEach((node, index) => {
+            executeNode(node, undefined).then(
+              (r) => {
+                if (r.status === "success") {
+                  settle(() => {
+                    controller.abort()
+                    log(`race[${index}] 胜出，取消其余 ${list.length - 1} 个候选`)
+                    resolve({ value: r.value, failed: false })
+                  })
+                } else if (r.status === "cancelled") {
+                  settle(() =>
+                    reject(
+                      new WorkflowError("workflow aborted", WorkflowErrorCode.WORKFLOW_ABORTED, {
+                        recoverable: true,
+                      }),
+                    ),
+                  )
+                } else {
+                  failureCount++
+                  log(`race[${index}] 可恢复失败（${failureCount}/${list.length}）`)
+                  if (failureCount === list.length) {
+                    settle(() => {
+                      log("race 全部候选失败，返回 null")
+                      resolve({ value: null, failed: true })
+                    })
+                  }
+                }
+              },
+              (structural) =>
+                settle(() => {
+                  controller.abort()
+                  reject(structural)
+                }),
+            )
+          })
+        }),
+      controller.signal,
+    )
   }
 
   // ── 质量与控制 DSL（P1-4，纯构建在 agent()/parallel() 之上，callSeq 稳定、resume 安全） ──
@@ -896,9 +1126,42 @@ async function executeWorkflow(
     const callHash = createHash("sha256")
       .update(JSON.stringify({ promptText, default: checkpointOptions.default ?? null, headless: checkpointOptions.headless ?? null }))
       .digest("hex")
+    // 观测记录（P2-4）：checkpoint 与 agent 同一展示面，kind 区分；等待人工 = running
+    const displayPhase = scope.phasePrefix ? scope.phasePrefix + (scope.currentPhase ?? "") : scope.currentPhase
+    const cpRecord: AgentRecord = {
+      id: journalKey,
+      label: promptText.length > 24 ? `${promptText.slice(0, 24)}…` : promptText,
+      ...(displayPhase ? { phase: displayPhase } : {}),
+      status: "running",
+      kind: "checkpoint",
+      ...(scope.parent ? { workflowPath: scope.pathLabels!, workflowScopePath: scope.pathKeys! } : {}),
+      ...(compositeScopeStorage.getStore()?.compositePath?.length
+        ? { compositePath: [...compositeScopeStorage.getStore()!.compositePath!] }
+        : {}),
+    }
+    shared.agents.push(cpRecord)
+    shared.onAgentUpdate?.(cpRecord)
+    const finishCp = (status: AgentRecord["status"], error?: string, replayed?: boolean) => {
+      cpRecord.status = status
+      cpRecord.durationMs = Date.now() - (cpRecord.startedAt ?? Date.now())
+      if (error) cpRecord.error = error
+      if (replayed) cpRecord.replayed = true
+      shared.onAgentUpdate?.(cpRecord)
+    }
     const cached = shared.resumeJournal?.get(journalKey)
     if (cached != null && cached.hash === callHash && callIndex < scope.firstMiss) {
       shared.agentCount++
+      cpRecord.startedAt = undefined
+      // 回放同样确定性重现拒绝（Human Reject 强停止语义；改 prompt 文本才会重新询问）
+      if (cached.result === false) {
+        finishCp("failed", "人工拒绝（回放）", true)
+        throw new WorkflowError(
+          `checkpoint 被人工拒绝（回放）："${promptText}"`,
+          WorkflowErrorCode.CHECKPOINT_REJECTED,
+          { recoverable: false },
+        )
+      }
+      finishCp("ok", undefined, true)
       return cached.result
     }
     if (cached == null || cached.hash !== callHash) {
@@ -906,10 +1169,20 @@ async function executeWorkflow(
     }
     shared.agentCount++
 
+    cpRecord.startedAt = Date.now()
     let reply: unknown
     if (shared.confirm) {
-      reply = await shared.confirm(promptText)
+      try {
+        reply = await shared.confirm(promptText)
+      } catch (error) {
+        if (isAborted()) {
+          finishCp("aborted")
+          throw wrapError(error)
+        }
+        throw error
+      }
     } else if (checkpointOptions.headless === "abort") {
+      finishCp("failed", "headless 无确认通道")
       throw new WorkflowError(
         `checkpoint 需要人工确认但无可用通道（headless）："${promptText}"`,
         WorkflowErrorCode.WORKFLOW_ABORTED,
@@ -921,6 +1194,18 @@ async function executeWorkflow(
     throwIfAborted()
     log(`checkpoint："${promptText}" -> ${JSON.stringify(reply)}`)
     shared.onAgentJournal?.({ key: journalKey, hash: callHash, result: reply })
+    // Human Reject 强停止（Composite V1.1 红线4）：拒绝不是普通 failure——
+    // 不可被 fallback 换候选、不可被 parallel 塔缩 null，直接终止 run；
+    // journal 已记录拒绝事实，resume 确定性重现（改 prompt 才会重问）
+    if (reply === false) {
+      finishCp("failed", "人工拒绝")
+      throw new WorkflowError(
+        `checkpoint 被人工拒绝："${promptText}"（Human Reject：流程停止，不触发自动降级）`,
+        WorkflowErrorCode.CHECKPOINT_REJECTED,
+        { recoverable: false },
+      )
+    }
+    finishCp("ok")
     return reply
   }
 
@@ -943,6 +1228,12 @@ async function executeWorkflow(
     workflow,
     parallel,
     pipeline,
+    sequence,
+    fallback,
+    race,
+    check,
+    fileExists,
+    commandSuccess,
     phase,
     log,
     args,
@@ -961,10 +1252,15 @@ async function executeWorkflow(
     wfRecord.status = "ok"
     return { meta, result }
   } catch (error) {
-    shared.aborted = true
+    // 中止态先于置位判定：脚本自身错误记 failed，仅真中止记 aborted
+    const wasAborted = isAborted()
+    // 仅 root 脚本异常置位整 run 中止面（拦住未 await 的 parallel 兄弟分支继续 dispatch）；
+    // child 失败不再污染 shared.aborted —— 否则父脚本的 fallback/try-catch 永远等不到后续执行，
+    // 且与 parallel 文档语义（recoverable 塌缩 null）矛盾。child 错误经 wrapError 分级后由调用方决定去留
+    if (!scope.parent) shared.aborted = true
     wfRecord.endedAt = Date.now()
     wfRecord.durationMs = wfRecord.endedAt - wfRecord.startedAt
-    wfRecord.status = isAborted() ? "aborted" : "failed"
+    wfRecord.status = wasAborted ? "aborted" : "failed"
     wfRecord.error = error instanceof Error ? error.message : String(error)
     throw error
   }

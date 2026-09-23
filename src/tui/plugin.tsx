@@ -224,6 +224,16 @@ function RunTree(props: {
                 </box>
               )
             }
+            if (row.kind === "composite") {
+              // 组合节点分组行（P2-3）：Sequence/Fallback/Race 层级，粗体加中括号区分于子流程行
+              return (
+                <box paddingLeft={1} paddingTop={1}>
+                  <text fg={theme().text}>
+                    <b>[{row.title}]</b>
+                  </text>
+                </box>
+              )
+            }
             if (row.kind === "phase") {
               // phase 行耗时：组内节点现算（running 递增 / 完成定格；无 startedAt 不显示）
               const phaseMs = phaseElapsedMs(
@@ -451,6 +461,7 @@ function RouteView(props: { api: TuiPluginApi; sessionID?: string }) {
                 </box>
               )
             }
+
             if (row.kind === "phase") {
               // phase 行耗时：按 runId 回查该树 nodes 现算（running 递增 / 完成定格）
               const progress = progresses().find((p) => p.runId === row.runId)
