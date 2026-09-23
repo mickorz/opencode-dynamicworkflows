@@ -29,14 +29,17 @@ import { wrapError } from "./errors.js"
 /** 节点执行状态（Runtime 执行态，非业务结果） */
 export type NodeStatus = "success" | "failure" | "cancelled"
 
-/** Composite 局部中止面（P1-3）：race 等竞争节点为候选注入的独立 signal；
- *  经 AsyncLocalStorage 沿 await 链传播（含 child workflow 内部），agent 在调用点读当前作用域，
- *  胜出后 abort 仅取消兄弟，不影响 root 的 shared.signal / shared.aborted */
-export interface CompositeAbortScope {
+/** Composite 执行作用域（P1-3 局部中止面 + P2-3 观测链）：
+ *  signal：race 等竞争节点为候选注入的独立 AbortSignal，经 AsyncLocalStorage 沿 await 链传播
+ *  （含 child workflow 内部），agent 在调用点读当前作用域，胜出后 abort 仅取消兄弟，
+ *  不影响 root 的 shared.signal / shared.aborted；
+ *  compositePath：组合链 cmpN id 数组（纯展示用，不参与 journal 寻址） */
+export interface CompositeScope {
   signal?: AbortSignal
+  compositePath?: string[]
 }
 
-export const compositeAbortStorage = new AsyncLocalStorage<CompositeAbortScope>()
+export const compositeScopeStorage = new AsyncLocalStorage<CompositeScope>()
 
 /** 节点执行结果：组合层内部使用，不进入公开 API（agent() 返回值形态不变） */
 export interface NodeExecutionResult<T = unknown> {

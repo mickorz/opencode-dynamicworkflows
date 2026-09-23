@@ -93,6 +93,23 @@ export interface AgentRecord {
   outputPreview?: string
   inputTokens?: number
   outputTokens?: number
+  /** 组合链（cmpN id 数组；agent 在 sequence/fallback/race 内执行时携带，纯展示用不参与 journal 寻址，P2-3） */
+  compositePath?: string[]
+}
+
+/** Composite 组合节点执行记录（P2-3 观测；与 AgentRecord 同源的展示元数据，不进 journal key） */
+export interface CompositeRecord {
+  /** scope 内唯一 id：cmpN（compositeSeq 生成；仅展示寻址，与 callSeq/childSeq 严格分离） */
+  id: string
+  kind: "sequence" | "fallback" | "race"
+  label: string
+  status: "running" | "ok" | "failed" | "aborted"
+  /** 所在 workflow scope 身份链（对齐 WorkflowExecutionRecord.scopePath） */
+  scopePath: string[]
+  /** 组合链（含自身；嵌套组合的父子关系源） */
+  compositePath: string[]
+  startedAt?: number
+  durationMs?: number
 }
 
 /** workflow 脚本 meta 信封 */
@@ -114,6 +131,8 @@ export interface WorkflowRunResult<T = unknown> {
   agents: AgentRecord[]
   /** 全部 workflow invocation 的执行记录（含 root；wall-clock 统计与 TUI 树源，v0.9） */
   workflows: WorkflowExecutionRecord[]
+  /** 全部组合节点执行记录（P2-3 观测；TUI 组合层级树源） */
+  composites: CompositeRecord[]
   agentCount: number
   durationMs: number
   runId: string

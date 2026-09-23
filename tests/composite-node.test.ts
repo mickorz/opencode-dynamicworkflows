@@ -848,3 +848,93 @@ return 'done'`,
     "race 自身不产生 journal 记录",
   )
 })
+
+// ── P2-3：Composite 观测记录（CompositeRecord / compositePath / onCompositeUpdate） ──
+
+test("composites 记录：kind/status/compositePath 正确，agent 带组合链标记", async () => {
+  const dir = tmpProject()
+  const { result } = await run(
+    `export const meta = { name: 'obs_seq' }
+const r = await sequence([
+  () => agent('节点一'),
+  (prev) => prev,
+])
+return typeof r`,
+    dir,
+  )
+  assert.equal(result.composites.length, 1)
+  const cmp = result.composites[0]
+  assert.equal(cmp.kind, "sequence")
+  assert.equal(cmp.label, "Sequence")
+  assert.equal(cmp.status, "ok")
+  assert.deepEqual(cmp.compositePath, ["cmp0"])
+  assert.deepEqual(cmp.scopePath, ["root"])
+  assert.equal(typeof cmp.durationMs, "number")
+  // agent 标记：唯一 agent（第二节点为纯 JS）带 ["cmp0"]
+  const tagged = result.agents.filter((a) => a.compositePath)
+  assert.equal(tagged.length, 1)
+  assert.deepEqual(tagged[0].compositePath, ["cmp0"])
+})
+
+test("composites 嵌套链：race 内含 sequence，子组合路径含父前缀", async () => {
+  const dir = tmpProject()
+  const { result } = await run(
+    `export const meta = { name: 'obs_nested' }
+await race([
+  () => sequence([() => 'deep', (p) => p]),
+  () => { throw new Error('直接失败') },
+])
+await agent('bookkeeping')
+return 'done'`,
+    dir,
+  )
+  assert.equal(result.composites.length, 2)
+  const raceRec = result.composites.find((c) => c.kind === "race")
+  const seqRec = result.composites.find((c) => c.kind === "sequence")
+  assert.deepEqual(raceRec.compositePath, ["cmp0"])
+  assert.deepEqual(seqRec.compositePath, ["cmp0", "cmp1"], "嵌套组合路径 = 父链 + 自身")
+})
+
+test("composites 状态：可恢复失败记 failed，成功记 ok；compositePath 不进 agent 的 journal key", async () => {
+  const dir = tmpProject()
+  const { result } = await run(
+    `export const meta = { name: 'obs_status' }
+const a = await sequence([() => { throw new Error('x') }])
+const b = await fallback([() => 'win'])
+await agent('bookkeeping')
+return { a, b }`,
+    dir,
+  )
+  const seqRec = result.composites.find((c) => c.kind === "sequence")
+  assert.equal(seqRec.status, "failed", "sequence 可恢复失败记 failed")
+  const fbRec = result.composites.find((c) => c.kind === "fallback")
+  assert.equal(fbRec.status, "ok")
+  // journal key 仍为 callIndex 编号（compositeSeq 与 callSeq 分离）：两个组合已领 cmp0/cmp1，
+  // 但唯一 agent（bookkeeping）仍编号 0——cmp 计数不挤占 callIndex
+  const bookkeeping = result.agents[0]
+  assert.match(bookkeeping.id, /:0$/, "agent 仍按 callIndex 编号 0（cmp 计数不挤占）")
+})
+
+test("onCompositeUpdate：创建时与终态各回调一次", async () => {
+  const dir = tmpProject()
+  const events: Array<{ id: string; status: string }> = []
+  const runner: AgentSessionRunner = {
+    async run(prompt) {
+      return { value: `ok:${prompt}`, sessionId: "s", type: "text" }
+    },
+  }
+  await runWorkflow(
+    `export const meta = { name: 'obs_events' }
+await sequence([() => agent('n1')])
+return 'done'`,
+    {
+      agent: runner,
+      cwd: dir,
+      onCompositeUpdate: (r) => events.push({ id: r.id, status: r.status }),
+    },
+  )
+  assert.deepEqual(events, [
+    { id: "cmp0", status: "running" },
+    { id: "cmp0", status: "ok" },
+  ])
+})
