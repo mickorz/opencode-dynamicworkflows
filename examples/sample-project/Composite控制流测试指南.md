@@ -48,8 +48,8 @@ flowchart TD
 ```
 
 **通过标准**：
-- 返回 `laneCount: 2`，`briefs` 两项各含"视角编号 视角种子-A / 视角种子-B"——parallel 节点收到 sequence 传入的 prev（`'视角种子'` 字符串），两实例按 tag 隔离
-- 两条 brief 内容顺序与声明顺序一致（parallel 保序）
+- 返回 `laneCount: 2`，`briefs` 两项均为文本——parallel 节点收到 sequence 传入的 prev（`'视角种子'` 字符串），节点内 `seed + '-A'` 求值成功即传递生效
+- 实例隔离的确定性验证（LLM 不一定在回答里回显视角编号，看 journal）：`.opencode-workflows/journal/` 最新 run 文件中两条 entry 的 prompt 字段分别含 `视角种子-A` 与 `视角种子-B`，key 为 `wf0:0` / `wf1:0` 按声明顺序编号
 
 ## Test 3：sequence 可恢复失败立即停止
 
