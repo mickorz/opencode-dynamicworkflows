@@ -156,7 +156,7 @@ interface SharedRunContext {
   maxAgents: number
   /** 实际 agent dispatch 计数（root 级配额，含 child 与 checkpoint） */
   agentCount: number
-  /** 脚本异常即置位：与外部 signal 一起构成整 run 中止面 */
+  /** root 脚本异常即置位（child 失败不污染，V1 Composite 修正）：与外部 signal 一起构成整 run 中止面 */
   aborted: boolean
   signal?: AbortSignal
   agentRunner: AgentSessionRunner
@@ -826,6 +826,22 @@ async function executeWorkflow(
     return value
   }
 
+  /** fallback：串行竞争，首个 success 结果返回；全部可恢复失败则返回 null */
+  const fallback = async (nodes: Array<WorkflowNode>): Promise<unknown> => {
+    throwIfAborted()
+    const list = assertCompositeNodes(nodes, "fallback")
+    for (const [index, node] of list.entries()) {
+      const r = await executeNode(node, undefined)
+      if (r.status === "success") return r.value
+      if (r.status === "cancelled") throwCancelled()
+      // 可恢复失败：尝试下一候选；结构性错误已由 executeNode 上抛，不会被存噬
+      const message = r.error instanceof Error ? r.error.message : String(r.error)
+      log(`fallback[${index}] 失败，尝试下一候选: ${message}`)
+    }
+    log("fallback 全部候选失败，返回 null")
+    return null
+  }
+
   // ── 质量与控制 DSL（P1-4，纯构建在 agent()/parallel() 之上，callSeq 稳定、resume 安全） ──
 
   const VERIFY_SCHEMA: Record<string, unknown> = {
@@ -985,6 +1001,7 @@ async function executeWorkflow(
     parallel,
     pipeline,
     sequence,
+    fallback,
     phase,
     log,
     args,
@@ -1003,10 +1020,15 @@ async function executeWorkflow(
     wfRecord.status = "ok"
     return { meta, result }
   } catch (error) {
-    shared.aborted = true
+    // 中止态先于置位判定：脚本自身错误记 failed，仅真中止记 aborted
+    const wasAborted = isAborted()
+    // 仅 root 脚本异常置位整 run 中止面（拦住未 await 的 parallel 兄弟分支继续 dispatch）；
+    // child 失败不再污染 shared.aborted —— 否则父脚本的 fallback/try-catch 永远等不到后续执行，
+    // 且与 parallel 文档语义（recoverable 塌缩 null）矛盾。child 错误经 wrapError 分级后由调用方决定去留
+    if (!scope.parent) shared.aborted = true
     wfRecord.endedAt = Date.now()
     wfRecord.durationMs = wfRecord.endedAt - wfRecord.startedAt
-    wfRecord.status = isAborted() ? "aborted" : "failed"
+    wfRecord.status = wasAborted ? "aborted" : "failed"
     wfRecord.error = error instanceof Error ? error.message : String(error)
     throw error
   }

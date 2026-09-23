@@ -414,3 +414,135 @@ return 'done'`,
     "child agent 的 journal key 不受 sequence 影响",
   )
 })
+
+// ── P0-6：fallback ──
+
+test("fallback：首个成功候选返回，后续候选不执行", async () => {
+  const dir = tmpProject()
+  const { result } = await run(
+    `export const meta = { name: 'fb_first' }
+const seen = []
+const r = await fallback([
+  () => { seen.push('a'); throw new Error('fast 不可用') },
+  () => { seen.push('b'); return 'strong-result' },
+  () => { seen.push('c'); return 'never' },
+])
+await agent('bookkeeping')
+return { r, seen: seen.join('|') }`,
+    dir,
+  )
+  assert.equal((result.result as any).r, "strong-result")
+  assert.equal((result.result as any).seen, "a|b")
+  assert.ok(result.logs.some((l: string) => l.includes("fallback[0] 失败")))
+})
+
+test("fallback：全部候选可恢复失败时返回 null", async () => {
+  const dir = tmpProject()
+  const { result } = await run(
+    `export const meta = { name: 'fb_all_fail' }
+const r = await fallback([
+  () => { throw new Error('A 失败') },
+  () => { throw new Error('B 失败') },
+])
+await agent('bookkeeping')
+return { r, isNull: r === null }`,
+    dir,
+  )
+  assert.equal((result.result as any).r, null)
+  assert.equal((result.result as any).isNull, true)
+  assert.ok(result.logs.some((l: string) => l.includes("fallback 全部候选失败")))
+})
+
+test("fallback：首个候选直接成功则后续完全跳过", async () => {
+  const dir = tmpProject()
+  const { result, calls } = await run(
+    `export const meta = { name: 'fb_skip' }
+const r = await fallback([
+  () => 'fast-ok',
+  () => agent('strong-model'),
+])
+await agent('bookkeeping')
+return r`,
+    dir,
+  )
+  assert.equal(result.result, "fast-ok")
+  assert.equal(calls.filter((c) => c && (c as AgentRunOptions).label === "strong-model").length, 0, "后续候选未执行")
+  assert.equal(calls.length, 1, "仅 bookkeeping")
+})
+
+test("fallback：结构性错误必须上抛，不能被伪装成降级", async () => {
+  const dir = tmpProject()
+  // 未知 workflow 名是结构性错误（脚本拼错），fallback 不允许吞掉
+  await assert.rejects(
+    run(
+      `export const meta = { name: 'fb_structural' }
+const r = await fallback([
+  () => workflow('./不存在的脚本.js'),
+  () => workflow('./backup.js'),
+])
+return r`,
+      dir,
+    ),
+    /不存在或不可读/,
+  )
+})
+
+test("fallback：候选可组合 workflow，成功的 child 结果直通", async () => {
+  const dir = tmpProject()
+  put(dir, "fast.js", `export const meta = { name: 'fast' }\nawait agent('fast try')\nthrow new Error('fast 质量不足')`)
+  put(dir, "strong.js", `export const meta = { name: 'strong' }\nconst r = await agent('strong run')\nreturn { model: 'strong', r }`)
+  const { result } = await run(
+    `export const meta = { name: 'fb_wf' }
+const r = await fallback([
+  () => workflow('./fast.js'),
+  () => workflow('./strong.js'),
+])
+return r`,
+    dir,
+  )
+  assert.equal((result.result as any).model, "strong")
+})
+
+test("fallback 与 sequence 可互相嵌套组合", async () => {
+  const dir = tmpProject()
+  const { result } = await run(
+    `export const meta = { name: 'fb_nested' }
+const r = await sequence([
+  () => 'start',
+  (prev) => fallback([
+    () => { throw new Error('路径甲失败') },
+    () => prev + '-via-b',
+  ]),
+])
+await agent('bookkeeping')
+return r`,
+    dir,
+  )
+  assert.equal(result.result, "start-via-b")
+})
+
+test("fallback：中止面上候选 reject 时上抛 WORKFLOW_ABORTED（不换下一候选）", async () => {
+  const dir = tmpProject()
+  const controller = new AbortController()
+  const runner: AgentSessionRunner = {
+    async run(prompt) {
+      if (prompt.includes("trigger")) controller.abort()
+      return { value: "ok", sessionId: "s", type: "text" }
+    },
+  }
+  await assert.rejects(
+    runWorkflow(
+      `export const meta = { name: 'fb_abort' }
+const r = await sequence([
+  () => agent('trigger abort'),
+  () => fallback([
+    () => { throw new Error('中止后的拒绝') },
+    () => 'never',
+  ]),
+])
+return r`,
+      { agent: runner, cwd: dir, signal: controller.signal },
+    ),
+    /abort/i,
+  )
+})
