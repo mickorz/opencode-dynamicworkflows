@@ -2,7 +2,7 @@
 export const meta = { name: 'composite_race_fb', description: '组合控制流综合' }
 phase('编排')
 const result = await sequence([
-  () => '待办事项清单审查',
+  () => '仓库内 Composite 控制流的改动（race/sequence/fallback 节点）',
   (task) => race([
     () => agent('判断任务类型（快速）：' + task + '，只回答一个词', { label: '快判' }),
     () => workflow('./scripts/composite/race_slow.js'),
