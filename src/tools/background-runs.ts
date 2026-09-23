@@ -31,7 +31,7 @@ import {
   tryWriteRunSnapshot,
 } from "./run-snapshot.js"
 import { lookupRootSessionId, registerAgentSession, unregisterAgentSessions } from "./run-lineage.js"
-import type { AgentRecord } from "../types/index.js"
+import type { AgentRecord, CompositeRecord } from "../types/index.js"
 
 export type BackgroundRunStatus = "running" | "completed" | "failed" | "aborted"
 
@@ -43,6 +43,8 @@ export interface BackgroundRunInfo {
   endedAt?: number
   /** 各 agent 终态记录（onAgentUpdate 维护） */
   records: AgentRecord[]
+  /** 组合节点记录（onCompositeUpdate 维护；P2-3 快照透传） */
+  composites: CompositeRecord[]
   logs: string[]
   error?: string
   /** 是否已把结果回传主会话 */
@@ -97,6 +99,7 @@ export class BackgroundRunManager {
       status: "running",
       startedAt: Date.now(),
       records: [],
+      composites: [],
       logs: [],
     }
     // 镜像通道（TUI实时通道优化方案）：新 run 启动前清理同会话终态快照
@@ -129,6 +132,7 @@ export class BackgroundRunManager {
           name: info.name,
           status,
           records: info.records,
+          composites: info.composites,
           time: Date.now(),
         }),
       )
@@ -183,6 +187,11 @@ export class BackgroundRunManager {
           } catch {
             // 落盘失败不阻断运行
           }
+        },
+        onCompositeUpdate: (record) => {
+          const index = info.composites.findIndex((c) => c.id === record.id)
+          if (index >= 0) info.composites[index] = record
+          else info.composites.push(record)
         },
         onAgentUpdate: (record) => {
           const index = info.records.findIndex((r) => r.id === record.id)

@@ -10,7 +10,7 @@
 
 import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
-import type { WorkflowNode, WorkflowProgress, WorkflowProgressStatus } from "./workflow-store.js"
+import { parseCompositeInfos, type CompositeInfo, type WorkflowNode, type WorkflowProgress, type WorkflowProgressStatus } from "./workflow-store.js"
 
 /** 与 server 侧 RUN_SNAPSHOT_VERSION 同步（跨进程契约；export 供测试 fixture 引用） */
 export const RUN_SNAPSHOT_VERSION = 2
@@ -28,6 +28,8 @@ export interface RunSnapshotView {
   time: number
   phases: string[]
   nodes: WorkflowNode[]
+  /** 组合节点执行记录（P2-3 可选；旧快照无此字段） */
+  composites?: CompositeInfo[]
   running: number
   completed: number
   failed: number
@@ -72,6 +74,9 @@ export function parseRunSnapshot(raw: unknown): RunSnapshotView | null {
       outputPreview: typeof n.outputPreview === "string" ? n.outputPreview : undefined,
       inputTokens: typeof n.inputTokens === "number" ? n.inputTokens : undefined,
       outputTokens: typeof n.outputTokens === "number" ? n.outputTokens : undefined,
+      compositePath: Array.isArray(n.compositePath)
+        ? n.compositePath.filter((p): p is string => typeof p === "string")
+        : undefined,
     })
   }
   if (nodes.length === 0) return null
@@ -89,6 +94,7 @@ export function parseRunSnapshot(raw: unknown): RunSnapshotView | null {
       .map((n) => n.phase)
       .filter((p): p is string => Boolean(p))
       .filter((p, i, arr) => arr.indexOf(p) === i),
+    ...(Array.isArray(rec.composites) ? { composites: parseCompositeInfos(rec.composites) } : {}),
     nodes,
     running: nodes.filter((n) => n.status === "running").length,
     completed: nodes.filter((n) => n.status === "ok").length,
@@ -137,6 +143,7 @@ export function toProgress(snapshot: RunSnapshotView): WorkflowProgress {
     total: snapshot.total,
     time: snapshot.time,
     parentSessionId: snapshot.parentSessionId,
+    ...(snapshot.composites?.length ? { composites: snapshot.composites } : {}),
   }
 }
 

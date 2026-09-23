@@ -10,7 +10,7 @@ import { lookupRootSessionId, registerAgentSession, unregisterAgentSessions } fr
 import { parseWorkflowScript } from "../runtime/vm.js"
 import { resolveScriptText } from "./script-source.js"
 import { BackgroundRunManager } from "./background-runs.js"
-import type { JournalEntry, AgentRecord, AgentExecutionRecord } from "../types/index.js"
+import type { JournalEntry, AgentRecord, AgentExecutionRecord, CompositeRecord } from "../types/index.js"
 
 const DESCRIPTION = [
   "运行动态工作流：执行一段 JavaScript 编排脚本，通过 agent() 将任务分发给子代理（独立会话）并行执行，",
@@ -128,6 +128,8 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
       // 完成态仍走 tool 返回值 metadata（下方 return，C 通道兜底）。
       cleanupRunSnapshots(context.directory, context.sessionID)
       const progressRecords: AgentRecord[] = []
+      // 组合节点记录（P2-3）：onCompositeUpdate 维护，随快照供 TUI 组合树渲染
+      const progressComposites: CompositeRecord[] = []
       // 血统注册面：本 run 创建的 agent 子会话 -> rootSessionId；run 结束统一注销（见 finally）
       const registeredSessions = new Set<string>()
       const writeTerminalSnapshot = (records: ReadonlyArray<AgentRecord>, status: WorkflowProgressStatus) => {
@@ -140,6 +142,7 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
             name: workflowName,
             status,
             records,
+            composites: progressComposites,
             time: Date.now(),
           }),
         )
@@ -225,6 +228,11 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
             }
             writeTerminalSnapshot(progressRecords, "running")
           },
+          onCompositeUpdate: (record) => {
+            const index = progressComposites.findIndex((c) => c.id === record.id)
+            if (index >= 0) progressComposites[index] = record
+            else progressComposites.push(record)
+          },
         })
         // 结构化降级可观测性：附在日志尾部（P1-2）
         for (const note of degradeNotes) result.logs.push(note)
@@ -236,7 +244,13 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
           ...rendered,
           metadata: {
             ...rendered.metadata,
-            ...buildProgressMetadata({ runId, name: workflowName, status: "completed", records: result.agents }),
+            ...buildProgressMetadata({
+              runId,
+              name: workflowName,
+              status: "completed",
+              records: result.agents,
+              composites: result.composites,
+            }),
           },
         }
       } catch (error) {
@@ -255,6 +269,7 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
               name: workflowName,
               status: "aborted",
               records: progressRecords,
+              composites: progressComposites,
             }),
           }
         }
