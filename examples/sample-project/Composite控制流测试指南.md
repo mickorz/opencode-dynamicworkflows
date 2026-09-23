@@ -122,6 +122,30 @@ flowchart TD
 - 本次 run 的 token 消耗只有父那一次 agent 的量级
 - journal 中 entry 的 key 为 `runId:0`、`runId:1`、`runId:2` 连续编号——sequence 不占 callIndex（若出现 `runId:4` 之类的漂移即失败）
 
+## Test 9（P1）：race 多路竞争，慢路被局部取消
+
+> 前置：切到 feat/composite-control-flow 分支并重建（npm run build）+ 重启 OpenCode
+
+```
+用 workflow 工具前台执行 scripts/composite/race_parent.js，把返回 JSON 原样贴出
+```
+
+**通过标准**：
+- `winner` 是快路 agent 的短回答（如“4”），不是慢路的 500 字报告——首个成功胜出
+- `after: "AFTER-RACE"`——race 后父脚本继续，run 未被局部取消波及
+- run 日志含 `race[1] 胜出，取消其余 1 个候选`
+- TUI / agent 记录中慢路 agent 终态为 aborted（被局部 signal 取消，非 root abort）
+
+## Test 10（P1）：race + fallback + sequence 三层组合
+
+```
+用 workflow 工具前台执行 scripts/composite/race_fallback_parent.js，把返回 JSON 原样贴出
+```
+
+**通过标准**：
+- `result` 有值（快判→方案生成链正常，或规则兜底生效）
+- 三层嵌套不报结构性错误；journal key 连续无漂移
+
 ---
 
 ## 排查清单
