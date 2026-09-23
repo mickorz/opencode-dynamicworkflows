@@ -179,6 +179,38 @@ if (!await checkpoint('即将修改生产配置文件，确认继续？')) retur
 
 适用判断：结论会被下游依赖 → verify；多个生成方案挑一个 → judgePanel；输出格式不稳定 → retry；危险操作前 → checkpoint。参数细节见 DSL 参考的对应小节。
 
+## 组合控制流（sequence / fallback / race / check）
+
+**什么时候用**：多级降级、多路竞争、结构化控制流嵌套（如「失败后修复再验」链）。简单串行（A 完了接 B）继续用普通 await 链，不要机械包进 sequence。
+
+```javascript
+// 降级链：任一候选成功即返回；全部可恢复失败返回 null（与 agent 失败同构）
+const r = await fallback([
+  () => workflow('./fast.js'),
+  () => workflow('./strong.js'),
+])
+if (!r) return '全部路径失败'
+
+// 竞争：首个成功者胜出，其余候选自动取消（含其子工作流），不浪费 token
+const best = await race([
+  () => workflow('./model-a.js'),
+  () => workflow('./model-b.js'),
+])
+
+// 确定性闸门：check 过客观事实（false=可恢复失败，fallback 会换候选）
+await sequence([
+  () => agent('生成配置', { agentType: 'general' }),
+  () => check(() => fileExists('config/out.json'), '配置文件必须生成'),
+])
+```
+
+语义要点：
+
+- 节点返回 `null` / `false` / `{ok:false}` 都是**执行成功**——业务否决自己写 if，不要指望组合节点替你判断
+- `checkpoint()` 被拒绝时抛 `CHECKPOINT_REJECTED` 强停止：fallback 不会换候选、parallel 不会塌缩 null；resume 按确定性重现（改 prompt 文本才会重新询问）
+- 拼错脚本名、嵌套超限等结构性错误直接上抛，不会被 fallback 伪装成降级
+- TUI 侧边栏按 `[Sequence]` / `[Race]` 组合分组显示；checkpoint 显示「等待人工确认 / 已批准 / 被拒绝」
+
 ## worktree 隔离（多写型 agent 并行改文件）
 
 **场景**：多个 agent 同时要**修改文件**，共享目录会互相覆盖。
