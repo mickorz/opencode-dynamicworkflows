@@ -8,5 +8,5 @@ const r = await sequence([
   (prev) => agent('把上一步的返回文本原样重复一遍，不要加任何其他字：' + prev),
 ])
 phase('前置')
-const parentReply = await agent('回复固定文本：PARENT-PROBE')
+const parentReply = await agent('回复固定文本：PARENT-PROBE-2')
 return { parent: parentReply, seq: r }

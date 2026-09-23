@@ -139,13 +139,13 @@ flowchart TD
 
 | Test | 结果 | 备注 |
 |------|------|------|
-| 1 sequence 三段串行 | [ ] | |
-| 2 组合 parallel | [ ] | |
-| 3 失败终止返回 null | [ ] | |
-| 4 fallback 首选成功 | [ ] | |
-| 5 fallback child 换候选 | [ ] | poisoning 修正核心 |
-| 6 结构性错误上抛 | [ ] | |
-| 7 parallel 塌缩 null | [ ] | 行为修正确认 |
-| 8 resume 全量回放 | [ ] | journal 透明核心 |
+| 1 sequence 三段串行 | [x] 2026-09-24 过 | journal 3 entry 无额外记录，key wf0/1/2 |
+| 2 组合 parallel | [x] 2026-09-24 过 | journal prompt 确证 tag A/B 隔离，key 保序 |
+| 3 失败终止返回 null | [x] 2026-09-24 过 | seen=[a,b]，after=STOP-CHECK |
+| 4 fallback 首选成功 | [x] 2026-09-24 过 | journal 仅 1 entry 无 wf 记录（第二候选未执行） |
+| 5 fallback child 换候选 | [x] 2026-09-24 过 | poisoning 修正核心：error_child throw 后 FALLBACK 视角胜出，run 未污染 |
+| 6 结构性错误上抛 | [x] 2026-09-24 过 | 报「不存在或不可读」，未降级到 backup |
+| 7 parallel 塌缩 null | [x] 2026-09-24 过 | failedLane=collapsed-null，SIBLING 兄弟分支照常完成 |
+| 8 resume 全量回放 | [x] 2026-09-24 过 | run-mudwgz4e：sequence 回放 SEQ-NODE-1 逐字一致，父 agent 重跑 -2 |
 
-全部通过后，P0 实机验收完成，可进入 P1（race / Local Abort Scope / Pipeline A/B）。
+全部通过。过程中两处脚本修正：Test4 补后置 agent（纯编排校验边界）；Test8 结构反转（sequence 在前可变 agent 在后，否则同 scope 后续全重跑）。
