@@ -546,3 +546,103 @@ return r`,
     /abort/i,
   )
 })
+
+// ── P0-7：旧写法与 sequence 重写的等价性 ──
+
+test("等价性：旧 await 链与 sequence 重写产出一致的执行面（结果/agent 数/child 数/日志 journal）", async () => {
+  const dir = tmpProject()
+  put(dir, "a.js", `export const meta = { name: 'a' }\nreturn { from: 'a', reply: await agent('step a') }`)
+  put(dir, "b.js", `export const meta = { name: 'b' }\nreturn { from: 'b', prev: args.from }`)
+  const scriptOld = `export const meta = { name: 'equiv_old' }
+const a = await workflow('./a.js')
+const b = await workflow('./b.js', { from: a.from })
+const check = await agent('verify ' + b.from)
+return { b, check }`
+  const scriptSeq = `export const meta = { name: 'equiv_seq' }
+const b = await sequence([
+  () => workflow('./a.js'),
+  (a) => workflow('./b.js', { from: a.from }),
+])
+const check = await agent('verify ' + b.from)
+return { b, check }`
+
+  const collect = async (script: string) => {
+    const journal = new Map<string, JournalEntry>()
+    const tokens: number[] = []
+    const runner: AgentSessionRunner = {
+      async run(prompt) {
+        tokens.push(10)
+        return { value: `ok:${prompt}`, sessionId: "s", type: "text" }
+      },
+    }
+    const result = await runWorkflow(script, {
+      agent: runner,
+      cwd: dir,
+      onAgentJournal: (e) => journal.set(e.key, e),
+    })
+    return { result, journal, tokenTotal: tokens.length * 10 }
+  }
+  const old = await collect(scriptOld)
+  const seq = await collect(scriptSeq)
+
+  // 执行结果一致（sequence 返回最后节点值，等价于旧链的 b）
+  assert.deepEqual((seq.result.result as any).b, (old.result.result as any).b)
+  assert.equal((seq.result.result as any).check, (old.result.result as any).check)
+  // agent 数 / workflow 数 / token 计数一致
+  assert.equal(seq.result.agentCount, old.result.agentCount)
+  assert.equal(seq.result.workflows.length, old.result.workflows.length)
+  assert.equal(seq.journal.size, old.journal.size)
+  assert.equal(seq.tokenTotal, old.tokenTotal)
+  // journal key 形态一致（sequence 未引入额外 key；runId 前缀因两次独立 run 必然不同，剥掉比较）
+  const shape = (keys: string[]) => keys.map((k) => k.replace(/^[^:]+:/, "")).sort()
+  assert.deepEqual(shape([...seq.journal.keys()]), shape([...old.journal.keys()]))
+  // sequence 版本同样可 resume：全量回放
+  const replayCalls: string[] = []
+  await runWorkflow(scriptSeq, {
+    agent: {
+      async run(prompt) {
+        replayCalls.push(prompt)
+        return { value: "x", sessionId: "s", type: "text" }
+      },
+    },
+    cwd: dir,
+    runId: seq.result.runId,
+    resumeJournal: seq.journal,
+  })
+  assert.equal(replayCalls.length, 0, "sequence 版本全量回放")
+})
+
+test("child 脚本 throw 在 parallel 内塌缩为 null（poisoning 修正后的文档语义）", async () => {
+  const dir = tmpProject()
+  put(dir, "boom.js", `export const meta = { name: 'boom' }\nthrow new Error('child 业务失败')`)
+  put(dir, "fine.js", `export const meta = { name: 'fine' }\nreturn await agent('fine task')`)
+  const { result } = await run(
+    `export const meta = { name: 'par_child_fail' }
+const rs = await parallel([
+  () => workflow('./boom.js'),
+  () => workflow('./fine.js'),
+])
+return { rs, len: rs.length }`,
+    dir,
+  )
+  const out = result.result as any
+  assert.equal(out.len, 2)
+  assert.equal(out.rs[0], null, "recoverable child 失败塌缩为 null")
+  assert.match(out.rs[1], /^ok:fine/, "兄弟分支不受影响")
+})
+
+test("child 脚本 throw 后父脚本 try-catch 可继续执行（中止面不再污染）", async () => {
+  const dir = tmpProject()
+  put(dir, "boom.js", `export const meta = { name: 'boom' }\nthrow new Error('child 业务失败')`)
+  const { result } = await run(
+    `export const meta = { name: 'try_catch_child' }
+let err = null
+try { await workflow('./boom.js') } catch (e) { err = String(e) }
+const after = await agent('after failure')
+return { err, after }`,
+    dir,
+  )
+  const out = result.result as any
+  assert.match(out.err, /child 业务失败/)
+  assert.match(out.after, /^ok:after/)
+})
