@@ -146,6 +146,20 @@ flowchart TD
 - `result` 有值（快判→方案生成链正常，或规则兜底生效）
 - 三层嵌套不报结构性错误；journal key 连续无漂移
 
+## Test 11（P2）：TUI 组合树显示（Composite 分组行）
+
+> 前置：重建 + 重启后执行（P2-3 的渲染在 TUI 侧）
+
+```
+用 workflow 工具前台执行 scripts/composite/race_fallback_parent.js，执行期间与完成后观察左侧 sidebar 树
+```
+
+**通过标准**：
+- sidebar 中 agent 行上方出现 `[Sequence]` / `[Race]` / `[Fallback]` 组合分组行（中括号粗体，区别于子流程行）
+- 嵌套组合（race 内的慢路 child）正确缩进；退出组合后不残留
+- 组合行不影响节点选中/Node Detail（jk 导航仍只落在 agent 行）
+- 对照：journal key 无 cmp 前缀（组合寻址与 journal 严格分离）
+
 ---
 
 ## 排查清单
