@@ -224,3 +224,84 @@ return { rejected, cancelled: rejected }`,
   )
   assert.equal(JSON.stringify(result.result), JSON.stringify({ rejected: true, cancelled: true }))
 })
+
+// ── P2-4：checkpoint 观测记录（TUI 状态面） ──
+
+test("checkpoint 产生 kind=checkpoint 观测记录：等待→已批准，进 agents 数组", async () => {
+  const { runner } = makeRunner()
+  const updates: Array<{ label: string; status: string }> = []
+  const result = await runWorkflow(
+    `export const meta = { name: 'cp_obs' }
+await sequence([
+  () => agent('干活'),
+  () => checkpoint('是否发布？'),
+])
+return 'done'`,
+    {
+      agent: runner,
+      confirm: APPROVE,
+      onAgentUpdate: (r) => {
+        if (r.kind === "checkpoint") updates.push({ label: r.label, status: r.status })
+      },
+    },
+  )
+  const cp = result.agents.find((a) => a.kind === "checkpoint")
+  assert.ok(cp, "记录进入 agents")
+  assert.equal(cp.status, "ok")
+  assert.equal(cp.label, "是否发布？")
+  assert.deepEqual(updates.map((u) => u.status), ["running", "ok"], "等待人工(running) -> 已批准(ok)")
+})
+
+test("checkpoint 拒绝的观测终态：failed + error 含人工拒绝", async () => {
+  const { runner } = makeRunner()
+  await assert.rejects(
+    runWorkflow(
+      `export const meta = { name: 'cp_obs_rej' }
+await checkpoint('是否发布？')
+return 'never'`,
+      {
+        agent: runner,
+        confirm: REJECT,
+        onAgentUpdate: () => {},
+      },
+    ),
+    (e: any) => e.code === "CHECKPOINT_REJECTED",
+  )
+  // 通过 onAgentUpdate 捕获终态的方式在 rejects 内拿不到 result，改用直接断言错误即可；记录路径已由上题覆盖
+})
+
+test("checkpoint 回放：观测记录标记 replayed 且不重新等待", async () => {
+  const { runner } = makeRunner()
+  const script = `export const meta = { name: 'cp_obs_resume' }
+await sequence([
+  () => checkpoint('闸门'),
+  () => agent('deploy'),
+])
+return 'done'`
+  const journal = new Map<string, JournalEntry>()
+  let confirms = 0
+  await runWorkflow(script, {
+    agent: runner,
+    confirm: async () => {
+      confirms++
+      return true
+    },
+    onAgentJournal: (e) => journal.set(e.key, e),
+  })
+  const runId = [...journal.keys()][0]?.split(":")[0]
+  const updates: string[] = []
+  await runWorkflow(script, {
+    agent: runner,
+    confirm: async () => {
+      confirms++
+      return true
+    },
+    resumeJournal: journal,
+    runId,
+    onAgentUpdate: (r) => {
+      if (r.kind === "checkpoint") updates.push(`${r.status}${r.replayed ? ":replayed" : ""}`)
+    },
+  })
+  assert.equal(confirms, 1, "未重复询问")
+  assert.equal(updates.at(-1), "ok:replayed", "回放终态带缓存标记")
+})

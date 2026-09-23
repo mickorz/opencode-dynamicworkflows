@@ -95,6 +95,8 @@ export interface AgentRecord {
   outputTokens?: number
   /** 组合链（cmpN id 数组；agent 在 sequence/fallback/race 内执行时携带，纯展示用不参与 journal 寻址，P2-3） */
   compositePath?: string[]
+  /** 节点类型标记（P2-4 观测）：缺省为普通 agent；checkpoint 节点用于 TUI 区分「等待人工」与执行中 */
+  kind?: "checkpoint"
 }
 
 /** Composite 组合节点执行记录（P2-3 观测；与 AgentRecord 同源的展示元数据，不进 journal key） */

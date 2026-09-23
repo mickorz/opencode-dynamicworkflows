@@ -40,6 +40,8 @@ export interface WorkflowNode {
   outputTokens?: number
   /** 组合链（cmpN；在 sequence/fallback/race 内执行时携带，P2-3 展示用） */
   compositePath?: string[]
+  /** 节点类型（P2-4）：缺省普通 agent；checkpoint 用于区分「等待人工」与执行中 */
+  kind?: "checkpoint"
 }
 
 export interface WorkflowProgress {
@@ -135,6 +137,7 @@ export function parseWorkflowMetadata(raw: unknown): WorkflowProgress | null {
       compositePath: Array.isArray(n.compositePath)
         ? n.compositePath.filter((p): p is string => typeof p === "string")
         : undefined,
+      ...(n.kind === "checkpoint" ? { kind: "checkpoint" as const } : {}),
     })
   }
   if (nodes.length === 0) return null
@@ -248,6 +251,23 @@ export function nodeLine(node: WorkflowNode): string {
   const replayed = node.replayed ? " ·缓存" : ""
   const durationPart = duration ? ` ·${duration}` : ""
   const tokensPart = tokens ? ` ·${tokens} tok` : ""
+  // checkpoint 节点（P2-4）：状态词前缀区分「等待人工」与执行中，等待时不显示耗时避免误读为卡死
+  if (node.kind === "checkpoint") {
+    const state =
+      node.status === "running"
+        ? "[等待人工确认]"
+        : node.status === "ok"
+          ? node.replayed
+            ? "[已批准·缓存]"
+            : "[已批准]"
+          : node.status === "failed"
+            ? node.error?.includes("人工拒绝")
+              ? "[被拒绝]"
+              : "[失败]"
+            : "[已中止]"
+    if (node.status === "running") return `${state} ${node.label}`
+    return `${state} ${node.label}${durationPart}`
+  }
   return `${node.label}${durationPart}${tokensPart}${replayed}`
 }
 

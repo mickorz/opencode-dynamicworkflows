@@ -351,3 +351,15 @@ test("buildSidebarRows：composites 记录缺失时用段 id 兜底显示", () =
     ["cmp7", "#Analyze", "解释1"],
   )
 })
+
+test("nodeLine：checkpoint 节点状态词前缀（等待/批准/拒绝/中止），等待时无耗时", async () => {
+  const { nodeLine } = await import("../src/tui/workflow-store.js")
+  const mk = (status: string, extra: Record<string, unknown> = {}) =>
+    ({ id: "r:0", label: "是否发布", status, kind: "checkpoint", ...extra }) as any
+  assert.equal(nodeLine(mk("running", { startedAt: Date.now() - 5000 })), "[等待人工确认] 是否发布")
+  assert.equal(nodeLine(mk("ok", { durationMs: 1200 })), "[已批准] 是否发布 ·1.2s")
+  assert.equal(nodeLine(mk("failed", { error: "人工拒绝" })), "[被拒绝] 是否发布")
+  assert.equal(nodeLine(mk("aborted")), "[已中止] 是否发布")
+  // 普通 agent 不受影响
+  assert.match(nodeLine({ id: "r:1", label: "干活", status: "ok", durationMs: 900 } as any), /^干活 ·900ms/)
+})

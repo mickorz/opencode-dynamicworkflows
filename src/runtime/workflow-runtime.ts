@@ -1101,17 +1101,42 @@ async function executeWorkflow(
     const callHash = createHash("sha256")
       .update(JSON.stringify({ promptText, default: checkpointOptions.default ?? null, headless: checkpointOptions.headless ?? null }))
       .digest("hex")
+    // 观测记录（P2-4）：checkpoint 与 agent 同一展示面，kind 区分；等待人工 = running
+    const displayPhase = scope.phasePrefix ? scope.phasePrefix + (scope.currentPhase ?? "") : scope.currentPhase
+    const cpRecord: AgentRecord = {
+      id: journalKey,
+      label: promptText.length > 24 ? `${promptText.slice(0, 24)}…` : promptText,
+      ...(displayPhase ? { phase: displayPhase } : {}),
+      status: "running",
+      kind: "checkpoint",
+      ...(scope.parent ? { workflowPath: scope.pathLabels!, workflowScopePath: scope.pathKeys! } : {}),
+      ...(compositeScopeStorage.getStore()?.compositePath?.length
+        ? { compositePath: [...compositeScopeStorage.getStore()!.compositePath!] }
+        : {}),
+    }
+    shared.agents.push(cpRecord)
+    shared.onAgentUpdate?.(cpRecord)
+    const finishCp = (status: AgentRecord["status"], error?: string, replayed?: boolean) => {
+      cpRecord.status = status
+      cpRecord.durationMs = Date.now() - (cpRecord.startedAt ?? Date.now())
+      if (error) cpRecord.error = error
+      if (replayed) cpRecord.replayed = true
+      shared.onAgentUpdate?.(cpRecord)
+    }
     const cached = shared.resumeJournal?.get(journalKey)
     if (cached != null && cached.hash === callHash && callIndex < scope.firstMiss) {
       shared.agentCount++
-      // 回放同样确定性重現拒绝（Human Reject 强停止语义；改 prompt 文本才会重新询问）
+      cpRecord.startedAt = undefined
+      // 回放同样确定性重现拒绝（Human Reject 强停止语义；改 prompt 文本才会重新询问）
       if (cached.result === false) {
+        finishCp("failed", "人工拒绝（回放）", true)
         throw new WorkflowError(
           `checkpoint 被人工拒绝（回放）："${promptText}"`,
           WorkflowErrorCode.CHECKPOINT_REJECTED,
           { recoverable: false },
         )
       }
+      finishCp("ok", undefined, true)
       return cached.result
     }
     if (cached == null || cached.hash !== callHash) {
@@ -1119,10 +1144,20 @@ async function executeWorkflow(
     }
     shared.agentCount++
 
+    cpRecord.startedAt = Date.now()
     let reply: unknown
     if (shared.confirm) {
-      reply = await shared.confirm(promptText)
+      try {
+        reply = await shared.confirm(promptText)
+      } catch (error) {
+        if (isAborted()) {
+          finishCp("aborted")
+          throw wrapError(error)
+        }
+        throw error
+      }
     } else if (checkpointOptions.headless === "abort") {
+      finishCp("failed", "headless 无确认通道")
       throw new WorkflowError(
         `checkpoint 需要人工确认但无可用通道（headless）："${promptText}"`,
         WorkflowErrorCode.WORKFLOW_ABORTED,
@@ -1138,12 +1173,14 @@ async function executeWorkflow(
     // 不可被 fallback 换候选、不可被 parallel 塔缩 null，直接终止 run；
     // journal 已记录拒绝事实，resume 确定性重现（改 prompt 才会重问）
     if (reply === false) {
+      finishCp("failed", "人工拒绝")
       throw new WorkflowError(
         `checkpoint 被人工拒绝："${promptText}"（Human Reject：流程停止，不触发自动降级）`,
         WorkflowErrorCode.CHECKPOINT_REJECTED,
         { recoverable: false },
       )
     }
+    finishCp("ok")
     return reply
   }
 
