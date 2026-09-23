@@ -71,8 +71,9 @@ flowchart TD
 
 **通过标准**：
 - `winner: "fast"`——纯 JS 候选直接成功
-- 全程零 LLM 调用也能正常完成（本脚本无 agent；纯 JS fallback 是合法纯编排）
-- journal 无新增 entry（没有 agent 调用）
+- `after: "AFTER-FAST"`——fallback 结束后父脚本继续
+- 第二个候选（1_spec.js 含 agent）完全跳过的确定性验证：journal 仅 1 条 entry（后置 agent，key 形如 `runId:0`），**无任何 `wf` 开头的 entry**（若第二候选执行过会留下 `wf0:0`）
+- 注：脚本必须含至少一次真实 agent 调用（纯编排校验），纯 JS 胜者 + 零 agent 的 run 会被拒——这是设计行为，脚本内用后置 agent 满足
 
 ## Test 5：fallback 候选为 child workflow，失败换下一候选（poisoning 修正核心）
 
