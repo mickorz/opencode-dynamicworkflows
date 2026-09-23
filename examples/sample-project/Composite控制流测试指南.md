@@ -185,5 +185,10 @@ flowchart TD
 | 6 结构性错误上抛 | [x] 2026-09-24 过 | 报「不存在或不可读」，未降级到 backup |
 | 7 parallel 塌缩 null | [x] 2026-09-24 过 | failedLane=collapsed-null，SIBLING 兄弟分支照常完成 |
 | 8 resume 全量回放 | [x] 2026-09-24 过 | run-mudwgz4e：sequence 回放 SEQ-NODE-1 逐字一致，父 agent 重跑 -2 |
+| 9 race 局部取消 | [x] 2026-09-24 过 | run：快路胜出，慢路 child 内 agent 终态 aborted，root 未受波及 |
+| 10 三层组合 | [x] 2026-09-24 过 | run-mudxlr0d：sequence→race→fallback 全链出方案，慢路 aborted |
+| 11 TUI 组合树 | [x] 2026-09-24 过 | run-mue32jpk：侧栏见 [Sequence]/[Race] 分组行；composites 记录三段嵌套链正确，cmp 前缀不进 journal key |
 
-全部通过。过程中两处脚本修正：Test4 补后置 agent（纯编排校验边界）；Test8 结构反转（sequence 在前可变 agent 在后，否则同 scope 后续全重跑）。
+V1 全部 11 项实机验收通过（P0 八项 + P1 两项 + P2 一项）。
+过程中两处脚本修正：Test4 补后置 agent（纯编排校验边界）；Test8 结构反转（sequence 在前可变 agent 在后，否则同 scope 后续全重跑）。
+验收操作纪律：每次改 src 重建后必须重启 OpenCode（P2 dist 加载滞后曾致 Test11 首查无 composites）。
