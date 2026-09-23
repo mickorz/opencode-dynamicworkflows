@@ -152,6 +152,23 @@ return rs`,
   assert.deepEqual(result.result, ["A:a:0:echo:q0", "B:b:1:echo:q1"])
 })
 
+test("pipeline：stage 返回 null 时后续 stage 仍以 null 继续（不中断）", async () => {
+  const { runner, calls } = countingAgent()
+  const result = await runWorkflow(
+    `export const meta = { name: 'pipe_null' }
+const rs = await pipeline(
+  ['a'],
+  () => null,
+  (prev) => prev === null ? 'seen-null' : 'unexpected',
+  (prev) => agent('tail ' + prev),
+)
+return rs`,
+    { agent: runner },
+  )
+  assert.deepEqual(result.result, ["echo:tail seen-null"], "null 透传给后续 stage 而非中断")
+  assert.equal(calls.length, 1)
+})
+
 test("并发上限：concurrency 2 时同时最多 2 个 agent", async () => {
   const gate = gatedAgent()
   const timer = setInterval(() => gate.releaseAll(), 10)
