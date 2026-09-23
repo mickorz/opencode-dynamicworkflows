@@ -132,3 +132,53 @@ return 'never'`,
     /需要函数条件/,
   )
 })
+
+// ── P2-3：deterministic helpers（fileExists / commandSuccess） ──
+
+test("fileExists + check 组合：文件存在过闸、不存在 fallback 换候选", async () => {
+  const { runner } = makeRunner()
+  const result = await runWorkflow(
+    `export const meta = { name: 'helper_file' }
+const r = await fallback([
+  () => check(() => fileExists('not-generated/yet.void'), '产物未生成'),
+  () => agent('重建产物'),
+])
+return r`,
+    { agent: runner, cwd: process.cwd() },
+  )
+  assert.match(String(result.result), /^ok:重建产物/, "文件不存在时 check 失败换 agent 候选")
+})
+
+test("fileExists 相对 cwd 解析；不存在返回 false 不抛错", async () => {
+  const { runner } = makeRunner()
+  const result = await runWorkflow(
+    `export const meta = { name: 'helper_file2' }
+const a = fileExists('src/runtime/node-contract.ts')
+const b = fileExists('definitely/not/here.void')
+const c = fileExists('')
+await agent('bookkeeping')
+return [a, b, c].join('|')`,
+    { agent: runner, cwd: process.cwd() },
+  )
+  assert.equal(result.result, "true|false|false")
+})
+
+test("commandSuccess：退出码判定 + check 组合", async () => {
+  const { runner } = makeRunner()
+  const result = await runWorkflow(
+    `export const meta = { name: 'helper_cmd' }
+const okCmd = await commandSuccess('node -e "process.exit(0)"')
+const badCmd = await commandSuccess('node -e "process.exit(3)"')
+const gate = await sequence([
+  () => check(() => okCmd, '应通过'),
+  () => 'passed',
+])
+await agent('bookkeeping')
+return { okCmd, badCmd, gate }`,
+    { agent: runner, cwd: process.cwd() },
+  )
+  const out = JSON.parse(JSON.stringify(result.result))
+  assert.equal(out.okCmd, true)
+  assert.equal(out.badCmd, false)
+  assert.equal(out.gate, "passed")
+})

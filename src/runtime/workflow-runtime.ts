@@ -27,6 +27,7 @@
 
 import fs from "node:fs"
 import path from "node:path"
+import { exec } from "node:child_process"
 import { createLimiter } from "./semaphore.js"
 import { parseWorkflowScript, runScriptInVm } from "./vm.js"
 import { WorkflowError, WorkflowErrorCode, wrapError } from "./errors.js"
@@ -837,6 +838,30 @@ async function executeWorkflow(
     )
   }
 
+  // ── 确定性 check helpers（P2-3 最小集）：VM 沙箱无 fs/child_process，由 runtime 注入 ──
+  // fileChanged 需基线追踪（journal 状态耦合）、schemaValid 需校验器依赖，均暂缓（见 P2 决策纪要）
+
+  /** 文件/目录存在性（相对 shared.cwd）；供 check(() => fileExists(...)) 使用 */
+  const fileExists = (target: string): boolean => {
+    if (typeof target !== "string" || !target.trim()) return false
+    return fs.existsSync(path.resolve(shared.cwd, target))
+  }
+
+  /** 命令退出码为 0（async exec 不阻塞事件循环；超时视为失败）；供 check(() => commandSuccess(...)) 使用 */
+  const commandSuccess = (command: string, timeoutMs = 30_000): Promise<boolean> => {
+    return new Promise((resolve) => {
+      if (typeof command !== "string" || !command.trim()) {
+        resolve(false)
+        return
+      }
+      exec(
+        command,
+        { cwd: shared.cwd, timeout: timeoutMs, windowsHide: true },
+        (error) => resolve(!error),
+      )
+    })
+  }
+
   const consoleShim = {
     log,
     info: log,
@@ -1207,6 +1232,8 @@ async function executeWorkflow(
     fallback,
     race,
     check,
+    fileExists,
+    commandSuccess,
     phase,
     log,
     args,

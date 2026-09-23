@@ -132,6 +132,8 @@ return { brief: spec.brief, design: design.design, code: code.code }
 
 ## 确定性验证
 
+可用 helper（VM 沙箱无 fs/进程能力，由 runtime 注入）：`fileExists(path)`（相对项目根）、`commandSuccess(cmd, timeoutMs?)`（退出码 0）
+
 ```javascript
 // check：客观事实验证（true=过，false=可恢复失败：sequence 停 / fallback 换候选）
 await check(() => args.config.debug !== undefined, 'config.debug 必须存在')
