@@ -102,7 +102,7 @@ test("buildSidebarRows：phase 变化处插标题行，无 phase 平铺；子流
   const p = parseWorkflowMetadata(VALID)!
   const rows = buildSidebarRows(p)
   assert.deepEqual(
-    rows.map((r) => (r.kind === "phase" ? `#${r.title}` : r.kind === "workflow" ? `@${r.title}` : r.node.label)),
+    rows.map((r) => (r.kind === "composite" ? `[${r.title}]` : r.kind === "phase" ? `#${r.title}` : r.kind === "workflow" ? `@${r.title}` : r.node.label)),
     ["#Analyze", "解释1", "解释2", "#Summarize", "汇总"],
   )
   // 无 phase 的节点不产生标题行
@@ -124,7 +124,7 @@ test("buildSidebarRows：phase 变化处插标题行，无 phase 平铺；子流
     })!,
   )
   assert.deepEqual(
-    wfRows.map((r) => (r.kind === "phase" ? `#${r.title}` : r.kind === "workflow" ? `@${r.title}` : r.node.label)),
+    wfRows.map((r) => (r.kind === "composite" ? `[${r.title}]` : r.kind === "phase" ? `#${r.title}` : r.kind === "workflow" ? `@${r.title}` : r.node.label)),
     ["@ds", "#▸ ds / 生成", "解释1", "#▸ ds / 校验", "解释2", "@gpt", "#▸ gpt / 生成", "汇总", "#▸ gpt / 校验", "解释1"],
   )
 })
@@ -347,7 +347,7 @@ test("buildSidebarRows：composites 记录缺失时用段 id 兜底显示", () =
     })!,
   )
   assert.deepEqual(
-    rows.map((r) => (r.kind === "composite" ? r.title : r.kind === "phase" ? `#${r.title}` : r.node.label)),
+    rows.map((r) => (r.kind === "composite" ? r.title : r.kind === "phase" ? `#${r.title}` : r.kind === "node" ? r.node.label : String(r))),
     ["cmp7", "#Analyze", "解释1"],
   )
 })

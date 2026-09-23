@@ -697,7 +697,7 @@ function hangRunner() {
       prompts.push(prompt)
       if (prompt.includes("HANG")) {
         return new Promise((_resolve, reject) => {
-          options.signal?.addEventListener("abort", () => reject(new Error("The operation was aborted")))
+          options?.signal?.addEventListener("abort", () => reject(new Error("The operation was aborted")))
         })
       }
       return { value: `ok:${prompt}`, sessionId: "s", type: "text" }
@@ -717,7 +717,7 @@ const winner = await race([
 ])
 const after = await agent('after race')
 return { winner, after }`,
-    { agent: runner, cwd: dir },
+    { agent: runner, cwd: dir, concurrency: 4 },
   )
   const out = result.result as any
   assert.equal(out.winner, "ok:fast model", "fast 胜出")
@@ -771,7 +771,7 @@ await race([
   () => agent('HANG sibling'),
 ])
 return 'never'`,
-      { agent: runner, cwd: dir },
+      { agent: runner, cwd: dir, concurrency: 4 },
     ),
     /不存在或不可读/,
   )
@@ -818,7 +818,7 @@ const winner = await race([
   () => agent('quick winner'),
 ])
 return { winner }`,
-    { agent: runner, cwd: dir },
+    { agent: runner, cwd: dir, concurrency: 4 },
   )
   assert.equal((result.result as any).winner, "ok:quick winner")
   assert.ok(!prompts.some((p) => p.includes("loser second")), "被取消 child 内的后续 agent 不执行")
@@ -889,8 +889,8 @@ return 'done'`,
     dir,
   )
   assert.equal(result.composites.length, 2)
-  const raceRec = result.composites.find((c) => c.kind === "race")
-  const seqRec = result.composites.find((c) => c.kind === "sequence")
+  const raceRec = result.composites.find((c) => c.kind === "race")!
+  const seqRec = result.composites.find((c) => c.kind === "sequence")!
   assert.deepEqual(raceRec.compositePath, ["cmp0"])
   assert.deepEqual(seqRec.compositePath, ["cmp0", "cmp1"], "嵌套组合路径 = 父链 + 自身")
 })
@@ -905,9 +905,9 @@ await agent('bookkeeping')
 return { a, b }`,
     dir,
   )
-  const seqRec = result.composites.find((c) => c.kind === "sequence")
+  const seqRec = result.composites.find((c) => c.kind === "sequence")!
   assert.equal(seqRec.status, "failed", "sequence 可恢复失败记 failed")
-  const fbRec = result.composites.find((c) => c.kind === "fallback")
+  const fbRec = result.composites.find((c) => c.kind === "fallback")!
   assert.equal(fbRec.status, "ok")
   // journal key 仍为 callIndex 编号（compositeSeq 与 callSeq 分离）：两个组合已领 cmp0/cmp1，
   // 但唯一 agent（bookkeeping）仍编号 0——cmp 计数不挤占 callIndex

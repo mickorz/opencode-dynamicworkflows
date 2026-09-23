@@ -53,7 +53,7 @@ function makeRunner() {
   return { runner, calls, prompts }
 }
 
-async function run(script: string, extra: Parameters<typeof runWorkflow>[1] = {}) {
+async function run(script: string, extra: Partial<Parameters<typeof runWorkflow>[1]> = {}) {
   const { runner, calls, prompts } = makeRunner()
   const journal = new Map<string, JournalEntry>()
   const result = await runWorkflow(script, { ...extra, agent: runner, onAgentJournal: (e) => journal.set(e.key, e) })
@@ -103,10 +103,10 @@ test("A/B 可恢复失败：塌缩 null 位置一致", async () => {
   ])
   const o = await run(old)
   const n = await run(neu)
-  assert.equal(o.result.result[0], null)
-  assert.equal(n.result.result[0], null)
-  assert.match(String(n.result.result[1]), /^ok:tail b/)
-  assert.match(String(o.result.result[1]), /^ok:tail b/)
+  assert.equal((o.result.result as unknown[])[0], null)
+  assert.equal((n.result.result as unknown[])[0], null)
+  assert.match(String((n.result.result as unknown[])[1]), /^ok:tail b/)
+  assert.match(String((o.result.result as unknown[])[1]), /^ok:tail b/)
 })
 
 test("A/B 结构性错误：两形态均上抛（unknown workflow 不被塔缩）", async () => {
@@ -149,11 +149,12 @@ await parallel((${items}).map(item => () => sequence([
 ])))
 return 1`
   // 跑两次各自记录峰值（concurrency 缺省 >=4 时 4 item 全并发）
-  await runWorkflow(scriptOld, { agent: runner })
+  // 显式 concurrency：缺省值随宿主核数漂移（CI 4 核 -> 2），峰值断言需确定性
+  await runWorkflow(scriptOld, { agent: runner, concurrency: 4 })
   const peakOld = peak
   inflight = 0
   peak = 0
-  await runWorkflow(scriptNew, { agent: runner })
+  await runWorkflow(scriptNew, { agent: runner, concurrency: 4 })
   const peakNew = peak
   assert.equal(peakNew, peakOld, "并发峰值一致（均无 stage barrier）")
   assert.ok(peakOld >= 3, "item 级并发确实发生")

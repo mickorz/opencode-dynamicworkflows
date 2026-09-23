@@ -152,7 +152,7 @@ test("TUI 全链分组：深层 workflowPath 完整链显示且分组唯一", as
   })!
   const rows = buildSidebarRows(progress)
   assert.deepEqual(
-    rows.map((r) => (r.kind === "phase" ? `#${r.title}` : r.kind === "workflow" ? `@${r.title}` : r.node.label)),
+    rows.map((r) => (r.kind === "composite" ? `[${r.title}]` : r.kind === "phase" ? `#${r.title}` : r.kind === "workflow" ? `@${r.title}` : r.node.label)),
     ["@root / l1", "#▸ l1 / P1", "top", "@root / l1 / l2", "#▸ l2 / P2", "mid", "@root / l1 / l2 / l3", "#▸ l3 / P3", "leaf", "@root / l1", "#▸ l1 / P1", "back"],
     "全链 join 分组：深层各成组，回到浅层重新起组",
   )
