@@ -646,3 +646,43 @@ return { err, after }`,
   assert.match(out.err, /child 业务失败/)
   assert.match(out.after, /^ok:after/)
 })
+
+// ── P1-1：parallel 纳入 Node 模型（组合完备性钉死） ──
+
+test("组合完备：fallback 候选为 parallel，sequence 包裹 fallback（三种 composite 互嵌）", async () => {
+  const dir = tmpProject()
+  const { result } = await run(
+    `export const meta = { name: 'nest_all' }
+const r = await sequence([
+  () => 'seed',
+  (seed) => fallback([
+    () => { throw new Error('直接候选失败') },
+    () => parallel([
+      () => seed + '-lane1',
+      () => { throw new Error('lane2 失败塌缩 null') },
+    ]),
+  ]),
+  (prev) => prev.filter(x => x !== null).join('+'),
+])
+await agent('bookkeeping')
+return r`,
+    dir,
+  )
+  // parallel 保序 + 失败槽位 null：[seed-lane1, null] -> filter -> join
+  assert.equal(result.result, "seed-lane1")
+})
+
+test("组合完备：parallel 分支内各自跑独立 sequence", async () => {
+  const dir = tmpProject()
+  const { result } = await run(
+    `export const meta = { name: 'par_seq' }
+const rs = await parallel([
+  () => sequence([() => 'a1', (p) => p + '-a2']),
+  () => sequence([() => 'b1', (p) => p + '-b2']),
+])
+await agent('bookkeeping')
+return rs.join('|')`,
+    dir,
+  )
+  assert.equal(result.result, "a1-a2|b1-b2")
+})
