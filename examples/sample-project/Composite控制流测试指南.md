@@ -1,7 +1,9 @@
 # Composite 控制流 V1（sequence / fallback）手动测试指南
 
 > 验收 P0 交付：`sequence()` / `fallback()` 组合节点与 child 失败中止面修正（分支 feat/composite-control-flow，commit 99c3c38..eeedf67）。
-> 前置：仓库根已 `npm run build` 且 **OpenCode 已重启**（插件进程缓存旧 dist 会不识别新 globals，报 `sequence is not defined`）。
+> **前置（缺一不可，缺了第一报 `sequence is not defined`）：**
+> 1. 仓库根 `npm run build`（改 src 后必须重建，dist 才含新 globals）
+> 2. **退出并重启 OpenCode**（插件进程缓存旧 dist，不重启重建也不生效）
 > 本目录已内置全部验收脚本（`scripts/composite/`），按下列 Test 逐项执行。
 > 对应需求：`Docs/01_需求与规划/Composite控制流开发计划V1.md` 的 P0 部分。
 
@@ -123,7 +125,8 @@ flowchart TD
 
 | 症状 | 原因 | 处置 |
 |------|------|------|
-| `sequence is not defined` | OpenCode 进程缓存旧 dist | 退出 OpenCode 后在本目录重新启动 |
+| `sequence is not defined` | 改 src 后没重建，或重建后没重启 OpenCode | 仓库根 `npm run build` → 退出 OpenCode → 本目录重新启动（两步都要） |
+| 可用全局列表里没有 sequence/fallback | 插件加载的是旧 dist（同上） | 同上；可用 `ls dist/runtime/node-contract.js` 确认新产物存在 |
 | Test 5 整 run 失败 | 插件未加载新构建（poisoning 修正未生效） | 仓库根 `npm run build` 后重启 |
 | Test 8 回放不命中 | 脚本修改触发了 journal miss（预期行为是父 agent 重跑） | 确认只改了 PARENT-PROBE 字样，未动 sequence 内 prompt |
 | Test 6 返回了 winner | fallback 吞了结构性错误 | 记录为缺陷（违反三态契约） |
