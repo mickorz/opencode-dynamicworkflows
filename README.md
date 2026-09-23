@@ -136,19 +136,56 @@ args 传 {"model": "biangfeng-gateway/glm-5.2"}
 - **缺省只读**：`agent()` 默认用只读的 explore 子代理；需要写文件的任务显式传 `agentType: 'general'`。
 - **嵌套工作流**：general 子代理可再调 `workflow` 工具串联多层大流程，TUI 侧边栏层级树显示（嵌套子树挂触发节点下），详见 [how-to-guides](docs/how-to-guides.md) 的「嵌套工作流」章。
 - **后台与续跑**：脚本参数 `background: true` 立即返回 runId 不阻塞对话；中断后 `resumeFromRunId` 可断点续跑，已完成的 agent 不再重复消耗 token。
-- **质量助手**：`verify`（对抗式验证）/ `judgePanel`（评审团选优）/ `retry`（有界重试）/ `checkpoint`（人工确认点）。
+- **质量助手**：`verify`（对抗式验证）/ `judgePanel`（评审团选优）/ `retry`（有界重试）/ `checkpoint`（人工确认点，拒绝即强停止）。
+- **组合控制流**：`sequence` / `fallback` / `race` / `check` 四个组合节点，与 `parallel` 构成统一控制模型，TUI 侧边栏按组合层级分组显示。
 
 ## 功能一览
 
 - `workflow` 自定义 tool + `workflow_control` 控制 tool（status / stop）
 - Schedule 定时任务：`/schedule 每小时执行 xxx.js` 自然语言创建，到点确定性执行（不经 LLM 判断）；同项目多开 OpenCode 不重复执行；执行记录可查
 - VM 沙箱确定性护栏（禁 `Date.now()` / `Math.random()` / import / require，可确定性重放）
-- DSL：`agent / parallel / pipeline / phase / log / args` + 质量助手
+- DSL：`agent / parallel / pipeline / phase / log / args` + 质量助手 + 组合控制流 `sequence / fallback / race / check`（+ 确定性 helper `fileExists / commandSuccess`）
 - 原生结构化输出（`schema` 走 OpenCode `format: json_schema`）、并发控制（缺省 CPU 核数-2、上限 16）、超时/重试/abort 级联、git worktree 隔离、journal 断点续跑、后台运行
 - 原生子工作流 `workflow()`：脚本内直接组合子流程（`await workflow('./sub.js', args)` 或按注册名 `workflow('daily-review')`），不经 LLM 转发；一个 run 共享并发配额/中断/journal，父可纯编排；同脚本多实例靠 label 区分
 - 子流程观测：结果自带子流程 wall-clock 耗时与 token 统计（多配置对比以 wall-clock 为准）；TUI 按子流程分组子树显示
 - Workflow Registry：`.opencode-workflows/workflows/` 下的脚本按 `meta.id ?? meta.name` 全局引用，与 Schedule 的 workflowId 同一体系（同一脚本可定时也可被组合）
 - 嵌套工作流（旧方案，legacy）：general 子代理内再触发 `workflow` 工具，每层独立 run/journal/token 计量
+
+### 组合控制流（Composite Control Flow）
+
+四象限统一模型——所有组合节点接收函数数组，节点内可嵌套任意其他节点：
+
+|          | 全部执行                                | 选一个                          |
+| -------- | --------------------------------------- | ------------------------------- |
+| 串行     | `sequence`（prev 链传递，返回末节点值） | `fallback`（依次尝试，首成功返） |
+| 并行     | `parallel`（结果保序，失败槽位 null）   | `race`（首成功胜出并取消其余）   |
+
+```javascript
+// 多级降级：快模型不行换强模型；结构性错误（拼错脚本名等）上抛不被吞掉
+const result = await fallback([
+  () => workflow('./fast.js'),
+  () => workflow('./strong.js'),
+])
+if (!result) return '全部降级路径失败'
+
+// 四层验证链：AI 执行 -> 确定性检查 -> AI 质量评审 -> 人工闸门
+await sequence([
+  () => agent('修改 src/login.ts', { agentType: 'general' }),
+  () => check(() => commandSuccess('npm run build'), '编译必须通过'),
+  (prev) => verify(prev, { reviewers: 2 }),
+  () => checkpoint('验证完成，是否发布？'),
+  () => workflow('./publish.js'),
+])
+```
+
+语义规则（详见 workflow-authoring skill）：
+
+- **执行态与业务结果分离**：节点返回任意值（含 `null` / `{ok:false}`）都是执行成功，业务否决自己写 if
+- **可恢复失败返回 null**：与 `agent()` 可恢复失败同构，`if (!r)` 判断即可；结构性错误（脚本拼错/嵌套超限/非函数数组）直接上抛
+- **Human Reject 强停止**：`checkpoint` 被拒绝抛 `CHECKPOINT_REJECTED`，不会被 fallback 换候选、不会塌缩为 null；resume 时拒绝确定性重现（改 prompt 文本才会重问）
+- **race 局部取消**：胜出后其余候选（含其子工作流内 agent）被局部中止，不影响 root
+- **journal 透明**：组合节点不占 callIndex，resume 行为与普通 await 链一致
+- **TUI 组合树**：侧边栏显示 `[Sequence]` / `[Race]` 分组行与 checkpoint 状态（等待人工确认/已批准/被拒绝），区分「等人工」与「卡死」
 
 ### Schedule 定时任务的产品边界（设计而非缺陷）
 
