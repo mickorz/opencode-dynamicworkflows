@@ -110,8 +110,10 @@ flowchart TD
 
 ## Test 8：resume 下 sequence 内 agent 全量回放
 
+> 结构关键：脚本里 sequence（callIndex 0/1）在前、可变的父 agent（callIndex 2）在后。改父 prompt 只触发 firstMiss=2，sequence 内两个 agent 因前缀未变而回放。若顺序颠倒（父在前），同 scope 后续全部重跑，测不到回放。
+
 1. 前台执行 `scripts/composite/seq_resume_parent.js`，记下返回 JSON 里的 `runId`
-2. 让 Main Agent 修改脚本：把 `PARENT-PROBE` 改成 `PARENT-PROBE-2`（只动 sequence 之外的父 agent）
+2. 让 Main Agent 修改脚本：把 `PARENT-PROBE` 改成 `PARENT-PROBE-2`（只动 sequence 之后的父 agent，不动 sequence 内 prompt）
 3. 续跑：`resumeFromRunId=<刚才的 runId>` + 修改后的脚本（先改文件再续跑）
 
 **通过标准**：
