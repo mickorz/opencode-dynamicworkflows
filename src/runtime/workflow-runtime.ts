@@ -13,6 +13,9 @@
  *             -> workflow() 原语：同步阶段 childSeq++ 领号 -> canonical 路径 + 自环/深度检查
  *                  -> structuredClone 边界 -> 同 shared 下 executeWorkflow（不占 scheduler slot）
  *             -> parallel()/pipeline()：recoverable 失败塌缩为 null，non-recoverable 上抛
+ *             -> sequence()/fallback()：Composite 组合节点（V1）——经 executeNode 三态判定，
+ *                  success 继续 / 可恢复失败终止或换候选（返回 null，与 agent 可恢复失败对齐）/ 中止上抛；
+ *                  本身不占 callSeq/childSeq/journal，对 resume 透明
  *   -> 汇总 AgentRecord / logs / phases / token 用量 返回
  *
  * 一 Run 多 Scope（v0.8 设计，Docs/01_需求与规划/Native子工作流workflow原语执行计划.md）：
@@ -38,6 +41,7 @@ import type {
   WorkflowRunResult,
 } from "../types/index.js"
 import { buildOutputPreview, truncatePromptForJournal } from "./agent-result.js"
+import { createNodeExecutor, type WorkflowNode } from "./node-contract.js"
 import { createHash } from "node:crypto"
 import { loadRegistry, workflowsDir } from "./workflow-registry.js"
 
@@ -785,6 +789,43 @@ async function executeWorkflow(
     error: (m: unknown) => log(`[error] ${String(m)}`),
   }
 
+  // ── Composite 组合节点（V1 P0-3/P0-6）：纯控制层，不碰 journal/callSeq/agentCount ──
+
+  /** 组合节点入参校验：函数数组（与 parallel 的 TypeError 语义一致，属结构性错误） */
+  const assertCompositeNodes = (nodes: unknown, api: string): Array<WorkflowNode> => {
+    if (!Array.isArray(nodes) || nodes.length === 0 || nodes.some((n) => typeof n !== "function")) {
+      throw new TypeError(`${api}(nodes) 期望非空函数数组，请用 () => agent(...) 或 prev => workflow(...) 包裹`)
+    }
+    return nodes as Array<WorkflowNode>
+  }
+
+  const executeNode = createNodeExecutor(isAborted)
+
+  /** 中止态统一上抛（与 agent() 的 WORKFLOW_ABORTED 同语义） */
+  const throwCancelled = (): never => {
+    throw new WorkflowError("workflow aborted", WorkflowErrorCode.WORKFLOW_ABORTED, { recoverable: true })
+  }
+
+  /** sequence：串行传递执行，前一个节点的返回值作为下一个节点的入参 */
+  const sequence = async (nodes: Array<WorkflowNode>): Promise<unknown> => {
+    throwIfAborted()
+    const list = assertCompositeNodes(nodes, "sequence")
+    let value: unknown
+    for (const [index, node] of list.entries()) {
+      const r = await executeNode(node, value)
+      if (r.status === "success") {
+        value = r.value
+        continue
+      }
+      if (r.status === "cancelled") throwCancelled()
+      // 可恢复失败：序列立即停止，返回 null（与 agent 可恢复失败返回 null 对齐，脚本可 if (!r) 判断）
+      const message = r.error instanceof Error ? r.error.message : String(r.error)
+      log(`sequence[${index}] 失败，序列停止: ${message}`)
+      return null
+    }
+    return value
+  }
+
   // ── 质量与控制 DSL（P1-4，纯构建在 agent()/parallel() 之上，callSeq 稳定、resume 安全） ──
 
   const VERIFY_SCHEMA: Record<string, unknown> = {
@@ -943,6 +984,7 @@ async function executeWorkflow(
     workflow,
     parallel,
     pipeline,
+    sequence,
     phase,
     log,
     args,
