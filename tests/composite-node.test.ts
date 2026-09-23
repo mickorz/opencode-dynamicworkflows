@@ -686,3 +686,165 @@ return rs.join('|')`,
   )
   assert.equal(result.result, "a1-a2|b1-b2")
 })
+
+// ── P1-2/P1-3：race + Composite Local Abort Scope ──
+
+/** 挂起型 runner：HANG prompt 永不完成直到 signal abort，其余正常返回 */
+function hangRunner() {
+  const prompts: string[] = []
+  const runner: AgentSessionRunner = {
+    async run(prompt, options) {
+      prompts.push(prompt)
+      if (prompt.includes("HANG")) {
+        return new Promise((_resolve, reject) => {
+          options.signal?.addEventListener("abort", () => reject(new Error("The operation was aborted")))
+        })
+      }
+      return { value: `ok:${prompt}`, sessionId: "s", type: "text" }
+    },
+  }
+  return { runner, prompts }
+}
+
+test("race：首个成功胜出，挂起的兄弟被取消，root 不受影响", async () => {
+  const dir = tmpProject()
+  const { runner } = hangRunner()
+  const result = await runWorkflow(
+    `export const meta = { name: 'race_win' }
+const winner = await race([
+  () => agent('HANG slow model'),
+  () => agent('fast model'),
+])
+const after = await agent('after race')
+return { winner, after }`,
+    { agent: runner, cwd: dir },
+  )
+  const out = result.result as any
+  assert.equal(out.winner, "ok:fast model", "fast 胜出")
+  assert.equal(out.after, "ok:after race", "race 后父脚本继续（root 未被 abort）")
+  // 挂起 agent 的终态：aborted（被 race 局部 signal 取消）
+  const hung = result.agents.find((a) => a.label.includes("HANG") || a.id.endsWith(":0"))
+  assert.equal(hung?.status, "aborted", "挂起兄弟被标记 aborted")
+  assert.ok(result.logs.some((l: string) => l.includes("race[1] 胜出")), "胜出日志")
+})
+
+test("race：全部候选可恢复失败返回 null", async () => {
+  const dir = tmpProject()
+  const { result } = await run(
+    `export const meta = { name: 'race_all_fail' }
+const r = await race([
+  () => { throw new Error('A 失败') },
+  () => { throw new Error('B 失败') },
+])
+await agent('bookkeeping')
+return { r, isNull: r === null }`,
+    dir,
+  )
+  assert.equal((result.result as any).isNull, true)
+  assert.ok(result.logs.some((l: string) => l.includes("race 全部候选失败")))
+})
+
+test("race：A 失败 B 成功的竞争（first-success 而非 first-settled）", async () => {
+  const dir = tmpProject()
+  const { result } = await run(
+    `export const meta = { name: 'race_fail_then_win' }
+const r = await race([
+  () => { throw new Error('甲立即失败') },
+  () => 'winner-b',
+  () => agent('HANG slow'),
+])
+await agent('bookkeeping')
+return r`,
+    dir,
+  )
+  assert.equal(result.result, "winner-b", "失败候选不妨碍后续成功者胜出")
+})
+
+test("race：结构性错误上抛且取消兄弟", async () => {
+  const dir = tmpProject()
+  const { runner } = hangRunner()
+  await assert.rejects(
+    runWorkflow(
+      `export const meta = { name: 'race_struct' }
+await race([
+  () => workflow('./不存在的脚本.js'),
+  () => agent('HANG sibling'),
+])
+return 'never'`,
+      { agent: runner, cwd: dir },
+    ),
+    /不存在或不可读/,
+  )
+})
+
+test("race：run 级 abort 穿透（cancelled 上抛 WORKFLOW_ABORTED）", async () => {
+  const dir = tmpProject()
+  const controller = new AbortController()
+  const runner: AgentSessionRunner = {
+    async run(prompt) {
+      if (prompt.includes("trigger")) controller.abort()
+      return { value: "ok", sessionId: "s", type: "text" }
+    },
+  }
+  await assert.rejects(
+    runWorkflow(
+      `export const meta = { name: 'race_root_abort' }
+await sequence([
+  () => agent('trigger abort'),
+  () => race([
+    () => { throw new Error('中止后的失败') },
+    () => 'never',
+  ]),
+])
+return 'never'`,
+      { agent: runner, cwd: dir, signal: controller.signal },
+    ),
+    /abort/i,
+  )
+})
+
+test("race 局部取消传播到 child workflow 内部的后续 agent", async () => {
+  const dir = tmpProject()
+  // loser child：第一个 agent 慢（挂起），被取消后 child 内不应再跑第二个 agent
+  put(dir, "loser.js", `export const meta = { name: 'loser' }
+await agent('HANG loser first')
+const second = await agent('loser second should not run')
+return { second }`)
+  const { runner, prompts } = hangRunner()
+  const result = await runWorkflow(
+    `export const meta = { name: 'race_child_scope' }
+const winner = await race([
+  () => workflow('./loser.js'),
+  () => agent('quick winner'),
+])
+return { winner }`,
+    { agent: runner, cwd: dir },
+  )
+  assert.equal((result.result as any).winner, "ok:quick winner")
+  assert.ok(!prompts.some((p) => p.includes("loser second")), "被取消 child 内的后续 agent 不执行")
+})
+
+test("race 不占 journal callIndex（透明性与 sequence/fallback 一致）", async () => {
+  const dir = tmpProject()
+  const journal = new Map<string, JournalEntry>()
+  const runner: AgentSessionRunner = {
+    async run(prompt) {
+      return { value: `ok:${prompt}`, sessionId: "s", type: "text" }
+    },
+  }
+  const result = await runWorkflow(
+    `export const meta = { name: 'race_journal' }
+await race([
+  () => agent('race a'),
+  () => agent('race b'),
+])
+await agent('after')
+return 'done'`,
+    { agent: runner, cwd: dir, onAgentJournal: (e) => journal.set(e.key, e) },
+  )
+  assert.deepEqual(
+    [...journal.keys()],
+    [`${result.runId}:0`, `${result.runId}:1`, `${result.runId}:2`],
+    "race 自身不产生 journal 记录",
+  )
+})

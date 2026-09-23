@@ -23,10 +23,20 @@
  * 中止态经 isAborted 注入，保持宿主无关。
  */
 
+import { AsyncLocalStorage } from "node:async_hooks"
 import { wrapError } from "./errors.js"
 
 /** 节点执行状态（Runtime 执行态，非业务结果） */
 export type NodeStatus = "success" | "failure" | "cancelled"
+
+/** Composite 局部中止面（P1-3）：race 等竞争节点为候选注入的独立 signal；
+ *  经 AsyncLocalStorage 沿 await 链传播（含 child workflow 内部），agent 在调用点读当前作用域，
+ *  胜出后 abort 仅取消兄弟，不影响 root 的 shared.signal / shared.aborted */
+export interface CompositeAbortScope {
+  signal?: AbortSignal
+}
+
+export const compositeAbortStorage = new AsyncLocalStorage<CompositeAbortScope>()
 
 /** 节点执行结果：组合层内部使用，不进入公开 API（agent() 返回值形态不变） */
 export interface NodeExecutionResult<T = unknown> {

@@ -41,7 +41,7 @@ import type {
   WorkflowRunResult,
 } from "../types/index.js"
 import { buildOutputPreview, truncatePromptForJournal } from "./agent-result.js"
-import { createNodeExecutor, type WorkflowNode } from "./node-contract.js"
+import { createNodeExecutor, compositeAbortStorage, type WorkflowNode } from "./node-contract.js"
 import { createHash } from "node:crypto"
 import { loadRegistry, workflowsDir } from "./workflow-registry.js"
 
@@ -333,7 +333,10 @@ async function executeWorkflow(
   const log = (message: string) => {
     shared.logs.push(String(message))
   }
-  const isAborted = () => shared.aborted || Boolean(shared.signal?.aborted)
+  const isAborted = () =>
+    shared.aborted ||
+    Boolean(shared.signal?.aborted) ||
+    Boolean(compositeAbortStorage.getStore()?.signal?.aborted)
   const throwIfAborted = () => {
     if (isAborted()) {
       throw new WorkflowError("workflow aborted", WorkflowErrorCode.WORKFLOW_ABORTED, { recoverable: true })
@@ -468,6 +471,9 @@ async function executeWorkflow(
           const attemptController = new AbortController()
           const onRunAbort = () => attemptController.abort()
           shared.signal?.addEventListener("abort", onRunAbort)
+          // Composite 局部中止面（P1-3）：race 等竞争节点的作用域 signal 同样接入本次 attempt，
+          // 胜出后 abort 只取消兄弟候选的进行中 agent，不碰 root
+          compositeAbortStorage.getStore()?.signal?.addEventListener("abort", onRunAbort)
           // 本次执行的标识与计时（FR-1：nodeId=runId:callIndex，executionId 追加 attempt 维度）
           const attemptStarted = Date.now()
           const executionId = `${deltaKey}:${attempt}`
@@ -585,6 +591,7 @@ async function executeWorkflow(
             log(`agent "${label}" 第 ${attempt} 次尝试失败，重试: ${workflowError.message}`)
           } finally {
             shared.signal?.removeEventListener("abort", onRunAbort)
+            compositeAbortStorage.getStore()?.signal?.removeEventListener("abort", onRunAbort)
           }
         }
         return null
@@ -842,6 +849,60 @@ async function executeWorkflow(
     return null
   }
 
+  /** race：并行竞争，首个 success 胜出并取消其余候选（P1-2，依赖局部中止面 P1-3） */
+  const race = async (nodes: Array<WorkflowNode>): Promise<unknown> => {
+    throwIfAborted()
+    const list = assertCompositeNodes(nodes, "race")
+    const controller = new AbortController()
+    return compositeAbortStorage.run({ signal: controller.signal }, () =>
+      new Promise<unknown>((resolve, reject) => {
+        let settled = false
+        let failureCount = 0
+        /** 首个结论生效：后续到达（含被取消兄弟的迟到失败/取消）全部忽略 */
+        const settle = (finish: () => void) => {
+          if (settled) return
+          settled = true
+          finish()
+        }
+        list.forEach((node, index) => {
+          executeNode(node, undefined).then(
+            (r) => {
+              if (r.status === "success") {
+                settle(() => {
+                  controller.abort()
+                  log(`race[${index}] 胜出，取消其余 ${list.length - 1} 个候选`)
+                  resolve(r.value)
+                })
+              } else if (r.status === "cancelled") {
+                settle(() =>
+                  reject(
+                    new WorkflowError("workflow aborted", WorkflowErrorCode.WORKFLOW_ABORTED, {
+                      recoverable: true,
+                    }),
+                  ),
+                )
+              } else {
+                failureCount++
+                log(`race[${index}] 可恢复失败（${failureCount}/${list.length}）`)
+                if (failureCount === list.length) {
+                  settle(() => {
+                    log("race 全部候选失败，返回 null")
+                    resolve(null)
+                  })
+                }
+              }
+            },
+            (structural) =>
+              settle(() => {
+                controller.abort()
+                reject(structural)
+              }),
+          )
+        })
+      }),
+    )
+  }
+
   // ── 质量与控制 DSL（P1-4，纯构建在 agent()/parallel() 之上，callSeq 稳定、resume 安全） ──
 
   const VERIFY_SCHEMA: Record<string, unknown> = {
@@ -1002,6 +1063,7 @@ async function executeWorkflow(
     pipeline,
     sequence,
     fallback,
+    race,
     phase,
     log,
     args,
