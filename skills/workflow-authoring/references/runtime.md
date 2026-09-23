@@ -111,6 +111,24 @@ const best = await race([
 - 需要"失败即终止"的调用，直接 `await agent(...)`（不放进 parallel）
 - 脚本内可对 agent / workflow 调用自行 try/catch 实现自定义降级；child 失败不再污染整 run，捕获后可继续执行
 
+## check(condition, message?) -> Promise<true>
+
+确定性事实验证节点（P1-1）：`condition` 为返回 boolean 的同步/异步函数。
+
+- `true` -> SUCCESS（节点值 true，可作 prev 传递）
+- `false` -> 可恢复失败（CHECK_FAILED）：sequence 停止返回 null、fallback 换候选、parallel 塌缩 null
+- `condition` 自身 throw -> 结构性错误上抛（检查代码的 bug 不伪装成验证未通过）
+
+```javascript
+await sequence([
+  () => agent('修改 src/login.ts'),
+  () => check(() => typeof args.expect === 'string', '必须提供 expect 参数'),
+  () => workflow('./compile.js'),
+])
+```
+
+职责固定：`check`=客观事实 / `verify`=AI 质量判断 / `checkpoint`=人工决定，不要互相代替。
+
 ## verify(item, opts?) -> Promise<{ real, realCount, total, votes }>
 
 对抗式评审：`reviewers`（默认 2）个 reviewer agent 尝试反驳 item（字符串或对象），按 `schema` 返回 `{ real: boolean, reason?: string }` 投票；`realCount/total >= threshold`（默认 0.5）判真。`lens` 可给不同 reviewer 分配关注视角。reviewer 失败塌缩为弃权（不计入 total）。

@@ -20,7 +20,7 @@ description: 编写 OpenCode 动态工作流 JavaScript 脚本时加载。涉及
 `agent(prompt, opts?)` `parallel(thunks)` `pipeline(items, ...stages)`（等价于 parallel+sequence 组合，新脚本优先组合写法） `phase(title)` `log(msg)` `args`
 `setConcurrency(n)`（运行中调并发上限：正整数、钳 16；调大立即放行排队者，调小不抢占存量）
 `verify(item, opts?)` `judgePanel(attempts, opts?)` `retry(fn, opts?)` `checkpoint(promptText, opts?)`
-`sequence(nodes)` `fallback(nodes)` `race(nodes)`（Composite 组合控制流，见下下节）
+`sequence(nodes)` `fallback(nodes)` `race(nodes)`（Composite 组合控制流，见下下节）`check(cond, msg?)`（确定性事实验证）
 `workflow(ref, args?)`（原生子工作流：ref 为脚本路径（`./x.js`/`../x.js`/绝对路径）或**注册名**（`.opencode-workflows/workflows/` 下脚本的 meta.id ?? meta.name，含斜杠名合法）；可传 `{ scriptPath, label? }` 带实例显示名；同 run 共享配额/中断/journal；args 与返回值克隆隔离；仅一层嵌套；父可纯编排；详见 references/runtime.md）
 
 ## 子 workflow 组合（workflow 原语）
@@ -129,6 +129,15 @@ return { brief: spec.brief, design: design.design, code: code.code }
 | `timeoutMs` | 单 agent 超时毫秒 |
 | `retries` | 可恢复失败重试次数（上限 3） |
 | `phase` | 显式归属阶段（缺省用当前 phase） |
+
+## 确定性验证
+
+```javascript
+// check：客观事实验证（true=过，false=可恢复失败：sequence 停 / fallback 换候选）
+await check(() => args.config.debug !== undefined, 'config.debug 必须存在')
+// 条件函数自身 throw = 结构性错误（检查代码 bug），不会被当作「验证未过」
+// 职责边界：check=客观事实 / verify=AI 质量判断 / checkpoint=人工决定
+```
 
 ## 质量与控制助手
 

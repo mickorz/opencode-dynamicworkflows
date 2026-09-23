@@ -29,7 +29,7 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
 
     args: {
       script: tool.schema.string().optional().describe(
-        "JavaScript 工作流脚本原文，无 markdown 围栏。首条语句必须是 export const meta = { name: 'short_snake_case', description: '...' }。可用全局：agent(prompt, opts) / parallel(函数数组) / pipeline(items, ...stages) / phase(title) / log(msg) / args / setConcurrency(n) / workflow(scriptPath 或 {scriptPath,label}, args)（原生子工作流）。详见 workflow-authoring skill。",
+        "JavaScript 工作流脚本原文，无 markdown 围栏。首条语句必须是 export const meta = { name: 'short_snake_case', description: '...' }。可用全局：agent(prompt, opts) / parallel(函数数组) / pipeline(items, ...stages) / sequence(nodes) / fallback(nodes) / race(nodes) / check(cond, msg) / phase(title) / log(msg) / args / setConcurrency(n) / workflow(scriptPath 或 {scriptPath,label}, args)（原生子工作流）。详见 workflow-authoring skill。",
       ),
       scriptPath: tool.schema.string().optional().describe(
         "脚本文件路径（相对项目目录或绝对路径），服务端执行时读盘拿最新内容；与 script 二选一。执行 scripts 目录里的示例脚本时优先用它，避免粘贴原文导致的陈旧缓存与改写失真。",

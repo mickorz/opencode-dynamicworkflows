@@ -805,6 +805,38 @@ async function executeWorkflow(
     )
   }
 
+  /** check：确定性事实验证（P1-1）。true=SUCCESS（返回 true）；false=FAILURE（可恢复失败，
+   *  与 agent 可恢复失败同构：sequence 停止返回 null、fallback 换候选、parallel 塌缩 null）；
+   *  condition 自身 throw=结构性错误（检查代码的 bug 不许伪装成「验证未通过」）。
+   *  职责分离：check 客观事实 / verify AI 质量判断 / checkpoint 人工决定 */
+  const check = async (
+    condition: () => boolean | Promise<boolean>,
+    message?: string,
+  ): Promise<boolean> => {
+    if (typeof condition !== "function") {
+      throw new WorkflowError("check(condition, message?) 需要函数条件", WorkflowErrorCode.SCRIPT_VALIDATION_ERROR, {
+        recoverable: false,
+      })
+    }
+    let passed: boolean
+    try {
+      passed = await condition()
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new WorkflowError(
+        `check 条件执行出错（不是验证未通过，是检查代码出错）：${reason}`,
+        WorkflowErrorCode.SCRIPT_VALIDATION_ERROR,
+        { recoverable: false },
+      )
+    }
+    if (passed === true) return true
+    throw new WorkflowError(
+      message ?? "check 验证未通过",
+      WorkflowErrorCode.CHECK_FAILED,
+      { recoverable: true },
+    )
+  }
+
   const consoleShim = {
     log,
     info: log,
@@ -1137,6 +1169,7 @@ async function executeWorkflow(
     sequence,
     fallback,
     race,
+    check,
     phase,
     log,
     args,
