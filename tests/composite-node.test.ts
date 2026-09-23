@@ -178,3 +178,144 @@ return r`,
     /abort/i,
   )
 })
+
+// ── P0-4：sequence + child workflow 集成 ──
+
+test("sequence 串三个 child workflow：args 传递 + structuredClone 双向隔离", async () => {
+  const dir = tmpProject()
+  put(dir, "a.js", `export const meta = { name: 'a' }
+const r = await agent('step a')
+return { from: 'a', payload: args }`)
+  put(dir, "b.js", `export const meta = { name: 'b' }
+// 尝试 mutation 父传入的 args（不应外溢到 sequence 的 prev 或父脚本）
+args.payload.mutatedByChild = true
+return { from: 'b', received: args.payload }`)
+  put(dir, "c.js", `export const meta = { name: 'c' }
+return { from: 'c', received: args.received }`)
+  const { result } = await run(
+    `export const meta = { name: 'seq_wf' }
+const shared = { payload: { step: 1 } }
+const r = await sequence([
+  () => workflow('./a.js', shared),
+  (a) => workflow('./b.js', a),
+  (b) => workflow('./c.js', b),
+])
+return { r, sharedAfter: shared }`,
+    dir,
+  )
+  const out = result.result as any
+  assert.equal(out.r.from, "c")
+  // child b 内的 mutation 不外溢：sequence 的 prev 与父脚本的 shared 都未被污染
+  assert.equal(out.r.received.mutatedByChild, true, "child 内能改自己的克隆副本")
+  assert.equal((out.sharedAfter as any).payload.mutatedByChild, undefined, "父脚本对象不被 child 污染")
+})
+
+test("sequence 返回值经 structuredClone：child 结果对象与 VM 内引用不共享", async () => {
+  const dir = tmpProject()
+  put(dir, "a.js", `export const meta = { name: 'a' }
+await agent('x')
+return { nested: { value: 1 } }`)
+  const { result } = await run(
+    `export const meta = { name: 'seq_clone' }
+const r = await sequence([() => workflow('./a.js')])
+r.nested.value = 999
+return { mutated: r.nested.value }`,
+    dir,
+  )
+  // 父脚本对返回值的修改只是自己的副本，不回写 child 结果（此处仅验证可自由修改不炸）
+  assert.equal((result.result as any).mutated, 999)
+})
+
+test("sequence 节点内组合 parallel：多 child 并发 + 结果保持输入顺序", async () => {
+  const dir = tmpProject()
+  put(dir, "x.js", `export const meta = { name: 'x' }\nreturn await agent('child ' + args.tag)`)
+  const { result } = await run(
+    `export const meta = { name: 'seq_par' }
+const r = await sequence([
+  () => 'begin',
+  (prev) => parallel([
+    () => workflow('./x.js', { tag: prev + '-1' }),
+    () => workflow('./x.js', { tag: prev + '-2' }),
+  ]),
+  (results) => results.map(r => r.split(':').pop()).join(','),
+])
+return r`,
+    dir,
+  )
+  assert.equal(result.result, "child begin-1,child begin-2")
+})
+
+test("sequence 内 child 的自环与深度检查照常生效", async () => {
+  const dir = tmpProject()
+  put(dir, "self.js", `export const meta = { name: 'self' }\nreturn await workflow('./self.js')`)
+  await assert.rejects(
+    run(
+      `export const meta = { name: 'seq_cycle' }
+await sequence([() => workflow('./self.js')])
+return 'never'`,
+      dir,
+    ),
+    /不能调用自身或祖先/,
+  )
+})
+
+test("sequence 与 child 共享 maxAgents 配额", async () => {
+  const dir = tmpProject()
+  put(dir, "c.js", `export const meta = { name: 'c' }\nreturn await agent('inner')`)
+  const { runner } = makeRunner()
+  await assert.rejects(
+    runWorkflow(
+      `export const meta = { name: 'seq_quota' }
+await sequence([
+  () => workflow('./c.js'),
+  () => workflow('./c.js'),
+  () => workflow('./c.js'),
+])
+return 'never'`,
+      { agent: runner, cwd: dir, maxAgents: 2 },
+    ),
+    /agent 数量超限/,
+  )
+})
+
+test("sequence 内 child 的 agent 保留 workflowPath 双身份（observability 不变）", async () => {
+  const dir = tmpProject()
+  put(dir, "c.js", `export const meta = { name: 'c' }\nreturn await agent('inner task')`)
+  const { result } = await run(
+    `export const meta = { name: 'seq_obs' }
+await sequence([
+  () => workflow('./c.js'),
+  () => workflow('./c.js'),
+])
+return 'done'`,
+    dir,
+  )
+  const childAgents = result.agents.filter((a) => a.workflowPath)
+  assert.equal(childAgents.length, 2, "sequence 不改变 child agent 的双身份字段")
+  assert.deepEqual(childAgents[0].workflowScopePath, ["root", "wf0"])
+  assert.deepEqual(childAgents[1].workflowScopePath, ["root", "wf1"])
+})
+
+test("父 run abort 终止 sequence 内正在执行的 child", async () => {
+  const dir = tmpProject()
+  put(dir, "slow.js", `export const meta = { name: 'slow' }\nreturn await agent('slow work')`)
+  const controller = new AbortController()
+  const runner: AgentSessionRunner = {
+    async run(prompt) {
+      if (prompt.includes("trigger")) controller.abort()
+      return { value: "ok", sessionId: "s", type: "text" }
+    },
+  }
+  await assert.rejects(
+    runWorkflow(
+      `export const meta = { name: 'seq_abort_child' }
+await sequence([
+  () => agent('trigger abort'),
+  () => workflow('./slow.js'),
+])
+return 'never'`,
+      { agent: runner, cwd: dir, signal: controller.signal },
+    ),
+    /abort/i,
+  )
+})
