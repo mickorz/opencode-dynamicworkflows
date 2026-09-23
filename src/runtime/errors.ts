@@ -8,6 +8,8 @@ export enum WorkflowErrorCode {
   AGENT_TIMEOUT = "AGENT_TIMEOUT",
   WORKFLOW_ABORTED = "WORKFLOW_ABORTED",
   AGENT_FAILED = "AGENT_FAILED",
+  /** 人工拒绝 checkpoint（Composite V1.1：强停止语义，非普通 failure，不可被 fallback/塔缩吞掉） */
+  CHECKPOINT_REJECTED = "CHECKPOINT_REJECTED",
 }
 
 export class WorkflowError extends Error {

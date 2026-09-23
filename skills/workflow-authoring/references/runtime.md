@@ -127,6 +127,14 @@ const best = await race([
 
 人工确认点（仅确认型）：有 UI 通道时弹权限确认（允许=true/拒绝=false）；无通道时取 `opts.default`（缺省 true），`headless: "abort"` 则抛错终止。确认结果进 journal——resume 回放不再询问，不花 token。返回值是布尔，脚本按分支处理。
 
+
+Human Reject 强停止语义（Composite V1.1）：
+- 允许 -> 返回 true，sequence 等组合节点视为 success 继续执行
+- 拒绝 -> 抛 `CHECKPOINT_REJECTED`（非普通 failure）：终止 run，fallback 不换候选、parallel 不塌缩 null
+- 中止 -> WORKFLOW_ABORTED（与其他节点一致）
+- resume：approve/reject 均从 journal 复用不重问；拒绝确定性重现，修改 prompt 文本才会重新询问
+- 作为组合节点：`() => checkpoint('是否发布？')` 直接放进 sequence/fallback 数组即可
+
 ## 迭代与续跑（resume）
 
 workflow tool 支持 `resumeFromRunId`：修改脚本后重传上次结果的 runId，未变的 agent()/checkpoint() 调用直接从 journal 回放（不调 LLM），首个变更调用及其后全部重跑。调用按位置匹配——保持前序调用不变且有序。

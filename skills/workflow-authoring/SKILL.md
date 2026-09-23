@@ -142,8 +142,11 @@ const best = await judgePanel([方案A, 方案B], { judges: 3, rubric: '正确�
 // 有界重试：until 通过即停，耗尽返回最后一次结果
 const out = await retry(() => agent('生成'), { attempts: 3, until: (r) => r && r.ok })
 
-// 人工确认点：会弹权限确认（允许=true）；回放时不再询问，不花 token
-if (!await checkpoint('即将改动生产配置，确认？')) return '已取消'
+// 人工确认点（Human Gate）：允许=true 继续；拒绝=强停止（抛 CHECKPOINT_REJECTED，
+// 不可被 fallback/parallel 吞掉）；回放时不再询问、拒绝确定性重现（改 prompt 文本才会重问）
+await checkpoint('即将改动生产配置，确认？')
+// 需要优雅处理拒绝时自己 try/catch：
+try { await checkpoint('即将改动生产配置，确认？') } catch { return '已取消' }
 ```
 
 ## 交付前语法自检（必做）

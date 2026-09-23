@@ -1072,6 +1072,14 @@ async function executeWorkflow(
     const cached = shared.resumeJournal?.get(journalKey)
     if (cached != null && cached.hash === callHash && callIndex < scope.firstMiss) {
       shared.agentCount++
+      // 回放同样确定性重現拒绝（Human Reject 强停止语义；改 prompt 文本才会重新询问）
+      if (cached.result === false) {
+        throw new WorkflowError(
+          `checkpoint 被人工拒绝（回放）："${promptText}"`,
+          WorkflowErrorCode.CHECKPOINT_REJECTED,
+          { recoverable: false },
+        )
+      }
       return cached.result
     }
     if (cached == null || cached.hash !== callHash) {
@@ -1094,6 +1102,16 @@ async function executeWorkflow(
     throwIfAborted()
     log(`checkpoint："${promptText}" -> ${JSON.stringify(reply)}`)
     shared.onAgentJournal?.({ key: journalKey, hash: callHash, result: reply })
+    // Human Reject 强停止（Composite V1.1 红线4）：拒绝不是普通 failure——
+    // 不可被 fallback 换候选、不可被 parallel 塔缩 null，直接终止 run；
+    // journal 已记录拒绝事实，resume 确定性重现（改 prompt 才会重问）
+    if (reply === false) {
+      throw new WorkflowError(
+        `checkpoint 被人工拒绝："${promptText}"（Human Reject：流程停止，不触发自动降级）`,
+        WorkflowErrorCode.CHECKPOINT_REJECTED,
+        { recoverable: false },
+      )
+    }
     return reply
   }
 
