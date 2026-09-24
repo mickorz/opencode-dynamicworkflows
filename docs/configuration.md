@@ -1,28 +1,22 @@
-# 配置参考：安装方式、配置字段、升级与卸载
+# Configuration Reference: Install Modes, Config Fields, Upgrade & Uninstall
 
-> 本页是配置的权威参考。第一次安装只需要 [npx install 一条命令](getting-started.md)，本页供需要精细控制的场景。
+[**English**](./configuration.md) | [简体中文](./zh-CN/configuration.md)
 
-## 三种安装方式对比
+> This page is the authoritative configuration reference. First-time installs only need the [one-command npx install](getting-started.md); this page is for fine-grained control.
 
-| 方式 | 生效范围 | 版本管理 | 适用场景 |
-|------|---------|---------|---------|
-| 一：全局安装（推荐） | 所有项目 | OpenCode 全局缓存，删缓存升级 | 个人机器统一用最新 |
-| 二：项目级包名 | 单项目 | OpenCode 全局缓存 | 仅个别项目启用 |
-| 三：项目 node_modules 锁定 | 单项目 | 项目 package.json 锁定 | 团队协作、离线/内网、版本一致性要求高 |
+## Three Install Modes Compared
 
-安装器（`npx @mickorz/opencode-dynamic-workflows install`）覆盖以上三种，交互选择后自动完成配置合并（JSONC 增量合并，保留注释与格式）与 skill 拷贝，修改过的配置文件留 `.bak` 备份。以下为各方式的手动配置等价物。
+| Mode | Scope | Version management | Best for |
+| ---- | ----- | ------------------ | -------- |
+| 1. Global (recommended) | All projects | OpenCode global cache; clear cache to upgrade | Personal machines on latest |
+| 2. Project-level package name | One project | OpenCode global cache | Enabling for select projects |
+| 3. Project node_modules pinned | One project | Pinned in package.json | Team collaboration, offline/intranet, strict version consistency |
 
-### 方式一：全局安装
+The installer (`npx @mickorz/opencode-dynamic-workflows install`) covers all three: after interactive selection it merges configs automatically (incremental JSONC merge preserving comments and formatting), copies skills, and leaves `.bak` backups of modified files. Below are the manual equivalents for each mode.
 
-`~/.config/opencode/opencode.json`（server 侧）：
+### Mode 1: Global Install
 
-```json
-{
-  "plugin": ["@mickorz/opencode-dynamic-workflows"]
-}
-```
-
-`~/.config/opencode/tui.json`（TUI 侧，**必须独立配置**，不会从 opencode.json 继承）：
+`~/.config/opencode/opencode.json` (server side):
 
 ```json
 {
@@ -30,15 +24,23 @@
 }
 ```
 
-全局模式下 skill 由安装器拷贝到 `~/.config/opencode/skills/`（OpenCode 原生扫描目录），无需额外配置。
+`~/.config/opencode/tui.json` (TUI side, **must be configured separately** — not inherited from opencode.json):
 
-> 无需手动 `npm install` 本包：OpenCode 启动时检测到 `plugin` 里的包名会自动从 npm 拉取并缓存到 `~/.cache/opencode/packages/`。
+```json
+{
+  "plugin": ["@mickorz/opencode-dynamic-workflows"]
+}
+```
 
-### 方式二：项目级包名
+In global mode the installer copies skills to `~/.config/opencode/skills/` (OpenCode's native scan directory); no extra config needed.
 
-发给同事或不打算全局生效时，在目标项目根目录放两份配置：
+> No manual `npm install` of this package needed: on startup OpenCode detects the package name in `plugin`, fetches it from npm, and caches it under `~/.cache/opencode/packages/`.
 
-`opencode.json`：
+### Mode 2: Project-Level Package Name
+
+For handing to colleagues or when you don't want global effect, put two config files in the target project root:
+
+`opencode.json`:
 
 ```json
 {
@@ -49,7 +51,7 @@
 }
 ```
 
-`tui.json`（与 opencode.json 同目录）：
+`tui.json` (same directory as opencode.json):
 
 ```json
 {
@@ -57,18 +59,18 @@
 }
 ```
 
-> 项目级 `skills.paths` 需要先在项目里 `npm install @mickorz/opencode-dynamic-workflows`。**相对路径基准**：`plugin` 相对配置文件所在目录解析；`skills.paths` 相对 OpenCode 启动目录解析。
+> Project-level `skills.paths` requires `npm install @mickorz/opencode-dynamic-workflows` in the project first. **Relative-path bases**: `plugin` resolves relative to the config file's directory; `skills.paths` resolves relative to OpenCode's startup directory.
 
-### 方式三：项目 node_modules 锁定（团队协作推荐）
+### Mode 3: Project node_modules Pinned (Recommended for Teams)
 
 ```bash
-cd 你的项目
+cd your-project
 npm install @mickorz/opencode-dynamic-workflows
 ```
 
-版本写入 package.json 随 git 提交，团队成员 `npm install` 后即用。配置里不写包名，写相对路径引用：
+The version lands in package.json and travels with git; teammates just `npm install`. The config references the relative path instead of the package name:
 
-`opencode.json`：
+`opencode.json`:
 
 ```json
 {
@@ -79,7 +81,7 @@ npm install @mickorz/opencode-dynamic-workflows
 }
 ```
 
-`tui.json`：
+`tui.json`:
 
 ```json
 {
@@ -87,55 +89,55 @@ npm install @mickorz/opencode-dynamic-workflows
 }
 ```
 
-## 配置字段说明
+## Config Field Reference
 
-| 字段 | 位置 | 取值 | 说明 |
-|------|------|------|------|
-| `plugin` | opencode.json | 包名（方式一/二）或 `./node_modules/...` 相对路径（方式三） | server 侧加载包内 `dist/index.js`，注册 `workflow` 与 `workflow_control` 工具 |
-| `plugin` | tui.json | 同上 | TUI 侧经包内 `exports["./tui"]` 加载 sidebar 实时树。**漏配只丢实时树，不影响工作流功能** |
-| `skills.paths` | opencode.json | 包内 `skills` 目录 | 手动配置时挂载 workflow-authoring / workflow-optimize skill；用安装器时不需要（已拷贝到 skill 标准目录） |
+| Field | File | Value | Description |
+| ----- | ---- | ----- | ----------- |
+| `plugin` | opencode.json | Package name (modes 1/2) or `./node_modules/...` relative path (mode 3) | Server side loads `dist/index.js` from the package, registering the `workflow` and `workflow_control` tools |
+| `plugin` | tui.json | Same as above | TUI side loads the sidebar live tree via the package's `exports["./tui"]`. **Missing it only loses the live tree, workflows still work** |
+| `skills.paths` | opencode.json | The package's `skills` directory | Mounts the workflow-authoring / workflow-optimize skills when configuring manually; unnecessary with the installer (already copied to the standard skill directory) |
 
-skill 的两个落位机制二选一即可：安装器**拷贝**到 `~/.config/opencode/skills/`（全局）或 `.agents/skills/`（项目），或手动配置 `skills.paths` **引用**包内目录。重复配置不冲突，但没必要。
+The two skill placement mechanisms are either-or: the installer **copies** to `~/.config/opencode/skills/` (global) or `.agents/skills/` (project), or you configure `skills.paths` to **reference** the in-package directory. Duplication doesn't conflict but is pointless.
 
-## 生效与验证
+## Taking Effect & Verification
 
-- 任何配置改动后**必须重启 OpenCode**（配置只在启动时读取）
-- 验证：问 Main Agent "你有哪些工具？"应见 `workflow`；ctrl+p → Plugins 应见本插件 active
+- After any config change you **must restart OpenCode** (config is only read at startup)
+- Verify: ask the Main Agent "what tools do you have?" — `workflow` should appear; ctrl+p → Plugins should show this plugin active
 
-## 升级
+## Upgrade
 
-| 安装方式 | 升级方法 |
-|---------|---------|
-| 一（全局） | `npx @mickorz/opencode-dynamic-workflows update`，或删缓存后重启自动拉最新（见下） |
-| 二（项目级包名） | 同上（与方式一共享全局缓存） |
-| 三（锁定版本） | `npm update @mickorz/opencode-dynamic-workflows`，无需清 OpenCode 缓存 |
+| Install mode | How to upgrade |
+| ------------ | -------------- |
+| 1 (global) | `npx @mickorz/opencode-dynamic-workflows update`, or clear cache and restart to auto-pull latest (below) |
+| 2 (project package name) | Same as mode 1 (shares the global cache) |
+| 3 (pinned) | `npm update @mickorz/opencode-dynamic-workflows`, no OpenCode cache clearing needed |
 
-方式一/二手动清缓存（PowerShell）：
+Clearing the cache manually for modes 1/2 (PowerShell):
 
 ```powershell
 Remove-Item -Recurse -Force $env:USERPROFILE\.cache\opencode\packages\@mickorz
 ```
 
-bash 等价：
+bash equivalent:
 
 ```bash
 rm -rf ~/.cache/opencode/packages/@mickorz
 ```
 
-> npx 自身也有缓存且可能钉住旧版本（doctor 会 WARN 提示）。需要强制用最新版安装器时运行 `npx @mickorz/opencode-dynamic-workflows@latest ...`。
+> npx itself also caches and may pin an old version (doctor warns). To force the latest installer, run `npx @mickorz/opencode-dynamic-workflows@latest ...`.
 
-## 卸载
+## Uninstall
 
 ```powershell
 npx @mickorz/opencode-dynamic-workflows uninstall
 ```
 
-交互式检测三种安装方式的存在项（零种直接退出，多种可勾选），逐项移除配置条目、清理拷贝的 skill，锁定模式可选一并 `npm uninstall`。只剩空壳的配置文件会整文件删除。
+Interactively detects which of the three modes exist (exits if none, checkboxes when several), removes config entries one by one, cleans copied skills, and optionally `npm uninstall` for pinned mode. Config files left as empty shells get deleted entirely.
 
-## 缓存与日志位置（排障参考）
+## Cache & Log Locations (Troubleshooting Reference)
 
-| 内容 | 位置 |
-|------|------|
-| OpenCode 拉取的插件包 | `~/.cache/opencode/packages/@mickorz/opencode-dynamic-workflows/` |
-| OpenCode 日志 | `~/.local/share/opencode/log/opencode.log`（Windows：`%USERPROFILE%\.local\share\opencode\log\`，大文件注意取尾部） |
-| 工作流 journal（断点续跑数据） | 项目目录下 `.opencode-workflows/journal/<runId>.json` |
+| Item | Location |
+| ---- | -------- |
+| Plugin package fetched by OpenCode | `~/.cache/opencode/packages/@mickorz/opencode-dynamic-workflows/` |
+| OpenCode logs | `~/.local/share/opencode/log/opencode.log` (Windows: `%USERPROFILE%\.local\share\opencode\log\`; mind the tail on big files) |
+| Workflow journal (resume data) | `.opencode-workflows/journal/<runId>.json` under the project directory |

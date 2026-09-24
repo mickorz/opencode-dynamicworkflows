@@ -1,102 +1,104 @@
-# 常见问题排查
+# Troubleshooting
 
-> 排查任何问题的第一步：终端运行 `npx @mickorz/opencode-dynamic-workflows doctor`（只读检查，输出 [OK]/[WARN]/[FAIL] 清单），把 FAIL 项对照下表处理。
+[**English**](./troubleshooting.md) | [简体中文](./zh-CN/troubleshooting.md)
 
-## 安装类
+> First step for any problem: run `npx @mickorz/opencode-dynamic-workflows doctor` in a terminal (read-only check printing an [OK]/[WARN]/[FAIL] list), then match the FAIL items against the sections below.
 
-**工具列表里没有 `workflow`**
+## Installation
 
-1. 确认改的是**两份**配置：`opencode.json` 和 `tui.json` 都需要 `plugin` 条目
-2. 确认改完**重启了 OpenCode**（配置只在启动时读取）
-3. `npm view @mickorz/opencode-dynamic-workflows version` 能看到版本号；看不到说明 npm 源异常或新发版还在 CDN 缓存中（等几分钟再试）
-4. 检查包缓存目录是否完整：`~/.cache/opencode/packages/@mickorz/opencode-dynamic-workflows/`（Windows PowerShell：`dir $env:USERPROFILE\.cache\opencode\packages\@mickorz`）
+**`workflow` missing from the tool list**
 
-**skill 列表里没有 `workflow-authoring`**
+1. Confirm you edited **both** configs: `opencode.json` and `tui.json` each need a `plugin` entry
+2. Confirm you **restarted OpenCode** after editing (config is only read at startup)
+3. `npm view @mickorz/opencode-dynamic-workflows version` should print a version; if not, the npm registry may be flaky or the fresh release is still propagating through the CDN (retry in a few minutes)
+4. Check the package cache directory exists intact: `~/.cache/opencode/packages/@mickorz/opencode-dynamic-workflows/` (Windows PowerShell: `dir $env:USERPROFILE\.cache\opencode\packages\@mickorz`)
 
-- 用安装器装的：确认 `~/.config/opencode/skills/workflow-authoring/SKILL.md`（全局）或项目 `.agents/skills/`（项目级）存在，然后重启 OpenCode
-- 手动配置的：确认 `skills.paths` 指向包内 `skills` 目录，且相对路径基准是 **OpenCode 启动目录**（不是配置文件目录，两者容易搞混）
+**`workflow-authoring` missing from the skill list**
 
-**TUI 里插件不显示 active / sidebar 没有实时树**
+- Installed via the installer: confirm `~/.config/opencode/skills/workflow-authoring/SKILL.md` (global) or the project's `.agents/skills/` (project-level) exists, then restart OpenCode
+- Configured manually: confirm `skills.paths` points at the in-package `skills` directory, and that the relative-path base is **OpenCode's startup directory** (not the config file's directory — an easy mix-up)
 
-- 只影响实时树展示，工作流功能本身不受影响
-- 检查 `tui.json` 是否配置了 `plugin` 条目（TUI 侧与 opencode.json 分离，不自动继承）
+**Plugin not showing active in TUI / no live tree in sidebar**
 
-**npx 命令报"不是内部或外部命令"（git-bash）**
+- Affects the live tree only; workflow functionality itself is unaffected
+- Check `tui.json` has a `plugin` entry (the TUI side is separate from opencode.json and does not inherit)
 
-- Windows 的 git-bash 对 npm bin 转发有兼容问题；改用 PowerShell 或 cmd 运行 npx 命令
+**npx reports "not recognized as a command" (git-bash)**
 
-**npx 跑的是旧版本**
+- Windows git-bash has issues with npm bin forwarding; run npx commands in PowerShell or cmd instead
 
-- npx 缓存可能钉住旧版。doctor 检测到"CLI 版本落后于 npm 最新"时会 WARN；强制用最新：`npx @mickorz/opencode-dynamic-workflows@latest ...`
+**npx runs an old version**
 
-## 运行类
+- The npx cache may pin an old release. doctor warns when "CLI version behind npm latest"; force the latest with `npx @mickorz/opencode-dynamic-workflows@latest ...`
 
-**脚本报错与 `meta` 相关**
+## Runtime
 
-- 首条语句必须是 `export const meta = { name: 'xxx', description: '...' }`，且 meta 必须是纯字面量
-- 让 Main Agent 执行脚本时强调"原样执行不要改动"；markdown 围栏会被自动剥离
+**Script errors about `meta`**
 
-**脚本报错禁用 API（Date.now 等）**
+- The first statement must be `export const meta = { name: 'xxx', description: '...' }`, and meta must be a pure literal
+- When asking the Main Agent to run a script, stress "execute exactly as-is"; markdown fences are stripped automatically
 
-- 沙箱禁止 `import` / `require` / `Date.now()` / `Math.random()` / `new Date()`（确定性重放要求）
-- 时间戳、随机值改为通过 workflow 工具的 `args` 参数注入，脚本内用全局 `args` 读取
+**Script errors about disabled APIs (Date.now etc.)**
 
-**改完脚本重跑，结果像是旧逻辑**
+- The sandbox forbids `import` / `require` / `Date.now()` / `Math.random()` / `new Date()` (deterministic-replay requirement)
+- Inject timestamps and random values via the workflow tool's `args` parameter instead, read through the global `args` in scripts
 
-- 根因：script 原文参数需经 Main Agent 上下文，上一轮 Read 的旧内容可能被复用
-- 解法：改用 scriptPath 传文件路径（服务端执行时读盘，必然是磁盘当前版）：
-  `用 workflow 工具执行 scripts/xxx.js，scriptPath 传该路径`
-- script 原文参数仍兼容；两个都传或都缺会报错提醒
+**Rerunning an edited script still behaves like the old logic**
 
-**agent 报 `agent "x" 超时 (ms)`**
+- Root cause: the `script` raw-text parameter travels through the Main Agent's context, which may reuse stale content from the previous turn's Read
+- Fix: pass a file path via scriptPath instead (the server reads the file at execution time, guaranteed current on disk):
+  `Execute scripts/xxx.js with the workflow tool, scriptPath = that path`
+- The `script` raw-text parameter still works; passing both or neither errors out
 
-- 单 agent 调大或省略 `timeoutMs`（省略且未设 run 级缺省则不设硬超时）；run 级调 `agentTimeoutMs` 入参
-- 注意超时会占用 `retries` 重试次数：重试也超时说明任务本身太慢，先拆小任务或换模型
+**Agent reports `agent "x" timed out (ms)`**
 
-**agent 返回 null 或全部 null**
+- Raise or omit the agent's `timeoutMs` (omitted with no run-level default means no hard timeout); adjust run-wide via the `agentTimeoutMs` tool arg
+- Note timeouts consume `retries`: if retries also time out, the task itself is too slow — split it or switch models first
 
-- 可恢复失败（网络/超时/限流）重试耗尽后该 agent 返回 null，不抛错——重跑一次即可；频繁出现加 `agentRetries: 2` 参数（上限 3）
-- 单个 agent 想失败即终止，不要放进 `parallel`，直接 `await agent(...)`
+**Agents return null (or everything null)**
 
-**agent 报 `agent model 必须是 provider/modelId 格式`**
+- After a recoverable failure (network/timeout/rate-limit) exhausts retries, the agent returns null without throwing — one rerun usually fixes it; if frequent, add `agentRetries: 2` (cap 3)
+- For fail-fast semantics on a single agent, don't put it in `parallel` — `await agent(...)` directly
 
-- `model` 参数必须是完整 `"provider/modelId"`（如 `openai/gpt-4o-mini`），裸 `modelId` 会被拒绝
-- 不知道 provider 前缀：看 `opencode.json` 里 `model` 字段的写法，照抄前缀
+**Agent reports `agent model must be provider/modelId format`**
 
-**log 出现 `tier "xxx" 未配置，回退会话默认模型`**
+- The `model` parameter must be the full `"provider/modelId"` (e.g. `openai/gpt-4o-mini`); bare `modelId` is rejected
+- Don't know your provider prefix? Look at how the `model` field is written in `opencode.json` and copy the prefix
 
-- tier 名没在配置文件里：全局 `~/.config/opencode/workflows/model-tiers.json` 或项目 `.opencode-workflows/model-tiers.json` 加上对应键（不中断运行，只是回退默认模型）
+**Log shows `tier "xxx" not configured, falling back to session default model`**
 
-**schema 模式 agent 直接失败（provider_bad_request / 400）**
+- The tier name is missing from config: add the key in global `~/.config/opencode/workflows/model-tiers.json` or project `.opencode-workflows/model-tiers.json` (non-fatal; just falls back to the default model)
 
-- 结构化输出依赖模型支持 tool_choice required；部分网关/模型不支持（实测某些 OpenAI 兼容网关返回 400）
-- 换支持结构化输出的模型，或去掉 `schema` 用自然语言输出
+**Schema-mode agent fails outright (provider_bad_request / 400)**
 
-**写文件的任务"跑完没效果"**
+- Structured output relies on the model supporting tool_choice required; some gateways/models don't (some OpenAI-compatible gateways return 400 in practice)
+- Switch to a model that supports structured output, or drop `schema` and parse natural-language output
 
-- `agent()` 默认用只读的 explore 子代理。写文件需显式传 `agentType: 'general'`，多写型任务互不覆盖可再加 `isolation: 'worktree'`
+**File-writing tasks "complete with no effect"**
 
-**Esc 中断后后台任务还在跑**
+- `agent()` defaults to the read-only explore sub-agent. Writing files requires `agentType: 'general'` explicitly; for parallel writers not clobbering each other, add `isolation: 'worktree'`
 
-- 前台工作流 Esc 即全部取消（abort 级联）；但 `background: true` 启动的后台 run **不受 Esc 影响**（设计如此），用 `workflow_control` 工具停止：`{ "action": "stop", "runId": "run-xxx" }`
+**Background task keeps running after Esc**
 
-**续跑报"找不到 run 的 journal"**
+- Foreground workflows cancel fully on Esc (abort cascades); but background runs started with `background: true` are **unaffected by Esc** (by design) — stop them with the `workflow_control` tool: `{ "action": "stop", "runId": "run-xxx" }`
 
-- journal 落盘在**启动 OpenCode 的项目目录**下 `.opencode-workflows/journal/<runId>.json`；换目录启动会导致找不到，回到原目录或省略 `resumeFromRunId` 开新 run
+**Resume reports "journal for run not found"**
 
-## 现象确认类（不是故障）
+- Journals persist under the project directory where OpenCode **was started**: `.opencode-workflows/journal/<runId>.json`; starting from another directory breaks the lookup — return to the original directory or omit `resumeFromRunId` to start fresh
 
-| 现象 | 说明 |
-|------|------|
-| 主会话看不到子任务的中间过程 | 设计目的：上下文隔离。细节在子会话里，父会话内 subagent 导航查看 |
-| 子会话不在会话列表里 | 平台过滤了子会话；从父会话的 subagent 导航进入 |
-| Main Agent 回复只说"见上方 JSON 输出" | 综合结果在工具返回的 `## 结果` JSON 块里；想展开就说"把结果里的总览完整复述出来" |
-| agent 摘要状态为 `[缓存]` | 结果来自上次运行的 journal 回放（断点续跑/重跑未变部分），未消耗 token |
-| 带 schema 的节点，点击进子会话正文是空白 | 结构化输出的正常形态：结果在 StructuredOutput 工具调用里，不在 assistant 正文。workflow 返回值与 journal 里的结果完整无损，以它们为准 |
-| 结果 JSON 末尾有"结果过大已截断" | 工具输出有 50KB 平台预算；完整结构仍在 metadata 中 |
+## Confirmed Non-Bugs
 
-## 仍然解决不了
+| Symptom | Explanation |
+| ------- | ----------- |
+| No intermediate sub-task output in the main conversation | By design: context isolation. Details live in sub-sessions; inspect via subagent navigation inside the parent |
+| Sub-sessions absent from the session list | The platform filters child sessions; enter via subagent navigation from the parent |
+| Main Agent only says "see the JSON output above" | The synthesized result is in the tool output's `## Result` JSON block; to expand it, say "repeat the overview from the result in full" |
+| Agent summary status `[cached]` | The result was replayed from a previous run's journal (resume / rerun of unchanged parts) — no tokens spent |
+| Clicking into a schema node's sub-session shows a blank body | Normal shape for structured output: the result lives in the StructuredOutput tool call, not the assistant body. The workflow return value and journal hold the complete result — trust those |
+| Result JSON ends with "result too large, truncated" | Tool output has a 50KB platform budget; the full structure remains in metadata |
 
-1. 收集 `doctor` 完整输出
-2. 取 OpenCode 日志尾部：`%USERPROFILE%\.local\share\opencode\log\opencode.log`（Linux/mac：`~/.local/share/opencode/log/`）
-3. 到 [GitHub Issues](https://github.com/mickorz/opencode-dynamicworkflows/issues) 提交，附上以上信息与复现步骤
+## Still Stuck
+
+1. Collect the full `doctor` output
+2. Grab the tail of the OpenCode log: `%USERPROFILE%\.local\share\opencode\log\opencode.log` (Linux/macOS: `~/.local/share/opencode/log/`)
+3. File an issue at [GitHub Issues](https://github.com/mickorz/opencode-dynamicworkflows/issues) with the above and reproduction steps
