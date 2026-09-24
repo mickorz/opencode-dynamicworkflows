@@ -1,130 +1,132 @@
-# Getting Started：从 0 到第一个工作流
+# Getting Started: From Zero to Your First Workflow
 
-> 面向完全不了解本项目的读者。完成本教程约需 10 分钟，结束后你将跑通一个 3 个子代理并行工作的工作流，并读懂它的全部输出。
+[**English**](./getting-started.md) | [简体中文](./zh-CN/getting-started.md)
 
-## 0. 你将完成什么
+> Written for readers brand new to this project. The tutorial takes about 10 minutes; at the end you will have run a workflow with 3 sub-agents working in parallel and will be able to read every part of its output.
 
-对 AI 说一句"并行分析这些文件"，插件会：
+## 0. What You Will Accomplish
 
-1. 让 Main Agent 生成一段编排脚本（你不用写代码）
-2. 在沙箱里执行脚本，把任务分发给多个独立子会话**并行**执行
-3. 在 TUI 侧边栏实时展示进度树
-4. 只把**汇总结果**和每个子任务的耗时/token 统计返回主会话——中间过程不会污染你的对话上下文
+Say "analyze these files in parallel" to the AI, and the plugin will:
 
-## 1. 前提条件
+1. Have the Main Agent generate an orchestration script (you write no code)
+2. Execute the script in a sandbox, dispatching tasks to multiple independent sub-sessions running **in parallel**
+3. Show a live progress tree in the TUI sidebar
+4. Return only the **aggregated result** plus per-task timing/token stats to the main conversation — intermediate processes never pollute your chat context
 
-| 条件 | 说明 | 检查方法 |
-|------|------|---------|
-| OpenCode v1 | 已安装并配置好 provider/模型（能正常对话） | 终端运行 `opencode --version` 输出 1.x |
-| provider/模型 | OpenCode 里能正常聊天 | 在 OpenCode 里随便问一句话 |
-| Node.js 18+ 与 npm | 仅 npx 安装器和 npm 操作需要 | `node --version` 输出 v18 或更高 |
+## 1. Prerequisites
 
-未安装 OpenCode 见[官方文档](https://opencode.ai/docs/)。Windows 用户请在 PowerShell 或 cmd 中运行下文所有 npx 命令。
+| Requirement | Details | How to check |
+| --- | --- | --- |
+| OpenCode v1 | Installed with a working provider/model (normal conversation) | `opencode --version` prints 1.x |
+| provider/model | Chat works inside OpenCode | Ask it anything |
+| Node.js 18+ and npm | Only needed for the npx installer and npm operations | `node --version` prints v18+ |
 
-## 2. 安装插件
+If OpenCode isn't installed, see the [official docs](https://opencode.ai/docs/). Windows users: run all npx commands below in PowerShell or cmd.
 
-在任意目录运行：
+## 2. Install the Plugin
+
+Run in any directory:
 
 ```powershell
 npx @mickorz/opencode-dynamic-workflows install
 ```
 
-交互式流程：
+The interactive flow:
 
-1. 检测 OpenCode 版本（非 v1 会确认）
-2. 选择安装方式——第一次建议选**全局安装**（所有项目生效）
-3. 是否安装 skill——选**是**（workflow-authoring 是 Main Agent 写脚本的说明书）
-4. 确认变更清单后执行；原有配置自动留 `.bak` 备份
+1. Detects the OpenCode version (confirms if not v1)
+2. Choose an install mode — for a first install choose **global** (works for all projects)
+3. Install the skill? — choose **yes** (workflow-authoring is the manual the Main Agent uses to write scripts)
+4. Confirm the change list and execute; the original config is backed up as `.bak`
 
-安装器会修改两份配置（`opencode.json` 与 `tui.json` 各加一条 `plugin`），并把两个 skill 拷贝到 `~/.config/opencode/skills/`。
+The installer modifies two config files (adds one `plugin` entry each to `opencode.json` and `tui.json`) and copies two skills to `~/.config/opencode/skills/`.
 
-## 3. 重启并验证
+## 3. Restart and Verify
 
-**重启 OpenCode**（配置只在启动时读取），然后：
+**Restart OpenCode** (config is only read at startup), then:
 
-1. 问 Main Agent：`你有哪些工具？`——列表里应有 `workflow`
-2. 问：`你有哪些 skills？`——应有 `workflow-authoring`
-3. （可选）TUI 里 ctrl+p → Plugins——插件应显示 active；之后每次运行工作流，sidebar 会出现实时进度树
-4. （可选）终端运行 `npx @mickorz/opencode-dynamic-workflows doctor`——应全是 [OK]，输出示例：
+1. Ask the Main Agent: `What tools do you have?` — `workflow` should be in the list
+2. Ask: `What skills do you have?` — `workflow-authoring` should appear
+3. (Optional) In the TUI, ctrl+p → Plugins — the plugin should show active; from then on, every workflow run gets a live progress tree in the sidebar
+4. (Optional) Run `npx @mickorz/opencode-dynamic-workflows doctor` in a terminal — everything should be [OK]:
 
 ```
 [OK] Node.js v24.18.0
 [OK] npm 11.16.0
 [OK] OpenCode 1.18.30
 ...
-检查完成：N 项 OK，0 项 WARN，0 项 FAIL
+Check complete: N OK, 0 WARN, 0 FAIL
 ```
 
-缺 `workflow` 或缺 skill 时，直接跳到 [troubleshooting](troubleshooting.md)。
+If `workflow` or the skill is missing, jump straight to [troubleshooting](troubleshooting.md).
 
-## 4. 跑第一个工作流
+## 4. Run Your First Workflow
 
-对 Main Agent 原样粘贴：
+Paste this to the Main Agent as-is:
 
 ```
-用 workflow 工具执行以下脚本，原样执行不要改动：
+Execute the following script with the workflow tool, exactly as-is:
 
-export const meta = { name: 'smoke_test', description: '最小冒烟：3 个 agent' }
+export const meta = { name: 'smoke_test', description: 'minimal smoke: 3 agents' }
 
 phase('Scan')
-const info = await agent('列出你当前目录下的文件，只输出前 10 行')
+const info = await agent('List the files in your current directory, output only the first 10 lines')
 
 phase('Echo')
 const results = await parallel([
-  () => agent('用一句话说明什么是工作流编排'),
-  () => agent('用一句话说明什么是确定性重放'),
+  () => agent('Explain workflow orchestration in one sentence'),
+  () => agent('Explain deterministic replay in one sentence'),
 ])
 return { info, results }
 ```
 
-这段脚本的含义：先 1 个 agent 列目录（Scan 阶段），再 2 个 agent 并行回答两个问题（Echo 阶段），最后把三个结果打包返回。
+What this script means: first one agent lists the directory (Scan phase), then two agents answer two questions in parallel (Echo phase), and finally the three results are packed up and returned.
 
-运行期间 sidebar 出现实时树属正常现象；整个脚本通常几十秒内完成。
+A live tree appearing in the sidebar during the run is normal; the whole script usually finishes within tens of seconds.
 
-## 5. 读懂结果
+## 5. Read the Result
 
-工具返回分四部分：
+The tool output has four parts:
 
 ```
-工作流 smoke_test 完成：3 个 agent，耗时 11.6s，共 612 tokens（runId: run-xxxxxxx）
-阶段: Scan > Echo
+Workflow smoke_test completed: 3 agents, 11.6s, 612 tokens total (runId: run-xxxxxxx)
+Phases: Scan > Echo
 
-agent 摘要:
-  [成功] <任务名> (Scan) 120 tok ($0.0012)
-  [成功] <任务名> (Echo) 96 tok ($0.0009)
-  [成功] <任务名> (Echo) 88 tok ($0.0008)
+Agent summary:
+  [ok] <task name> (Scan) 120 tok ($0.0012)
+  [ok] <task name> (Echo) 96 tok ($0.0009)
+  [ok] <task name> (Echo) 88 tok ($0.0008)
 
-## 结果
+## Result
 { "info": "...", "results": ["...", "..."] }
 ```
 
-（数值因模型而异；cost 行仅在 provider 返回成本数据时出现）
+(Values vary by model; the cost column appears only when the provider returns cost data.)
 
-- **头部统计**：agent 总数、失败/中止数、总耗时、总 token、runId（续跑与查询进度时用）
-- **agent 摘要**：每个子会话一行——状态（成功/失败/中止/缓存）、归属阶段、token 消耗；`[缓存]` 表示该结果来自上次运行的 journal 回放，没花 token
-- **`## 结果`**：脚本 `return` 的值（JSON 格式），这是你真正要看的产出
-- **尾部提示**：`提示：迭代不重烧——修改脚本后重传 resumeFromRunId=...`，断点续跑入口，见 [how-to-guides](how-to-guides.md)
+- **Header stats**: total agents, failures/aborts, total duration, total tokens, and the runId (used for resuming and progress queries)
+- **Agent summary**: one line per sub-session — status (ok/failed/aborted/cached), phase, token usage; `[cached]` means the result was replayed from a previous run's journal and cost no tokens
+- **`## Result`**: the value your script `return`ed (JSON) — this is the actual output you care about
+- **Footer hint**: `Tip: iterate without re-burning tokens — pass resumeFromRunId=... after editing the script`, the entry point for resuming; see [how-to-guides](how-to-guides.md)
 
-两个"看不到"是**设计如此**，不是故障：
+Two things you *don't* see are **by design**, not bugs:
 
-1. 主会话消息里只有一次工具调用和一份结果，看不到子会话的中间过程——这正是插件的目的（上下文隔离）。想看某个子任务干了什么，在父会话内用 subagent 导航切换。
-2. 子会话不会出现在普通会话列表里（平台过滤了子会话），同样从父会话的 subagent 导航进入。
+1. The main conversation shows only one tool call and one result — no intermediate sub-session output. That is the entire point of the plugin (context isolation). To see what a sub-task did, use subagent navigation inside the parent session.
+2. Sub-sessions don't appear in the normal session list (the platform filters child sessions); enter them the same way, via subagent navigation from the parent.
 
-进阶一步：子任务可以用 `model` 指定不同模型、用 `schema` 约束返回 JSON——见 [how-to-guides](how-to-guides.md) 的对应章节。
+One step further: sub-tasks can pick a different `model` and constrain returns to JSON with `schema` — see the corresponding chapters in [how-to-guides](how-to-guides.md).
 
-## 6. 试第二个：自然语言版
+## 6. Try a Second One: the Natural-Language Version
 
-上面是你手动递脚本；平时直接说需求，Main Agent 会自己生成脚本：
+Above you handed over a script manually; in everyday use you just state the goal and the Main Agent generates the script itself:
 
 ```
-用 workflow 并行分析 docs 目录下所有 markdown 文件的核心内容，然后汇总成一份要点清单
+Use workflow to analyze the core content of all markdown files under the docs directory in parallel, then summarize into a bullet-point list
 ```
 
-观察它生成的脚本你会发现固定套路：`phase` 分阶段 → `parallel` 并行分析 → 最后一个 agent 综合汇总。这套"扇出-汇总"模式是本插件最常用的形态，更多范例见 skill 内置的 [fan-out-and-synthesize.js](https://github.com/mickorz/opencode-dynamicworkflows/blob/main/skills/workflow-authoring/examples/fan-out-and-synthesize.js)。
+Watch the script it generates and you'll notice a fixed pattern: `phase` to split stages → `parallel` for parallel analysis → one final agent to synthesize. This "fan-out and synthesize" shape is the most common form for this plugin; more examples live in the skill's built-in [fan-out-and-synthesize.js](https://github.com/mickorz/opencode-dynamicworkflows/blob/main/skills/workflow-authoring/examples/fan-out-and-synthesize.js).
 
-## 7. 下一步与求助
+## 7. Next Steps and Getting Help
 
-- 长任务放后台、断点续跑、质量 DSL、写文件任务 → [docs/how-to-guides.md](how-to-guides.md)
-- 三种安装方式、升级卸载 → [docs/configuration.md](configuration.md)
-- 出问题 → [docs/troubleshooting.md](troubleshooting.md)
-- DSL 全部 API → [workflow-authoring DSL 参考](https://github.com/mickorz/opencode-dynamicworkflows/blob/main/skills/workflow-authoring/references/runtime.md)
+- Background long tasks, resume, quality DSL, file-writing tasks → [docs/how-to-guides.md](how-to-guides.md)
+- Three install modes, upgrade & uninstall → [docs/configuration.md](configuration.md)
+- Something broke → [docs/troubleshooting.md](troubleshooting.md)
+- Every DSL API → [workflow-authoring DSL reference](https://github.com/mickorz/opencode-dynamicworkflows/blob/main/skills/workflow-authoring/references/runtime.md)

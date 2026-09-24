@@ -1,20 +1,23 @@
-# 进阶用法：模型编排、schema 结构化、超时重试、参数注入、后台运行、断点续跑、质量 DSL、worktree 隔离
+# How-To Guides: Model Orchestration, Schema Output, Timeouts & Retries, Parameters, Background Runs, Resume, Quality DSL, Worktree Isolation
 
-> 六个独立场景，按需取用。DSL 全部参数与语义的权威细节见 [workflow-authoring DSL 参考](https://github.com/mickorz/opencode-dynamicworkflows/blob/main/skills/workflow-authoring/references/runtime.md)。
+[**English**](./how-to-guides.md) | [简体中文](./zh-CN/how-to-guides.md)
 
-## 使用不同模型编排（model / tier）
+> Six independent recipes — pick what you need. For authoritative details on every DSL parameter and semantic, see the [workflow-authoring DSL reference](https://github.com/mickorz/opencode-dynamicworkflows/blob/main/skills/workflow-authoring/references/runtime.md).
 
-**场景**：不同子任务难度不同——分类、摘要、格式转换用便宜模型，核心生成（DSL、代码、评审）用强模型，省钱又保质量。
+## Model Orchestration (model / tier)
+
+**Scenario**: sub-tasks differ in difficulty — classification, summaries, and format conversion on a cheap model; core generation (DSL, code, review) on a strong model. Saves money without sacrificing quality.
 
 ```javascript
-// 方式一：显式指定模型，必须是 "provider/modelId" 完整格式
-const outline = await agent('生成大纲', { model: 'openai/gpt-4o-mini' })
+// Option 1: explicit model, must be the full "provider/modelId" format
+const outline = await agent('Generate the outline', { model: 'openai/gpt-4o-mini' })
 
-// 方式二：先配 model-tiers.json，脚本里只写层级名（推荐，换模型不改脚本）
-const draft = await agent('写正文', { tier: 'big' })
+// Option 2: configure model-tiers.json first, then reference tiers by name in
+// scripts (recommended — swap models without touching scripts)
+const draft = await agent('Write the body', { tier: 'big' })
 ```
 
-tier 配置文件（JSON）——全局 `~/.config/opencode/workflows/model-tiers.json`，项目 `.opencode-workflows/model-tiers.json`（同名键覆盖全局）：
+The tier config file (JSON) — global at `~/.config/opencode/workflows/model-tiers.json`, project-level at `.opencode-workflows/model-tiers.json` (same-name keys override global):
 
 ```json
 {
@@ -25,16 +28,16 @@ tier 配置文件（JSON）——全局 `~/.config/opencode/workflows/model-tier
 }
 ```
 
-要点：
+Key points:
 
-- `model` 必须带 provider 前缀，裸 `modelId` 会直接报错 `agent model 必须是 provider/modelId 格式`
-- 优先级：显式 `model` > `tier` > 会话默认模型
-- tier 名自定义（small/medium/big 只是惯用名）；未配置的 tier 回退会话默认模型并打一条告警（不中断）
-- 分工经验：大量廉价杂活（分类/摘要/格式检查）用小模型，少量关键生成用强模型；两者都用 schema 约束返回时互不影响
+- `model` must carry the provider prefix; a bare `modelId` fails immediately with `agent model must be provider/modelId format`
+- Priority: explicit `model` > `tier` > session default model
+- Tier names are yours to define (small/medium/big are just conventions); an unconfigured tier falls back to the session default with a warning log (non-fatal)
+- Division of labor that works: throw cheap chores (classification/summary/format checks) at small models, keep the few critical generations on strong ones; when both use schema-constrained returns they don't interfere
 
-## schema 结构化返回
+## Schema Structured Returns
 
-**场景**：编排代码要按字段消费结果（`if (result.ok)`、`result.files`），不要模型自由发挥后再自己 `JSON.parse`。
+**Scenario**: your orchestration code consumes results by field (`if (result.ok)`, `result.files`) — don't let the model freestyle and then `JSON.parse` it yourself.
 
 ```javascript
 const SCHEMA = {
@@ -47,279 +50,289 @@ const SCHEMA = {
   required: ['ok', 'summary'],
 }
 
-const result = await agent('分析这个模块的风险', { schema: SCHEMA })
-if (!result.ok) return '分析失败：' + (result.summary ?? '')
+const result = await agent('Analyze the risks of this module', { schema: SCHEMA })
+if (!result.ok) return 'analysis failed: ' + (result.summary ?? '')
 ```
 
-要点：
+Key points:
 
-- 返回值形态：带 `schema` 返回 JSON 对象（字段直接访问），不带返回 string——同一脚本混用两种调用时注意判型
-- `required` 填编排真正依赖的字段；输出经服务端校验，缺失必填字段视为失败，进入与普通 agent 相同的 retry/failed 流程
-- 实现机制：走 OpenCode 原生结构化输出（`format: json_schema`）；网关不支持时自动降级（prompt 要求 JSON + 本地宽松解析 + 必填校验），脚本无需感知
-- 已知现象：schema agent 的子会话正文可能为空（结果在 StructuredOutput 工具调用里，不在正文）——正常，不是故障，见 [troubleshooting](troubleshooting.md)
-- 与质量 DSL 组合：输出格式不稳定时 `retry(() => agent(prompt, { schema }), { until: r => r && r.ok })`
+- Return shape: with `schema` you get a JSON object (fields directly accessible); without it you get a string — mind the difference when mixing both styles in one script
+- Put the fields your orchestration truly depends on in `required`; output is validated server-side, missing required fields count as failure and enter the same retry/failed flow as any agent
+- Mechanism: uses OpenCode's native structured output (`format: json_schema`); if the gateway doesn't support it, it degrades automatically (JSON-instructed prompt + lenient local parsing + required-field validation) — scripts stay oblivious
+- Known behavior: a schema agent's sub-session body may be empty (the result lives in the StructuredOutput tool call, not the body) — normal, not a bug; see [troubleshooting](troubleshooting.md)
+- Combined with the quality DSL: when output format is flaky, `retry(() => agent(prompt, { schema }), { until: r => r && r.ok })`
 
-## 超时与重试（timeoutMs / retries）
+## Timeouts & Retries (timeoutMs / retries)
 
-**场景**：慢任务设硬超时快速止损；偶发失败（网络/限流/超时）自动重试，不让人守着。
+**Scenario**: hard timeouts to cut losses on slow tasks; automatic retries for transient failures (network/rate-limit/timeout) so nobody babysits.
 
 ```javascript
-// 单 agent 级：60 秒硬超时，可恢复失败重试 2 次（共 3 次尝试）
-const r = await agent('深度分析 docs 目录并输出要点清单', {
-  label: 'docs分析',
+// Per-agent: 60s hard timeout, 2 retries on recoverable failure (3 attempts total)
+const r = await agent('Deep-analyze the docs directory and output a bullet-point summary', {
+  label: 'docs-analysis',
   timeoutMs: 60000,
   retries: 2,
 })
 ```
 
-run 级缺省（工具入参，对本次所有 agent 生效，单 agent 参数优先）：
+Run-wide defaults (tool args, applying to all agents of this run; per-agent values win):
 
 ```
-用 workflow 工具执行以下脚本，原样执行不要改动，agentTimeoutMs 传 120000，agentRetries 传 1：
+Execute the following script with the workflow tool, exactly as-is, agentTimeoutMs=120000, agentRetries=1:
 
-export const meta = { name: 'timeout_retry_demo', description: 'run 级超时重试缺省' }
+export const meta = { name: 'timeout_retry_demo', description: 'run-level timeout/retry defaults' }
 
 const r = await Promise.all([
-  agent('任务A：分析 README 并总结', { label: 'a' }),
-  agent('任务B：分析 docs 并总结', { label: 'b', timeoutMs: 30000 }), // 单 agent 覆盖为 30 秒
+  agent('Task A: analyze README and summarize', { label: 'a' }),
+  agent('Task B: analyze docs and summarize', { label: 'b', timeoutMs: 30000 }), // per-agent override to 30s
 ])
 return r
 ```
 
-要点：
+Key points:
 
-- `timeoutMs` 毫秒；省略且未设 run 级缺省时不设硬超时；超时报错形如 `agent "x" 超时 (ms)`
-- `retries` 上限 3，默认 0；超时属于可重试失败，占用重试次数
-- 优先级：单 agent `timeoutMs` / `retries` > 工具入参 `agentTimeoutMs` / `agentRetries` > 不设超时/不重试
-- 与质量 DSL 的 `retry` 区分：DSL retry 是「直到 until 条件通过」（对结果不满意就换着再来），`retries` 是「可恢复失败后原样重试」（网络/限流/超时）；两者可叠加
+- `timeoutMs` in milliseconds; omit it (with no run-level default) for no hard timeout; the timeout error looks like `agent "x" timed out (ms)`
+- `retries` capped at 3, default 0; timeouts count as retryable failures and consume retry budget
+- Priority: per-agent `timeoutMs` / `retries` > tool args `agentTimeoutMs` / `agentRetries` > no timeout/no retry
+- Distinction from the DSL `retry`: DSL retry means "repeat until the until-condition passes" (try differently when unsatisfied); `retries` means "retry as-is after recoverable failures" (network/rate-limit/timeout); they stack
 
-## 带参数执行（args）
+## Parameterized Runs (args)
 
-**场景**：同一个脚本不改一行代码重跑多种配置（如 A/B 换模型）；或把外部值（文件列表、路径、时间戳）传进沙箱——沙箱禁用 `Date.now()` / `Math.random()`，动态值只能从 `args` 进。
+**Scenario**: rerun the same script across configurations (e.g. A/B model swaps) without touching a line; or inject external values (file lists, paths, timestamps) into the sandbox — the sandbox disables `Date.now()` / `Math.random()`, so dynamic values can only arrive via `args`.
 
-口令（以 examples/sample-project/scripts/node-detail-ab-test.js 为例，换模型重跑）：
+The instruction (using examples/sample-project/scripts/node-detail-ab-test.js as the example, rerunning with a different model):
 
 ```
-用 workflow 工具执行 scripts/node-detail-ab-test.js，原样执行不要改动，
-args 传 {"model": "biangfeng-gateway/glm-5.2"}
+Execute scripts/node-detail-ab-test.js with the workflow tool, exactly as-is,
+args = {"model": "biangfeng-gateway/glm-5.2"}
 ```
 
-脚本侧接收（该脚本的真实写法，缺省回退）：
+The receiving side (the script's actual code, with fallback defaults):
 
 ```javascript
-// args.model 可选（"provider/modelId" 形式）；缺省用会话默认模型
+// args.model is optional ("provider/modelId" form); default to the session model
 const modelOptions = {}
 if (args && typeof args.model === 'string') modelOptions.model = args.model
 
-// 展开进 agent 选项：传了就生效，没传就退回默认
+// Spread into agent options: present it applies, absent it falls back
 const structured = await agent('...', { label: 'schema-reader', ...modelOptions, schema: SCHEMA })
 ```
 
-要点：
+Key points:
 
-- `args` 是 workflow 工具入参（JSON 对象），脚本内用全局 `args` 读取，任意嵌套层级都行
-- 接收处一律先判型再取值（`typeof args.xxx === 'string'`），参数可省不报错
-- 与 resume 的交互：args 变了会影响受它控制的 prompt / model，对应调用的哈希随之变化，resume 只回放未受影响的调用（改哪重跑哪，符合预期）
-- 纯参数变更不改脚本时，也可用 `resumeFromRunId` 续跑：未变调用直接回放，只重跑参数影响到的部分
+- `args` is a workflow tool arg (a JSON object) read via the global `args` in scripts, at any nesting depth
+- Always type-check before consuming (`typeof args.xxx === 'string'`); parameters stay optional without errors
+- Interaction with resume: changed args affect the prompts/models they control, changing those calls' hashes; resume replays only unaffected calls (rerun exactly what changed, as expected)
+- Pure parameter changes without script edits can also ride `resumeFromRunId`: unchanged calls replay directly, only the parts the parameter touches rerun
 
-## 后台运行长任务
+## Background Long Tasks
 
-**场景**：大扇出分析（全仓审计、上百文件批处理）要跑几分钟，期间你还想继续对话。
+**Scenario**: a big fan-out analysis (repo-wide audit, hundreds of files) runs for minutes while you keep chatting.
 
-对 Main Agent 说：
+Say to the Main Agent:
 
 ```
-用 workflow 工具后台执行以下脚本（background: true），...（脚本内容）
+Execute the following script in the background with the workflow tool (background: true), ... (script)
 ```
 
-行为：
+Behavior:
 
-- 工具立即返回 runId，本轮对话不阻塞；运行期间可继续与 Main Agent 正常交流
-- 完成后结果**自动作为一条消息发回当前会话**，Main Agent 会接力汇报
-- 后台 run 不受 Esc 中断影响；用 `workflow_control` 工具管理：
-  - `{ "action": "status" }`——列出全部后台 run 与进度（运行中排前，含 X/N agent 统计）
-  - `{ "action": "stop", "runId": "run-xxx" }`——停止运行中的 run，已完成部分保留在 journal
-- 注意：后台 run 里的人工确认点（checkpoint）不弹窗，直接取缺省值
+- The tool returns a runId immediately without blocking this turn; you can keep talking to the Main Agent normally while it runs
+- On completion the result is **delivered back into the current session automatically as a message**, and the Main Agent picks it up
+- Background runs survive Esc; manage them with the `workflow_control` tool:
+  - `{ "action": "status" }` — list all background runs and progress (running first, with X/N agent stats)
+  - `{ "action": "stop", "runId": "run-xxx" }` — stop a running run; completed parts stay in the journal
+- Note: human checkpoints (`checkpoint`) inside background runs don't pop dialogs — they take the default value directly
 
-## 断点续跑（resume）
+## Resume from Breakpoint
 
-**场景**：100 个 agent 的批处理跑到 80 个时中断/停止了，不想重烧前 80 个的 token。
+**Scenario**: a 100-agent batch got interrupted at 80; you don't want to re-burn the first 80 agents' tokens.
 
-步骤：
+Steps:
 
-1. 记下上次结果里的 runId（输出头部与 metadata 都有）
-2. 修改脚本（例如换掉综合提示词、追加新的 agent 调用）
-3. 重新调用 workflow 工具，带上 `resumeFromRunId: "run-xxx"` 和修改后的脚本
+1. Note the runId from the previous output (in the header and metadata)
+2. Edit the script (e.g. swap the synthesis prompt, append new agent calls)
+3. Call the workflow tool again with `resumeFromRunId: "run-xxx"` and the modified script
 
-语义（务必理解，否则结果不符合预期）：
+Semantics (understand this, or results will surprise you):
 
-- 调用**按位置匹配**：脚本里第 N 个 `agent()` / `checkpoint()` 调用与 journal 里第 N 条记录对比
-- 未变化的调用直接从 journal **回放**（不调 LLM、不花 token，摘要状态显示 `[缓存]`）
-- 首个发生变化的调用及其后**全部重跑**
-- 因此：只改后半段，前半段的调用语句保持原样原序
+- Calls match **by position**: the Nth `agent()` / `checkpoint()` call in the script compares against the Nth journal record
+- Unchanged calls are **replayed** straight from the journal (no LLM, no tokens; the summary shows `[cached]`)
+- The first changed call and **everything after it reruns**
+- Therefore: when editing only the second half, keep the first half's call statements byte-identical and in order
 
-## 质量 DSL：verify / judgePanel / retry / checkpoint
+## Quality DSL: verify / judgePanel / retry / checkpoint
 
-四个脚本内可直接用的助手，典型用法：
+Four helpers usable directly in scripts, typical usage:
 
 ```javascript
-// verify：对抗式验证——多个 reviewer 试图反驳结论，票数达阈值判真
+// verify: adversarial verification — several reviewers try to refute the claim;
+// votes above threshold count as real
 const verdict = await verify(agentResult, { reviewers: 3, threshold: 0.5 })
-if (!verdict.real) return '结论未通过验证：' + (verdict.reason ?? '')
+if (!verdict.real) return 'claim failed verification: ' + (verdict.reason ?? '')
 
-// judgePanel：评审团选优——多个 judge 按 rubric 给候选打分，返回最高分
-const best = await judgePanel([方案A, 方案B, 方案C], { judges: 3, rubric: '正确性与成本' })
+// judgePanel: panel of judges — multiple judges score candidates against a
+// rubric, highest average wins
+const best = await judgePanel([planA, planB, planC], { judges: 3, rubric: 'correctness and cost' })
 
-// retry：有界重试——until 条件通过即停，耗尽返回最后一次结果（不抛错）
-const out = await retry(() => agent('生成配置'), { attempts: 3, until: r => r && r.ok })
+// retry: bounded retry — stops once the until-condition passes; on exhaustion
+// returns the last result (never throws)
+const out = await retry(() => agent('Generate config'), { attempts: 3, until: r => r && r.ok })
 
-// checkpoint：人工确认点——会弹权限确认；确认结果进 journal，续跑回放时不再询问
-if (!await checkpoint('即将修改生产配置文件，确认继续？')) return '已取消'
+// checkpoint: human gate — pops a permission confirm; the decision is
+// journaled and never re-asked on resume replay
+if (!await checkpoint('About to modify production config files. Continue?')) return 'cancelled'
 ```
 
-适用判断：结论会被下游依赖 → verify；多个生成方案挑一个 → judgePanel；输出格式不稳定 → retry；危险操作前 → checkpoint。参数细节见 DSL 参考的对应小节。
+Choosing: conclusions others depend on → verify; picking one of several candidates → judgePanel; flaky output format → retry; before dangerous operations → checkpoint. Parameter details in the DSL reference.
 
-## 组合控制流（sequence / fallback / race / check）
+## Composite Control Flow (sequence / fallback / race / check)
 
-**什么时候用**：多级降级、多路竞争、结构化控制流嵌套（如「失败后修复再验」链）。简单串行（A 完了接 B）继续用普通 await 链，不要机械包进 sequence。
+**When to use**: multi-level degradation, multi-way racing, structured nested control flow (like a "fix-then-reverify" chain). For plain serial work (A then B), keep using plain await chains — don't wrap everything in sequence mechanically.
 
 ```javascript
-// 降级链：任一候选成功即返回；全部可恢复失败返回 null（与 agent 失败同构）
+// Degradation chain: first successful candidate returns; if all recoverably
+// fail you get null (same shape as an agent failure)
 const r = await fallback([
   () => workflow('./fast.js'),
   () => workflow('./strong.js'),
 ])
-if (!r) return '全部路径失败'
+if (!r) return 'all paths failed'
 
-// 竞争：首个成功者胜出，其余候选自动取消（含其子工作流），不浪费 token
+// Racing: first success wins, other candidates auto-cancelled (including
+// their child workflows) — no wasted tokens
 const best = await race([
   () => workflow('./model-a.js'),
   () => workflow('./model-b.js'),
 ])
 
-// 确定性闸门：check 过客观事实（false=可恢复失败，fallback 会换候选）
+// Deterministic gate: check asserts objective facts (false = recoverable
+// failure, fallback switches candidates)
 await sequence([
-  () => agent('生成配置', { agentType: 'general' }),
-  () => check(() => fileExists('config/out.json'), '配置文件必须生成'),
+  () => agent('Generate config', { agentType: 'general' }),
+  () => check(() => fileExists('config/out.json'), 'config file must exist'),
 ])
 ```
 
-语义要点：
+Semantic essentials:
 
-- 节点返回 `null` / `false` / `{ok:false}` 都是**执行成功**——业务否决自己写 if，不要指望组合节点替你判断
-- `checkpoint()` 被拒绝时抛 `CHECKPOINT_REJECTED` 强停止：fallback 不会换候选、parallel 不会塌缩 null；resume 按确定性重现（改 prompt 文本才会重新询问）
-- 拼错脚本名、嵌套超限等结构性错误直接上抛，不会被 fallback 伪装成降级
-- TUI 侧边栏按 `[Sequence]` / `[Race]` 组合分组显示；checkpoint 显示「等待人工确认 / 已批准 / 被拒绝」
+- A node returning `null` / `false` / `{ok:false}` is still an **execution success** — write your own if for business vetoes; composite nodes won't judge for you
+- A rejected `checkpoint()` throws `CHECKPOINT_REJECTED` as a hard stop: fallback won't switch candidates, parallel won't collapse it to null; resume replays the rejection deterministically (edit the prompt text to re-ask)
+- Structural errors (typo'd script names, exceeded nesting) propagate directly — never disguised as degradation by fallback
+- The TUI sidebar groups by `[Sequence]` / `[Race]`; checkpoints show "waiting for human / approved / rejected"
 
-## worktree 隔离（多写型 agent 并行改文件）
+## Worktree Isolation (Parallel File-Writing Agents)
 
-**场景**：多个 agent 同时要**修改文件**，共享目录会互相覆盖。
+**Scenario**: several agents need to **modify files** at once; a shared directory means they overwrite each other.
 
 ```javascript
 await parallel(tasks.map(task => () =>
-  agent(`重构 ${task.file} 并说明改动`, { agentType: 'general', isolation: 'worktree' })
+  agent(`Refactor ${task.file} and describe the changes`, { agentType: 'general', isolation: 'worktree' })
 ))
 ```
 
-要点：
+Key points:
 
-- 每个 agent 在独立 git worktree（`.opencode-workflows/worktrees/<runId-...>`，分支 `wf/<同名>`）中运行，互不干扰
-- 必须配合 `agentType: 'general'`（缺省 explore 只读，写不了文件）
-- 非 git 目录或 worktree 创建失败时**静默降级**为共享目录（日志可见），不会报错中断
-- 运行结束（含超时/中断）自动拆除 worktree 与分支；**结果不自动合并**——需要保留改动时，让 agent 在脚本里把产物写到指定路径或以文本返回
+- Each agent runs in an independent git worktree (`.opencode-workflows/worktrees/<runId-...>`, branch `wf/<same-name>`), fully isolated
+- Must pair with `agentType: 'general'` (default explore is read-only and can't write)
+- In non-git directories or on worktree creation failure it **silently degrades** to the shared directory (visible in logs) — never aborts with an error
+- Worktrees and branches are torn down automatically when the run ends (including timeout/interrupt); **changes are not auto-merged** — when you need them kept, have the agent write outputs to designated paths or return them as text
 
-## 嵌套工作流（原生 workflow() 原语，推荐）
+## Nested Workflows (Native workflow() Primitive — Recommended)
 
-**场景**：把多个 workflow 组合成更大的流程——多阶段流水线、同脚本多配置并行对比、复用既有稳定子流程。
+**Scenario**: compose multiple workflows into something bigger — multi-stage pipelines, parallel comparison of the same script under different configs, reusing existing stable sub-flows.
 
-**用法**：脚本内直接 `await workflow(ref, args?)`，不经 LLM 转发（旧 general 代理转发方案已 legacy，见下节）。一个 run 共享并发配额与中断；父脚本可纯编排（零 agent）；结果自带「子流程耗时」段（wall-clock，多配置对比的正确口径）。
+**Usage**: inside scripts, directly `await workflow(ref, args?)` — no LLM forwarding (the old general-agent forwarding scheme is legacy, see next section). One run shares concurrency quota and abort; parents can be pure orchestration (zero agents); results carry a "sub-flow duration" section (wall-clock, the right metric for config comparisons).
 
 ```javascript
-export const meta = { name: 'full_pipeline', description: '三段式流水线父编排' }
+export const meta = { name: 'full_pipeline', description: 'three-stage pipeline parent' }
 
-phase('编排')
-// 路径引用：上段结果传下段
+phase('Orchestrate')
+// Reference by path: previous stage's result feeds the next
 const spec = await workflow('./scripts/1-spec.js')
 const design = await workflow('./scripts/2-design.js', { brief: spec.brief })
 
-// 注册名引用：.opencode-workflows/workflows/ 下的脚本按 meta.id ?? meta.name 寻址
-// （含斜杠名如 'ui/main-menu' 合法；与 Schedule 的 workflowId 同一体系）
+// Reference by registry name: scripts under .opencode-workflows/workflows/
+// addressed by meta.id ?? meta.name (slash names like 'ui/main-menu' are
+// legal; same identity system as Schedule workflowIds)
 const report = await workflow('daily-review', { design: design.design })
 
-// 同脚本多实例并行：label 区分（UI/phase/journal 身份）
+// Same script, multiple parallel instances: distinguished by label
+// (UI/phase/journal identity)
 const rs = await parallel([
   () => workflow({ scriptPath: './sub.js', label: 'deepseek' }, args),
   () => workflow({ scriptPath: './sub.js', label: 'gpt' }, args),
 ])
 ```
 
-约束：仅一层嵌套；禁止调用自身/祖先；args 与返回值须可结构化克隆（对象/数组/标量，子内修改不外溢）；子流程错误直接上抛（父 try-catch 自理）。
+Constraints: one nesting level only; calling itself/ancestors is forbidden; args and return values must be structured-clone-compatible (objects/arrays/scalars; child edits don't leak out); sub-flow errors propagate (parents handle with try-catch).
 
-## 嵌套工作流（旧方案：general 子代理转发，legacy）
+## Nested Workflows (Legacy: general Sub-Agent Forwarding)
 
-**场景**：把多个 workflow 串联成一个更大的流程——上层 workflow 的某个 agent 自己再去执行一个完整的子 workflow（如 根 -> 中间层并行扇出 -> 多个叶子），各层独立计量 token、耗时与 journal。
+**Scenario**: chain multiple workflows into one big flow — an upper-level workflow's agent executes a complete sub-workflow itself (e.g. root → middle parallel fan-out → leaves), each level metering tokens, duration and journal independently.
 
-**原理**：`agent()` 开的是普通子会话；`agentType: 'general'` 的子代理与主会话一样能调用插件工具（含 `workflow`）。**新脚本请用上节原生 `workflow()` 原语**（省一轮 LLM、结果直通、单 run 计量）；本方案保留用于兼容。
+**How it works**: `agent()` opens a normal sub-session; sub-agents with `agentType: 'general'` can call plugin tools (including `workflow`) just like the main session. **New scripts should use the native `workflow()` primitive above** (saves an LLM round, results pass through, single-run metering); this scheme remains for compatibility.
 
 ```javascript
-export const meta = { name: 'chain_root', description: '嵌套链根：串联中间层与叶子两层子 workflow' }
+export const meta = { name: 'chain_root', description: 'nested chain root: middle layer + leaves' }
 
 phase('Launch')
-// 委托 general 子代理去执行子 workflow（scriptPath 指向子脚本文件）
+// Delegate to a general sub-agent to execute the sub-workflow (scriptPath
+// points at the child script file)
 const middle = await agent(
-  '请调用 workflow 工具执行一个子工作流，参数要求：\n' +
+  'Please invoke the workflow tool to execute a sub-workflow with these args:\n' +
   '- scriptPath: "scripts/chain-middle.js"\n' +
-  '不要传 background，不要传 script（二选一规则）。必须等子工作流真正执行完成。\n' +
-  '完成后把 workflow 返回的最终结果 JSON 原样作为你的回复输出，不要添加解释文字。',
-  { label: '子workflow:middle', agentType: 'general', timeoutMs: 600000 },
+  'Do not pass background; do not pass script (either-or rule). Wait for the sub-workflow to actually finish.\n' +
+  'Then output the final result JSON from the workflow tool verbatim as your reply, no explanatory text.',
+  { label: 'sub-workflow:middle', agentType: 'general', timeoutMs: 600000 },
 )
 
 phase('Report')
 return { middle }
 ```
 
-要点：
+Key points:
 
-- **prompt 必须写明**：只传 `scriptPath`、不传 `background`/`script`、等执行完成、结果 JSON 原样回传——否则中间层拿到的是转述而非结构化结果
-- 子脚本与普通 workflow 完全一致（可继续嵌套下一层）；`args` 由上层 prompt 里带进子调用
-- **TUI 层级树**：嵌套 run 的实时/终态子树直接挂在触发节点名下（缩进一级、细箭头、可独立折叠），主会话侧边栏与全屏 `/workflow` 视图同构；各层 token 独立合计，分层成本可见
-- **每层独立**：runId、journal、断点续跑、快照互不干扰；中断后续跑用对应层自己的 runId
-- **无深度保护**：嵌套层级无硬限制，编排时自行控层防失控烧 token（每层都有 general 子代理的会话开销）
-- 嵌套子代理会话与主会话同目录：快照按 `rootSessionId` 血统归属主会话显示，进程重启后血统丢失则该批嵌套树退化为不可见（不影响执行与结果）
+- **The prompt must spell out**: pass only `scriptPath`, no `background`/`script`, wait for completion, return the result JSON verbatim — otherwise the middle layer receives a paraphrase instead of structured data
+- The child script is a completely normal workflow (it can nest another level); `args` travel via the upper prompt into the child call
+- **TUI hierarchy tree**: a nested run's live/final subtree hangs directly under the triggering node (one indent level, thin arrows, independently collapsible), isomorphic between the sidebar and the fullscreen `/workflow` view; tokens aggregate per level, so layered costs are visible
+- **Each level independent**: runId, journal, resume, snapshots don't interfere; resume each level with its own runId after interruption
+- **No depth guard**: nesting has no hard limit — keep layers sane yourself (every level adds a general sub-agent session overhead)
+- Nested sub-agent sessions share the main session's directory: snapshots attach to the main session by `rootSessionId` lineage; after a process restart the lineage is lost and those nested trees turn invisible (execution and results unaffected)
 
-## 定时任务（Schedule）
+## Scheduled Tasks (Schedule)
 
-把稳定 workflow 配置成定时执行，到点由插件内调度器**确定性执行**（直接按 workflowId 加载脚本，不经 LLM 判断）。
+Turn stable workflows into scheduled executions fired **deterministically** by the plugin's built-in scheduler (loads the script by workflowId directly, no LLM in the loop).
 
-### 准备：workflow 脚本放入约定目录
+### Preparation: Put Workflow Scripts in the Conventional Directory
 
-项目根的 `.opencode-workflows/workflows/`，脚本就是普通 workflow（`export const meta = { name: 'daily-review' }`，`meta.id` 可选覆盖 name 作为 workflowId）。
+The project's `.opencode-workflows/workflows/`; scripts are plain workflows (`export const meta = { name: 'daily-review' }`, optional `meta.id` overrides name as the workflowId).
 
-### 创建：自然语言或直接传 cron
+### Creation: Natural Language or Raw Cron
 
 ```
-/schedule 每小时执行 daily-review.js
+/schedule run daily-review.js hourly
 ```
 
-或让 Main Agent 调 `schedule_create` 工具。支持的 cron 四模式（`m`=分 `h`=时 `W`=周几 0-6）：
+Or have the Main Agent call the `schedule_create` tool. Four supported cron modes (`m`=minute `h`=hour `W`=weekday 0-6):
 
-| 意图 | cron |
-|------|------|
-| 每 n 分钟 | `*/n * * * *` |
-| 每小时 m 分 | `m * * * *` |
-| 每天 h 点 m 分 | `m h * * *` |
-| 每周 W 的 h 点 m 分 | `m h * * W` |
+| Intent | cron |
+| ------ | ---- |
+| every n minutes | `*/n * * * *` |
+| hourly at m | `m * * * *` |
+| daily at h:m | `m h * * *` |
+| weekly on W at h:m | `m h * * W` |
 
-创建回显含 `Next run` 与 `Requires OpenCode running: Yes` 边界声明。
+Creation output includes `Next run` and the boundary statement `Requires OpenCode running: Yes`.
 
-### 管理与观测
+### Management & Observability
 
-- `schedule_list` / `schedule_get <id>`：下次执行、最近执行历史
-- `schedule_update` / `schedule_enable` / `schedule_disable` / `schedule_delete`：改 cron/args/timeout、启停、删除（不删 workflow 文件）
-- `schedule_run_now <id>`：立即跑一轮验证（后台执行，结果在独立会话与执行记录里）
-- 执行记录：`.opencode-workflows/runs/schedules/<scheduleId>/`，每轮一条 JSON（状态、耗时、token、错误）；每轮一个独立 OpenCode 会话，可在会话列表按时间找到并查看 agent 树
-- 重叠保护：上一轮还在跑时新一轮跳过（记录 skipped）；`timeoutMs` 可设单轮超时；定时执行中 `checkpoint()` 直接失败（无人值守不支持人工确认）
+- `schedule_list` / `schedule_get <id>`: next run, recent execution history
+- `schedule_update` / `schedule_enable` / `schedule_disable` / `schedule_delete`: change cron/args/timeout, enable/disable, delete (never deletes the workflow file)
+- `schedule_run_now <id>`: fire one verification round immediately (background; results in an independent session and the execution records)
+- Execution records: `.opencode-workflows/runs/schedules/<scheduleId>/`, one JSON per round (status, duration, tokens, error); each round gets an independent OpenCode session, findable in the session list by time, agent tree included
+- Overlap protection: while the previous round still runs, the new one is skipped (recorded as skipped); `timeoutMs` caps each round; during scheduled runs `checkpoint()` fails outright (unattended execution has no human channel)
 
-### 边界（务必知晓）
+### Boundaries (Know These)
 
-OpenCode 关闭期间任务不执行、错过的时间点不补跑（下一个未来时间点正常）；同项目多开 OpenCode 不会重复执行。
+Tasks don't execute while OpenCode is closed; missed slots never backfill (the next future slot fires normally); multiple OpenCode instances on the same project never double-fire.
