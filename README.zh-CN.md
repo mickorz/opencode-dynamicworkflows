@@ -9,21 +9,21 @@
 
 [快速开始](#5-分钟快速开始) · [组合控制流](#组合控制流composite-control-flow) · [进阶用法](docs/zh-CN/how-to-guides.md) · [配置](docs/zh-CN/configuration.md) · [排障](docs/zh-CN/troubleshooting.md) · [定时任务](docs/zh-CN/how-to-guides.md#定时任务schedule) · [DSL 参考](https://github.com/mickorz/opencode-dynamicworkflows/blob/main/skills/workflow-authoring/references/runtime.md) · [Issues](https://github.com/mickorz/opencode-dynamicworkflows/issues)
 
-Dynamic workflow orchestration for OpenCode.
+OpenCode 动态工作流编排。
 
-Build complex AI workflows using agents, parallel execution, control flow, verification, checkpoints, and reusable workflows.
+用多代理、并行执行、组合控制流、质量验证、人工确认点与可复用子工作流，构建复杂 AI 工作流。
 
 ![OpenCode Dynamic Workflows intro](assets/intro.png)
 
-## Features
+## 特性一览
 
-- 🤖 Multi-Agent Workflows
-- ⚡ Parallel Execution
-- 🔀 Dynamic Control Flow
-- ✅ Verification
-- 👤 Human-in-the-Loop Checkpoints
-- 🧩 Child / Nested Workflows
-- 🔌 OpenCode Integration
+- 🤖 多代理工作流
+- ⚡ 并行执行
+- 🔀 组合控制流
+- ✅ 质量验证
+- 👤 人工确认点
+- 🧩 子流程与嵌套工作流
+- 🔌 OpenCode 原生集成
 
 > 一句话：Main Agent 生成一段 JavaScript 编排脚本，由 Runtime 在 VM 沙箱中执行，通过 `agent() / parallel() / sequence() / fallback() / race()` 将任务分发给大量独立子会话并行处理，脚本内汇总后仅把最终结果返回主上下文——解决大批量并行任务的主上下文污染问题。底层基于 OpenCode v1 插件 API。
 
