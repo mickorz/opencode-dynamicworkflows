@@ -1,94 +1,96 @@
-# 安装与运行验收清单
+# Install & Run Acceptance Checklist
 
-> 逐项打勾，全部通过即安装验收完成。遇到问题先查 [troubleshooting](troubleshooting.md)。
-> 离线自检在插件源码目录执行（npm 用户可跳过第 1 步，直接用 npx 安装器）。
+[**English**](./testing.md) | [简体中文](./zh-CN/testing.md)
 
-## 流程总览
+> Tick the items one by one; all passing means installation acceptance is done. Hit a problem? Check [troubleshooting](troubleshooting.md) first.
+> The offline self-check runs in the plugin source repo (npm users can skip step 1 and use the npx installer directly).
+
+## Overview
 
 ```mermaid
 flowchart TD
-    A[离线自检 npm test] --> B[安装插件]
-    B --> C[工具与 skill 可见性检查]
-    C --> D[最小冒烟 3 个 agent]
-    D --> E[标准验收 10 文档并行]
-    E --> F[结构化输出验证]
-    F --> G[中断验证]
-    G --> H[全部通过 开始使用]
+    A[Offline self check npm test] --> B[Install plugin]
+    B --> C[Tool and skill visibility]
+    C --> D[Minimal smoke 3 agents]
+    D --> E[Standard acceptance 10 doc parallel]
+    E --> F[Structured output check]
+    F --> G[Interrupt check]
+    G --> H[All green start using]
 ```
 
-## 1. 离线自检（仅源码仓库场景，不需要 OpenCode）
+## 1. Offline Self-Check (source-repo only; no OpenCode needed)
 
-在插件仓库目录执行：
+In the plugin repository:
 
 ```bash
 npm install
-npm run typecheck   # 预期：无输出（通过）
-npm test            # 预期：106 pass 0 fail
-npm run build       # 预期：产出 dist/
+npm run typecheck   # expect: no output (pass)
+npm test            # expect: 106 pass 0 fail
+npm run build       # expect: dist/ produced
 ```
 
-## 2. 安装检查
+## 2. Installation Checks
 
-启动 OpenCode，开新会话：
+Start OpenCode, open a new session:
 
-| 检查 | 操作 | 预期 |
-|------|------|------|
-| 工具可见 | 问 Main Agent："你现在有哪些工具？" | 列表含 `workflow`（含 `workflow_control`） |
-| skill 可见 | 问："你有哪些 skills？" | 含 `workflow-authoring` |
-| TUI 侧加载 | ctrl+p → Plugins | 本插件显示 active |
-| 环境自检 | `npx @mickorz/opencode-dynamic-workflows doctor` | 无 FAIL |
+| Check | Action | Expected |
+| ----- | ------ | -------- |
+| Tool visible | Ask the Main Agent: "What tools do you have?" | List includes `workflow` (and `workflow_control`) |
+| Skill visible | Ask: "What skills do you have?" | Includes `workflow-authoring` |
+| TUI side loaded | ctrl+p → Plugins | This plugin shows active |
+| Environment check | `npx @mickorz/opencode-dynamic-workflows doctor` | No FAIL |
 
-## 3. 最小冒烟（3 个 agent）
+## 3. Minimal Smoke (3 agents)
 
-对 Main Agent 原样粘贴（脚本同 [getting-started 第 4 步](getting-started.md)）：
+Paste to the Main Agent as-is (same script as [getting-started step 4](getting-started.md)):
 
 ```
-用 workflow 工具执行以下脚本，原样执行不要改动：
+Execute the following script with the workflow tool, exactly as-is:
 
-export const meta = { name: 'smoke_test', description: '最小冒烟：3 个 agent' }
+export const meta = { name: 'smoke_test', description: 'minimal smoke: 3 agents' }
 
 phase('Scan')
-const info = await agent('列出你当前目录下的文件，只输出前 10 行')
+const info = await agent('List the files in your current directory, output only the first 10 lines')
 
 phase('Echo')
 const results = await parallel([
-  () => agent('用一句话说明什么是工作流编排'),
-  () => agent('用一句话说明什么是确定性重放'),
+  () => agent('Explain workflow orchestration in one sentence'),
+  () => agent('Explain deterministic replay in one sentence'),
 ])
 return { info, results }
 ```
 
-**通过标准**：头部显示 `3 个 agent` 且无失败；3 行摘要全部 `[成功]`；`## 结果` 里 `{ info, results }` JSON 完整。参考量级（作者环境实测，数值因模型而异）：约 600 tok / 12s。
+**Pass criteria**: header shows `3 agents` with none failed; all 3 summary lines `[ok]`; `## Result` contains the complete `{ info, results }` JSON. Ballpark (measured on the author's setup; varies by model): ~600 tok / 12s.
 
-## 4. 标准验收（10 个文档并行分析）
+## 4. Standard Acceptance (10 Documents in Parallel)
 
-在 `examples/sample-project` 目录启动 OpenCode（该目录自带 10 个标准验收集 mdx），对 Main Agent 说：
-
-```
-读取 scripts/acceptance-10docs.js 的内容，用 workflow 工具原样执行，不要改动脚本
-```
-
-逐项检查：
-
-| 检查 | 操作 | 预期 |
-|------|------|------|
-| 并行完成 | 看工具输出头部 | `10 个 agent` 以上全部成功，含 token 总数 |
-| 摘要完整 | 看 agent 摘要 | 每行 label 是文件名，各带 token 数 |
-| 汇总产出 | 看 `## 结果` | 一页文档总览（共同主题、API 清单、注意事项） |
-| 上下文隔离 | 回主会话看消息历史 | **只有**一次 workflow 调用 + 一份结果，无任何子会话中间过程 |
-| 子会话可追溯 | 父会话内 subagent 导航切换 | 能看到各子会话，各自只有自己的分析内容 |
-
-**上下文隔离一项是本插件存在的意义，务必确认**。两个预期现象（不是 bug）：Main Agent 通常只指"见上方 JSON 输出"而不复述内容；综合 agent 收到的拼接输入属于子会话，主上下文永远看不到。
-
-## 5. 结构化输出验证
+Start OpenCode in the `examples/sample-project` directory (it ships 10 standard-acceptance mdx files) and tell the Main Agent:
 
 ```
-用 workflow 工具执行以下脚本，原样执行不要改动：
+Read the contents of scripts/acceptance-10docs.js and execute it as-is with the workflow tool; do not modify the script
+```
 
-export const meta = { name: 'schema_test', description: '结构化输出验证' }
+Check item by item:
 
-const report = await agent('分析当前目录的 package.json，输出名称、版本、依赖数量', {
-  label: '结构化分析',
+| Check | Action | Expected |
+| ----- | ------ | -------- |
+| Parallel completion | Tool output header | `10 agents` all successful, with a token total |
+| Complete summary | Agent summary section | One line per file-name label, each with token counts |
+| Synthesized output | `## Result` | A one-page document overview (common theme, API list, caveats) |
+| Context isolation | Message history in the main conversation | **Only** one workflow call + one result; zero sub-session intermediate output |
+| Sub-sessions traceable | Switch via subagent navigation in the parent session | Each sub-session visible, containing only its own analysis |
+
+**Context isolation is the reason this plugin exists — verify it without fail.** Two expected behaviors (not bugs): the Main Agent usually just points at "the JSON output above" without restating it; the concatenated input given to the synthesis agent belongs to the sub-session and is never visible in the main context.
+
+## 5. Structured Output Check
+
+```
+Execute the following script with the workflow tool, exactly as-is:
+
+export const meta = { name: 'schema_test', description: 'structured output check' }
+
+const report = await agent('Analyze package.json in the current directory; output name, version, dependency count', {
+  label: 'structured-analysis',
   schema: {
     type: 'object',
     properties: {
@@ -102,23 +104,23 @@ const report = await agent('分析当前目录的 package.json，输出名称、
 return report
 ```
 
-**通过标准**：`## 结果` 里的 JSON 严格符合 schema（三字段齐全、类型正确），而非自然语言。
+**Pass criteria**: the JSON in `## Result` strictly conforms to the schema (all three fields present, correct types) — not natural language.
 
-**已知限制**：结构化输出依赖模型/网关支持 tool_choice required；不支持的网关会返回 400（agent 0 token 失败、结果为 null、摘要含 provider_bad_request）。此为 provider 能力问题，换支持的模型即可——见 [troubleshooting](troubleshooting.md)。
+**Known limitation**: structured output requires the model/gateway to support tool_choice required; unsupported gateways return 400 (the agent fails at 0 tokens, result is null, summary shows provider_bad_request). That's a provider capability issue — switch to a supporting model; see [troubleshooting](troubleshooting.md).
 
-## 6. 中断验证
+## 6. Interrupt Check
 
-1. 重新执行第 4 步脚本，分析阶段进行中（agent 摘要还在增长时）按 **Esc**
-2. 检查：工具结果显示工作流被用户中断；subagent 导航下运行中的子会话停止产生新内容
-3. **过 1 分钟再看**：没有子会话仍在继续跑（不消耗 token）即通过
+1. Re-run the step-4 script; during the analysis phase (agent summary still growing) press **Esc**
+2. Check: the tool result shows the workflow interrupted by the user; running sub-sessions under subagent navigation stop producing content
+3. **Look again after a minute**: no sub-session still running (burning tokens) — pass
 
-## 7. 检查点清单
+## 7. Final Checklist
 
-- [ ] `npm test` 通过（106 pass，源码仓库场景）
-- [ ] `workflow` 工具与 `workflow-authoring` skill 在 OpenCode 中可见
-- [ ] 冒烟 3 agent 全部成功
-- [ ] 10 文档验收全部成功，汇总产出一页总览
-- [ ] 主会话上下文无子会话过程（隔离确认）
-- [ ] schema 模式返回符合 schema 的 JSON（或确认是 provider 能力限制）
-- [ ] Esc 中断无孤儿会话
-- [ ] （用了后台/续跑的话）`workflow_control status` 可见 run，`resumeFromRunId` 回放 `[缓存]` 行
+- [ ] `npm test` passes (106 pass, source-repo scenario)
+- [ ] `workflow` tool and `workflow-authoring` skill visible in OpenCode
+- [ ] 3-agent smoke all successful
+- [ ] 10-document acceptance all successful with a one-page synthesized overview
+- [ ] Main-conversation context free of sub-session chatter (isolation confirmed)
+- [ ] Schema mode returns schema-conforming JSON (or confirmed as a provider limitation)
+- [ ] Esc interrupt leaves no orphan sessions
+- [ ] (If using background/resume) `workflow_control status` shows the run; `resumeFromRunId` replays with `[cached]` lines
