@@ -5,17 +5,12 @@ dist/
 # 本仓库的参考源码（不入插件仓库版本库）
 thirdparties/
 
-# Docs 目录默认本地化（作者工作区，规划/设计/测试/参考均不入库）。
-# 注意：Windows 文件系统不区分大小写，公开用户文档目录与本地工作区共用一个物理目录；
-# 下方 ! 条目显式放行的用户文档随仓库发布（GitHub 上呈现为 docs/ 目录）。
+# 目录约定：大写 Docs = 作者本地工作区（规划/设计/测试/参考，全部不入库）；
+# 小写 docs = 随仓库发布的公开用户文档（GitHub 呈现为 docs/ 目录）。
+# 注意：Windows 一个物理目录两种大小写引用；git 跟踪路径以小写 docs/ 为准（README 链接依赖）。
+# 新增公开文档：文件放 docs/，并在下方补一条 !docs/文件名 放行。
 Docs/*
-!Docs/getting-started.md
-!Docs/configuration.md
-!Docs/troubleshooting.md
-!Docs/how-to-guides.md
-!Docs/testing.md
-!Docs/development.md
-# 小写路径放行（GitHub 呈现 docs/ 目录；Linux 大小写敏感需双份规则）
+!docs/
 !docs/getting-started.md
 !docs/configuration.md
 !docs/troubleshooting.md
