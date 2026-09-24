@@ -17,6 +17,8 @@ Docs/*
 !docs/how-to-guides.md
 !docs/testing.md
 !docs/development.md
+!docs/zh-CN/
+!docs/zh-CN/*.md
 
 # workflow 运行时产物（journal、运行状态）；examples 的验收 workflow 脚本入库（自包含承诺）
 .opencode-workflows/
