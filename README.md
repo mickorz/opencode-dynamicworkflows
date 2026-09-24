@@ -1,8 +1,20 @@
-# opencode-dynamic-workflows
+# OpenCode Dynamic Workflows
 
-OpenCode 动态工作流插件：Main Agent 生成一段 JavaScript 编排脚本，由 Runtime 在 VM 沙箱中执行，通过 `agent() / parallel() / pipeline()` 将任务分发给大量独立子会话并行处理，脚本内汇总后仅把最终结果返回主上下文——解决大批量并行任务的主上下文污染问题。
+Dynamic workflow orchestration for OpenCode.
 
-底层基于 OpenCode v1 插件 API。
+Build complex AI workflows using agents, parallel execution, control flow, verification, checkpoints, and reusable workflows.
+
+## Features
+
+- 🤖 Multi-Agent Workflows
+- ⚡ Parallel Execution
+- 🔀 Dynamic Control Flow
+- ✅ Verification
+- 👤 Human-in-the-Loop Checkpoints
+- 🧩 Child / Nested Workflows
+- 🔌 OpenCode Integration
+
+> 一句话：Main Agent 生成一段 JavaScript 编排脚本，由 Runtime 在 VM 沙箱中执行，通过 `agent() / parallel() / sequence() / fallback() / race()` 将任务分发给大量独立子会话并行处理，脚本内汇总后仅把最终结果返回主上下文——解决大批量并行任务的主上下文污染问题。底层基于 OpenCode v1 插件 API。
 
 ## 30 秒了解
 
