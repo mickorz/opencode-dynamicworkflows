@@ -234,6 +234,12 @@ Full usage for every feature lives in [docs/how-to-guides.md](docs/how-to-guides
 
 Simplified Chinese documentation: [README.zh-CN.md](./README.zh-CN.md) and [docs/zh-CN/](./docs/zh-CN/).
 
+## Contact
+
+For custom development and project-specific requirements, feel free to reach out.
+
+Email: [490113806@qq.com](mailto:490113806@qq.com)
+
 ## License
 
 MIT

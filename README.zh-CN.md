@@ -231,6 +231,12 @@ await sequence([
 | [docs/development.md](docs/zh-CN/development.md) | 贡献者指南（架构、测试、本地联调、发布） |
 | [workflow-authoring DSL 参考](https://github.com/mickorz/opencode-dynamicworkflows/blob/main/skills/workflow-authoring/references/runtime.md) | 全部 DSL API 的权威细节 |
 
+## 联系方式
+
+项目定制需求可联系。
+
+邮箱：[490113806@qq.com](mailto:490113806@qq.com)
+
 ## License
 
 MIT
