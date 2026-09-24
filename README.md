@@ -11,6 +11,8 @@ Dynamic workflow orchestration for OpenCode.
 
 Build complex AI workflows using agents, parallel execution, control flow, verification, checkpoints, and reusable workflows.
 
+![OpenCode Dynamic Workflows intro](assets/intro.png)
+
 ## Features
 
 - 🤖 Multi-Agent Workflows
