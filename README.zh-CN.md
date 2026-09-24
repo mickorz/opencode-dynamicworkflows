@@ -7,6 +7,8 @@
 
 **English** | [简体中文](./README.zh-CN.md)
 
+[快速开始](#5-分钟快速开始) · [组合控制流](#组合控制流composite-control-flow) · [进阶用法](docs/zh-CN/how-to-guides.md) · [配置](docs/zh-CN/configuration.md) · [排障](docs/zh-CN/troubleshooting.md) · [定时任务](docs/zh-CN/how-to-guides.md#定时任务schedule) · [DSL 参考](https://github.com/mickorz/opencode-dynamicworkflows/blob/main/skills/workflow-authoring/references/runtime.md) · [Issues](https://github.com/mickorz/opencode-dynamicworkflows/issues)
+
 Dynamic workflow orchestration for OpenCode.
 
 Build complex AI workflows using agents, parallel execution, control flow, verification, checkpoints, and reusable workflows.
@@ -39,7 +41,8 @@ Build complex AI workflows using agents, parallel execution, control flow, verif
 
 ![TUI 嵌套工作流层级树](assets/workflow-tree-tui.png)
 
-**你不需要会写代码**。编排脚本由 Main Agent 按内置 skill 自动生成；想深入时再参考 [workflow-authoring DSL 参考](https://github.com/mickorz/opencode-dynamicworkflows/blob/main/skills/workflow-authoring/references/runtime.md)。
+> [!TIP]
+> **你不需要会写代码**。编排脚本由 Main Agent 按内置 skill 自动生成；想深入时再参考 [workflow-authoring DSL 参考](https://github.com/mickorz/opencode-dynamicworkflows/blob/main/skills/workflow-authoring/references/runtime.md)。
 
 ## 前提条件
 
@@ -151,6 +154,16 @@ args 传 {"model": "biangfeng-gateway/glm-5.2"}
 
 脚本侧接收（缺省回退，参数可省）：`const modelOptions = {}; if (args && typeof args.model === 'string') modelOptions.model = args.model`，再把 `...modelOptions` 展开进 `agent()` 选项。沙箱禁用 `Date.now()` / `Math.random()`，外部值（列表、路径、时间戳）都从 `args` 注入。详见 [how-to-guides](docs/zh-CN/how-to-guides.md) 的「带参数执行」章。
 
+## 效果展示
+
+| 实时工作流树（阶段、agent、耗时、token） | 嵌套工作流层级树 |
+| --- | --- |
+| ![TUI 实时工作流树](assets/tui_workflowtree.png) | ![TUI 嵌套工作流层级树](assets/workflow-tree-tui.png) |
+
+<!-- TODO: 补充截图——组合控制流分组行（[Sequence]/[Race] 与 checkpoint 等待人工确认状态）、节点详情视图；格式：
+| ![组合树](assets/<文件名>.png) | ![节点详情](assets/<文件名>.png) |
+-->
+
 ## 核心概念
 
 - **子会话隔离**：每个 agent 是独立子会话，父会话内用 subagent 导航可查看各自完整过程；主会话只有汇总。
@@ -210,10 +223,11 @@ await sequence([
 
 ### Schedule 定时任务的产品边界（设计而非缺陷）
 
-- **OpenCode 必须运行**：TUI 关闭期间任务不执行，重开后自动恢复。
-- **错过 = 跳过**：休眠/关机错过的时间点不补跑，下一个未来时间点正常执行。
-- **多实例安全**：同项目开多个 OpenCode，每个时间槽至多触发一次（原子 claim 协调）。
-- 执行语义为 at-most-once per slot；workflow 需人工 checkpoint 的场景不适合定时跑（会直接失败）。
+> [!NOTE]
+> - **OpenCode 必须运行**：TUI 关闭期间任务不执行，重开后自动恢复。
+> - **错过 = 跳过**：休眠/关机错过的时间点不补跑，下一个未来时间点正常执行。
+> - **多实例安全**：同项目开多个 OpenCode，每个时间槽至多触发一次（原子 claim 协调）。
+> - 执行语义为 at-most-once per slot；workflow 需人工 checkpoint 的场景不适合定时跑（会直接失败）。
 
 用法见 [docs/how-to-guides.md](docs/zh-CN/how-to-guides.md) 的定时任务一节。
 
@@ -230,6 +244,10 @@ await sequence([
 | [docs/testing.md](docs/zh-CN/testing.md) | 安装与运行验收清单 |
 | [docs/development.md](docs/zh-CN/development.md) | 贡献者指南（架构、测试、本地联调、发布） |
 | [workflow-authoring DSL 参考](https://github.com/mickorz/opencode-dynamicworkflows/blob/main/skills/workflow-authoring/references/runtime.md) | 全部 DSL API 的权威细节 |
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=mickorz/opencode-dynamicworkflows&type=Date)](https://star-history.com/#mickorz/opencode-dynamicworkflows&Date)
 
 ## 联系方式
 
