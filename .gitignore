@@ -15,6 +15,13 @@ Docs/*
 !Docs/how-to-guides.md
 !Docs/testing.md
 !Docs/development.md
+# 小写路径放行（GitHub 呈现 docs/ 目录；Linux 大小写敏感需双份规则）
+!docs/getting-started.md
+!docs/configuration.md
+!docs/troubleshooting.md
+!docs/how-to-guides.md
+!docs/testing.md
+!docs/development.md
 
 # workflow 运行时产物（journal、运行状态）；examples 的验收 workflow 脚本入库（自包含承诺）
 .opencode-workflows/
