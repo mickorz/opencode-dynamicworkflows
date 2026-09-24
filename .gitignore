@@ -36,6 +36,9 @@ examples/sample-project/benchmarks/large-target/results/
 examples/sample-project/benchmarks/large-target/src/
 examples/sample-project/benchmarks/large-target/.opencode/
 examples/sample-project/scripts/spec-clarify-workflow*
+# 手工验收工程的中文测试指南等文档不入库（本地保留；.opencode/commands 下的命令定义是功能文件除外）
+examples/sample-project/*.md
+examples/sample-project/benchmarks/*.md
 examples/sample-project/docs/*
 !examples/sample-project/docs/*.mdx
 
