@@ -1,5 +1,10 @@
 # OpenCode Dynamic Workflows
 
+[![npm version](https://img.shields.io/npm/v/@mickorz/opencode-dynamic-workflows.svg)](https://www.npmjs.com/package/@mickorz/opencode-dynamic-workflows)
+[![npm downloads](https://img.shields.io/npm/dm/@mickorz/opencode-dynamic-workflows.svg)](https://www.npmjs.com/package/@mickorz/opencode-dynamic-workflows)
+[![GitHub stars](https://img.shields.io/github/stars/mickorz/opencode-dynamicworkflows.svg)](https://github.com/mickorz/opencode-dynamicworkflows/stargazers)
+[![License](https://img.shields.io/github/license/mickorz/opencode-dynamicworkflows.svg)](./LICENSE)
+
 Dynamic workflow orchestration for OpenCode.
 
 Build complex AI workflows using agents, parallel execution, control flow, verification, checkpoints, and reusable workflows.
