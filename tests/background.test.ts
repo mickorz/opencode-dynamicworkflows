@@ -322,7 +322,7 @@ test("内存瘦身：完成历史裁剪到 5 条，logs 封顶 200 条", async (
         `export const meta = { name: 'bg_prune_${i}' }\n` +
         `for (let i = 0; i < 300; i++) log('噪声日志行 ' + i)\n` +
         `return await agent('任务' + ${i})`
-      const result = (await workflowTool.execute({ script, background: true }, makeToolContext(dir))) as {
+      const result = (await workflowTool.execute({ script, background: true }, makeToolContext(dir))) as unknown as {
         metadata: { runId: string }
       }
       runIds.push(result.metadata.runId)
