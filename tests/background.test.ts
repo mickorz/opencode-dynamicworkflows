@@ -307,3 +307,40 @@ test("status 进度含进行中 agent：running 计入分母（修复进度永�
     fs.rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test("内存瘦身：完成历史裁剪到 5 条，logs 封顶 200 条", async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wf-bg-prune-"))
+  try {
+    const fake = makeFakeClient()
+    const manager = new BackgroundRunManager()
+    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager)
+
+    // 连续跑 8 个后台 run（每个单 agent，日志刷屏：脚本里 log 300 条）
+    const runIds: string[] = []
+    for (let i = 0; i < 8; i++) {
+      const script =
+        `export const meta = { name: 'bg_prune_${i}' }\n` +
+        `for (let i = 0; i < 300; i++) log('噪声日志行 ' + i)\n` +
+        `return await agent('任务' + ${i})`
+      const result = (await workflowTool.execute({ script, background: true }, makeToolContext(dir))) as {
+        metadata: { runId: string }
+      }
+      runIds.push(result.metadata.runId)
+    }
+
+    // 全部完成回传，且终态就地 prune 已跑完
+    await until(() => fake.deliveries.length >= 8)
+    await until(() => manager.status().length <= 5)
+
+    const runs = manager.status()
+    assert.equal(runs.length, 5, "完成历史只保留最近 5 条（原 20 条，大 run 常驻可达数十 MB）")
+    const keptNames = new Set(runs.map((r) => r.name))
+    assert.ok(keptNames.has("bg_prune_7"), "最新 run 保留")
+    assert.ok(!keptNames.has("bg_prune_0"), "最老 run 被裁剪")
+    for (const run of runs) {
+      assert.ok(run.logs.length <= 200, `logs 封顶 200 条，实际 ${run.logs.length}`)
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})

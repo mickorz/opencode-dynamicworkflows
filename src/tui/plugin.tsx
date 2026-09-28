@@ -13,7 +13,7 @@
 
 import type { TuiPlugin, TuiPluginApi, TuiPluginModule } from "@opencode-ai/plugin/tui"
 import type { Renderable } from "@opentui/core"
-import { For, Show, createEffect, createSignal } from "solid-js"
+import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
 import {
   buildMultiRunRows,
   buildNestedRunRows,
@@ -88,8 +88,69 @@ const collapsedBySession = new Map<
  * 不能在组件里直接读 api.state（宿主 solid store）——我们跑在自己的 solid-js 副本里，
  * 跨副本的依赖追踪不生效（Read 一次后永不更新，需求文档 9.3 的教训），
  * 因此只用 api.event.on 镜像数据到自己 signal。
+ *
+ * 内存修复（Docs/05_问题与注意事项/workflow内存不释放问题分析与修复.md）：
+ * 原实现每缓存会话挂 1 个 1s poll + 4 个事件监听，注册到 api.lifecycle.onDispose
+ * （宿主实现为插件进程级，组件销毁不清理），会话数累积导致轮询数与内存线性增长。
+ * 现改为全局单 poll + 单套事件监听驱动全部缓存，缓存会话从宿主 store 消失即自清。
  */
-const progressBySession = new Map<string, () => WorkflowProgress[]>()
+interface ProgressCacheEntry {
+  progress: () => WorkflowProgress[]
+  recompute: () => void
+  onEvent: (eventSession: string | undefined) => void
+}
+const progressBySession = new Map<string, ProgressCacheEntry>()
+
+/** 全局唯一轮询：一个 interval 驱动全部缓存会话的重算；缓存清空自停 */
+let sharedPoll: ReturnType<typeof setInterval> | undefined
+function ensureSharedPoll(): void {
+  if (sharedPoll) return
+  sharedPoll = setInterval(() => {
+    for (const entry of Array.from(progressBySession.values())) entry.recompute()
+  }, POLL_INTERVAL_MS)
+}
+function stopSharedPollIfIdle(): void {
+  if (progressBySession.size === 0 && sharedPoll) {
+    clearInterval(sharedPoll)
+    sharedPoll = undefined
+  }
+}
+
+/** 全局一套事件监听（4 个）分发给全部缓存会话，各自按 sessionId 过滤 */
+let eventOffs: Array<() => void> = []
+let eventDispatch: ((eventSession: string | undefined) => void) | undefined
+function ensureEventBridge(api: TuiPluginApi): void {
+  if (eventDispatch) return
+  const dispatch = (eventSession: string | undefined) => {
+    for (const entry of progressBySession.values()) entry.onEvent(eventSession)
+  }
+  eventOffs = [
+    api.event.on("message.part.updated", (event) =>
+      dispatch((event.properties as { part?: { sessionID?: string } }).part?.sessionID),
+    ),
+    api.event.on("message.part.removed", (event) => dispatch(event.properties.sessionID)),
+    api.event.on("message.updated", (event) =>
+      dispatch((event.properties as { info?: { sessionID?: string } }).info?.sessionID),
+    ),
+    api.event.on("message.removed", (event) => dispatch(event.properties.sessionID)),
+  ]
+  eventDispatch = dispatch
+}
+
+/** 移除某会话的缓存并按需停轮询（事件桥保持挂载，仅 4 个监听无成本问题） */
+function disposeProgress(sessionId: string): void {
+  progressBySession.delete(sessionId)
+  stopSharedPollIfIdle()
+}
+
+/** 会话是否仍存在于宿主 store（判定失败保守返回 true，防宿主异常导致误清） */
+function sessionExists(api: TuiPluginApi, sessionId: string): boolean {
+  try {
+    return api.state.session.get(sessionId) !== undefined
+  } catch {
+    return true
+  }
+}
 
 function computeProgresses(api: TuiPluginApi, sessionId: string): WorkflowProgress[] {
   // 多树合并：镜像快照逐个成树（失联的过滤），无快照时回退 tool 返回值 metadata（C 通道）
@@ -109,13 +170,9 @@ function computeProgresses(api: TuiPluginApi, sessionId: string): WorkflowProgre
 /** 快照轮询间隔（omo 同款，agent 粒度变化频率下够用） */
 const POLL_INTERVAL_MS = 1000
 
-function getOrCreateProgress(
-  api: TuiPluginApi,
-  sessionId: string,
-  onDispose: (fn: () => void) => void,
-): () => WorkflowProgress[] {
+function getOrCreateProgress(api: TuiPluginApi, sessionId: string): () => WorkflowProgress[] {
   const cached = progressBySession.get(sessionId)
-  if (cached) return cached
+  if (cached) return cached.progress
 
   const [progress, setProgress] = createSignal<WorkflowProgress[]>(computeProgresses(api, sessionId))
   // viewKey 差分：内容未变不写 signal，避免轮询驱动的无谓重渲
@@ -126,55 +183,46 @@ function getOrCreateProgress(
     lastKey = key
     setProgress(next)
   }
+  const recomputeNow = () => {
+    // 会话已从宿主 store 消失（被删除）：缓存自清，空闲后轮询自停
+    if (!sessionExists(api, sessionId)) {
+      disposeProgress(sessionId)
+      return
+    }
+    applyProgress(computeProgresses(api, sessionId))
+  }
   // 事件去抖：插件事件回调可能先于 sync store 落盘同一条事件，延迟一拍再读，
   // 同时把事件风暴合并为一次重算
   let timer: ReturnType<typeof setTimeout> | undefined
-  const scheduleRecompute = (eventSession: string | undefined) => {
-    if (eventSession && eventSession !== sessionId) return
-    if (timer) clearTimeout(timer)
-    timer = setTimeout(() => {
-      timer = undefined
-      recomputeNow()
-    }, 30)
+  const entry: ProgressCacheEntry = {
+    progress,
+    recompute: recomputeNow,
+    onEvent: (eventSession) => {
+      if (eventSession && eventSession !== sessionId) return
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => {
+        timer = undefined
+        recomputeNow()
+      }, 30)
+    },
   }
-  const recomputeNow = () => {
-    applyProgress(computeProgresses(api, sessionId))
-  }
-
-  const offs = [
-    api.event.on("message.part.updated", (event) =>
-      scheduleRecompute((event.properties as { part?: { sessionID?: string } }).part?.sessionID),
-    ),
-    api.event.on("message.part.removed", (event) => scheduleRecompute(event.properties.sessionID)),
-    api.event.on("message.updated", (event) =>
-      scheduleRecompute((event.properties as { info?: { sessionID?: string } }).info?.sessionID),
-    ),
-    api.event.on("message.removed", (event) => scheduleRecompute(event.properties.sessionID)),
-  ]
-  // 快照轮询驱动（B 通道主驱动，与事件驱动共用同一 signal）
-  const poll = setInterval(recomputeNow, POLL_INTERVAL_MS)
-  onDispose(() => {
-    if (timer) clearTimeout(timer)
-    clearInterval(poll)
-    for (const off of offs) off()
-    progressBySession.delete(sessionId)
-  })
-  progressBySession.set(sessionId, progress)
+  progressBySession.set(sessionId, entry)
+  ensureSharedPoll()
+  ensureEventBridge(api)
   return progress
 }
 
 function getOrCreateCollapsed(
   sessionId: string,
   runId: string,
-  onDispose: (fn: () => void) => void,
 ): [() => boolean, (next: boolean | ((current: boolean) => boolean)) => void] {
   const key = `${sessionId}|${runId}`
   const cached = collapsedBySession.get(key)
   if (cached) return [cached.collapsed, cached.setCollapsed]
 
   const [collapsed, setCollapsed] = createSignal(false)
-  onDispose(() => {
-    // 清理该会话下所有树的折叠信号（同会话多树共用一次 dispose）
+  // 组件级清理（onCleanup）：组件销毁即清该会话全部折叠信号（原挂插件级永不清理）
+  onCleanup(() => {
     const prefix = `${sessionId}|`
     for (const k of Array.from(collapsedBySession.keys())) {
       if (k.startsWith(prefix)) collapsedBySession.delete(k)
@@ -194,11 +242,7 @@ function RunTree(props: {
   nested?: boolean
 }) {
   const theme = () => props.api.theme.current
-  const [collapsed, setCollapsed] = getOrCreateCollapsed(
-    props.session_id,
-    props.progress.runId,
-    props.api.lifecycle.onDispose,
-  )
+  const [collapsed, setCollapsed] = getOrCreateCollapsed(props.session_id, props.progress.runId)
   const rows = () => buildSidebarRows(props.progress)
   const childRuns = (sessionId: string | undefined) =>
     sessionId && props.childrenOf ? props.childrenOf(sessionId) : []
@@ -310,7 +354,7 @@ function RunTree(props: {
 }
 
 function View(props: { api: TuiPluginApi; session_id: string }) {
-  const progresses = getOrCreateProgress(props.api, props.session_id, props.api.lifecycle.onDispose)
+  const progresses = getOrCreateProgress(props.api, props.session_id)
   // B2：拆顶层与嵌套子 run，只递归渲染顶层，嵌套树在 RunTree 内挂触发节点下
   const parts = () => splitRunsByParent(progresses(), props.session_id)
 
@@ -356,7 +400,7 @@ function navigateBack(api: TuiPluginApi): void {
 function RouteView(props: { api: TuiPluginApi; sessionID?: string }) {
   const theme = () => props.api.theme.current
   const progresses = props.sessionID
-    ? getOrCreateProgress(props.api, props.sessionID, props.api.lifecycle.onDispose)
+    ? getOrCreateProgress(props.api, props.sessionID)
     : () => []
   const rows = () => buildNestedRunRows(progresses(), props.sessionID ?? "")
   const keys = () => selectableNodeKeys(rows())
@@ -535,7 +579,7 @@ function NodeDetailView(props: {
 }) {
   const theme = () => props.api.theme.current
   const progresses = props.sessionID
-    ? getOrCreateProgress(props.api, props.sessionID, props.api.lifecycle.onDispose)
+    ? getOrCreateProgress(props.api, props.sessionID)
     : () => []
 
   // ---- journal 内容通道 ----
@@ -560,7 +604,9 @@ function NodeDetailView(props: {
   }
   reloadJournal()
   const journalPoll = setInterval(reloadJournal, POLL_INTERVAL_MS)
-  props.api.lifecycle.onDispose(() => clearInterval(journalPoll))
+  // 组件级清理：路由切换销毁视图即停轮询。原挂 api.lifecycle.onDispose（插件进程级），
+  // 每进一次节点详情泄漏一个每秒读盘 interval，随使用次数线性累积（内存泄漏修复）
+  onCleanup(() => clearInterval(journalPoll))
 
   // ---- 节点视图：快照优先，快照消失时由 journal 元数据合成（历史 run 的 result 仍可看）----
   const node = (): WorkflowNode | null => {
@@ -805,7 +851,7 @@ function NodeDetailView(props: {
 
 /** 输入框右侧状态条（session_prompt_right 插槽）：所有运行中的 workflow 各占一行进度摘要 */
 function PromptFooterView(props: { api: TuiPluginApi; session_id: string }) {
-  const progresses = getOrCreateProgress(props.api, props.session_id, props.api.lifecycle.onDispose)
+  const progresses = getOrCreateProgress(props.api, props.session_id)
   const lines = () =>
     progresses()
       .filter((p) => p.status === "running")

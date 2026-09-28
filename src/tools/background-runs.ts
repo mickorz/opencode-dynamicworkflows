@@ -77,8 +77,10 @@ export interface BackgroundStartInput {
   trigger?: RunTrigger
 }
 
-/** 完成后注册表里保留的历史条数 */
-const KEEP_COMPLETED = 20
+/** 完成后注册表里保留的历史条数（内存瘦身：每条含全量 records/logs，条数过多常驻可达数十 MB） */
+const KEEP_COMPLETED = 5
+/** 完成 run 的 logs 封顶条数（脚本 console.log 无上限，防历史 run 撑大常驻内存） */
+const MAX_KEPT_LOGS = 200
 
 /** run 触发来源元数据（透传给 runWorkflow 写入 run 日志，需求 26 Observability） */
 export type RunTrigger = NonNullable<WorkflowRunOptions["trigger"]>
@@ -264,8 +266,12 @@ export class BackgroundRunManager {
     } finally {
       clearInterval(heartbeat)
       info.endedAt = Date.now()
+      // logs 封顶：只留尾部（workflow_control 展示只消费最后一条错误，全量日志无消费者）
+      if (info.logs.length > MAX_KEPT_LOGS) info.logs = info.logs.slice(-MAX_KEPT_LOGS)
       // 本 run 结束：注销血统（嵌套工具调用均已返回，不存在仍在使用注册项的窗口）
       unregisterAgentSessions(registeredSessions)
+      // 终态就地裁剪历史（原仅在新 run 启动时 prune，完成后历史会驻留到下次启动）
+      this.prune()
     }
   }
 
