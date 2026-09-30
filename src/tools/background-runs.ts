@@ -17,10 +17,9 @@
  *  - checkpoint 在后台 run 无人工通道，走 headless default（与 Pi 后台语义一致）
  */
 
-import type { PluginInput } from "@opencode-ai/plugin"
 import { runWorkflow, type WorkflowRunOptions } from "../runtime/workflow-runtime.js"
 import { parseWorkflowScript } from "../runtime/vm.js"
-import { OpenCodeSessionAdapter } from "../adapters/opencode-session-adapter.js"
+import { OpenCodeSessionAdapter, type ClientLike } from "../adapters/opencode-session-adapter.js"
 import { JournalStore } from "../persistence/journal.js"
 import { loadModelTiers } from "../agent/model-tiers.js"
 import { renderWorkflowResult } from "./render.js"
@@ -55,7 +54,7 @@ export interface BackgroundRunInfo {
 export type BackgroundRunSnapshot = BackgroundRunInfo
 
 export interface BackgroundStartDeps {
-  client: PluginInput["client"]
+  client: ClientLike
   parentSessionId: string
   directory: string
   /** 祖先主会话（B1 嵌套显示）：缺省时 start 内部查血统表回退 parentSessionId */
@@ -88,6 +87,18 @@ export type RunTrigger = NonNullable<WorkflowRunOptions["trigger"]>
 export class BackgroundRunManager {
   private readonly runs = new Map<string, InternalRun>()
   private seq = 0
+
+  /**
+   * 创建顶层独立会话（schedule run 的 fresh root session，不挂 parentID）。
+   * 放在 tools 层（合法触碰 SDK），避免 schedule 层直调 client.session.create（AGENTS.md 架构约束）。
+   */
+  async createRootSession(client: ClientLike, title: string): Promise<string> {
+    const created = await client.session.create({ body: { title } })
+    if (created.error) {
+      throw new Error(`session create 失败: ${JSON.stringify(created.error)}`)
+    }
+    return created.data.id
+  }
 
   /** 启动后台 run；脚本非法立即抛错，否则立刻返回 runId */
   start(deps: BackgroundStartDeps, input: BackgroundStartInput): string {

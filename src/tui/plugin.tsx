@@ -60,7 +60,7 @@ function getNodeMeta(status: WorkflowNode["status"]): { icon: string; tone: "suc
     case "running":
       return { icon: "◐", tone: "warning" }
     case "failed":
-      return { icon: "✖", tone: "error" }
+      return { icon: "■", tone: "error" }
     default:
       return { icon: "○", tone: "muted" }
   }

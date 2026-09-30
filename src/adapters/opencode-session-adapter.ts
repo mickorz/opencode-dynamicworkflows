@@ -23,9 +23,16 @@
 import type { PluginInput } from "@opencode-ai/plugin"
 import type { AgentExecutionResult, AgentRunOptions, AgentSessionRunner } from "../agent/session-runner.js"
 
+/**
+ * OpenCode SDK client 的类型出口（Adapter 唯一触碰 SDK 的类型边界）。
+ * schedule 等非允许目录依赖本别名而非直接 import @opencode-ai/plugin（AGENTS.md 架构约束）；
+ * Adapter / BackgroundRunManager / ScheduleRuntime 经此获取 client 的精确类型。
+ */
+export type ClientLike = PluginInput["client"]
+
 export interface OpenCodeSessionAdapterOptions {
   /** 插件 context 提供的 SDK client */
-  client: PluginInput["client"]
+  client: ClientLike
   /** 主会话 ID；创建的子会话挂在其下（TUI 父会话 subagent 视图可导航） */
   parentSessionId?: string
   /** 缺省使用的 OpenCode agent 名；默认 explore（内置只读分析型） */
@@ -98,7 +105,7 @@ function validateRequired(parsed: unknown, schema: Record<string, unknown>): str
 }
 
 export class OpenCodeSessionAdapter implements AgentSessionRunner {
-  private readonly client: PluginInput["client"]
+  private readonly client: ClientLike
   private readonly parentSessionId?: string
   private readonly defaultAgent: string
   private readonly onStructuredDegrade?: (info: { label: string; reason: string }) => void

@@ -14,7 +14,7 @@
  *  - 每 Run 独立 fresh session，不 prompt 回传（结果进 Record）
  */
 
-import type { PluginInput } from "@opencode-ai/plugin"
+import type { ClientLike } from "../adapters/opencode-session-adapter.js"
 import { BackgroundRunManager, type BackgroundRunInfo } from "../tools/background-runs.js"
 import { latestSlot } from "./cron.js"
 import { listSchedules } from "./store.js"
@@ -31,7 +31,7 @@ export const GRACE_MS = 90_000
 const PRUNE_EVERY_TICKS = 20
 
 export interface ScheduleRuntimeDeps {
-  client: PluginInput["client"]
+  client: ClientLike
   directory: string
   manager: BackgroundRunManager
   /** 时钟注入缝（测试用）；缺省 Date */
@@ -130,13 +130,11 @@ export class ScheduleRuntime {
     try {
       const script = readWorkflowScript(this.deps.directory, schedule.workflowId)
       // fresh session：每 Run 独立顶层会话，agent 子树挂其下（B1 血统 root）
-      const created = await this.deps.client.session.create({
-        body: { title: `${schedule.name ?? schedule.workflowId} · ${slot.toISOString()}` },
-      })
-      if (created.error) {
-        throw new Error(`session create 失败: ${JSON.stringify(created.error)}`)
-      }
-      const sessionId = created.data.id
+      // 经 manager.createRootSession 创建（tools 层合法触碰 SDK），schedule 不直调 client.session.create
+      const sessionId = await this.deps.manager.createRootSession(
+        this.deps.client,
+        `${schedule.name ?? schedule.workflowId} · ${slot.toISOString()}`,
+      )
       // 含 sessionId 的 base 供终态 Record 复用（onFinished 闭包）
       const runningBase: ScheduleRun = { ...base, sessionId }
       writeRecord(this.deps.directory, runningBase)

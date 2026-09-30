@@ -17,13 +17,13 @@ Build complex AI workflows using agents, parallel execution, control flow, verif
 
 ## Features
 
-- 🤖 Multi-Agent Workflows
-- ⚡ Parallel Execution
-- 🔀 Dynamic Control Flow
-- ✅ Verification
-- 👤 Human-in-the-Loop Checkpoints
-- 🧩 Child / Nested Workflows
-- 🔌 OpenCode Integration
+- [Agents] Multi-Agent Workflows
+- [Speed] Parallel Execution
+- [Flow] Dynamic Control Flow
+- [Quality] Verification
+- [Human] Human-in-the-Loop Checkpoints
+- [Compose] Child / Nested Workflows
+- [Native] OpenCode Integration
 
 > In one sentence: the Main Agent generates a JavaScript orchestration script, which the runtime executes in a VM sandbox. Tasks are dispatched via `agent() / parallel() / sequence() / fallback() / race()` to many independent sub-sessions running in parallel; the script aggregates the results and returns only the final summary to the main context — solving the context-pollution problem of large parallel batches. Built on the OpenCode v1 plugin API.
 
