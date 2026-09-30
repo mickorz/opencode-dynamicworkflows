@@ -118,7 +118,8 @@ const rs = await parallel([
   () => agent('c'),
 ])
 return rs`,
-    { agent: runner },
+    // 旧语义逃生口：本用例测 null 塌缩机制，不测阶段失败闸门
+    { agent: runner, continueOnAgentFailure: true },
   )
   assert.deepEqual(result.result, ["ok:a", null, "ok:c"])
   assert.equal(result.agents[1].status, "failed")
@@ -247,7 +248,8 @@ test("超时的 agent 重试耗尽后返回 null 且标记 failed", async () => 
   const result = await runWorkflow(
     `export const meta = { name: 'timeout' }
 return await agent('慢任务', { timeoutMs: 20, retries: 2 })`,
-    { agent: runner, runId: "run-to" },
+    // 旧语义逃生口：同上
+    { agent: runner, runId: "run-to", continueOnAgentFailure: true },
   )
   assert.equal(result.result, null)
   assert.equal(result.agents[0].status, "failed")

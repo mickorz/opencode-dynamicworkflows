@@ -68,6 +68,8 @@ export interface BackgroundStartInput {
   maxAgents?: number
   agentTimeoutMs?: number
   agentRetries?: number
+  /** 阶段失败闸门逃生口（Bug1）：true 恢复静默继续旧行为 */
+  continueOnAgentFailure?: boolean
   /** 终态回调（completed/failed/aborted 后调用一次；ScheduleRuntime 用于写终态 Record）。回调抛错不阻断 run */
   onFinished?: (info: BackgroundRunInfo) => void
   /** checkpoint 人工确认通道（scheduled run 注入即败版本，需求 17） */
@@ -179,6 +181,7 @@ export class BackgroundRunManager {
         maxAgents: input.maxAgents,
         agentTimeoutMs: input.agentTimeoutMs ?? null,
         agentRetries: input.agentRetries,
+        continueOnAgentFailure: input.continueOnAgentFailure,
         signal: controller.signal,
         runId: info.runId,
         cwd: deps.directory,

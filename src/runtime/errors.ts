@@ -12,6 +12,8 @@ export enum WorkflowErrorCode {
   CHECKPOINT_REJECTED = "CHECKPOINT_REJECTED",
   /** check() 确定性验证未通过（可恢复失败：sequence 停止、fallback 换候选，与其他节点同构） */
   CHECK_FAILED = "CHECK_FAILED",
+  /** 阶段失败闸门（Bug1 修复）：agent 重试耗尽后 workflow 在下一 phase 边界终止；非可恢复、不可被吞 */
+  WORKFLOW_FAILED = "WORKFLOW_FAILED",
 }
 
 export class WorkflowError extends Error {

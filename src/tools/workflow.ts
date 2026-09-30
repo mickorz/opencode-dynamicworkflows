@@ -40,7 +40,8 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
       concurrency: tool.schema.number().optional().describe("最大并发 agent 数，钳制上限 16；缺省 CPU核数-2。"),
       maxAgents: tool.schema.number().optional().describe("本次 run 的 agent 总数上限，缺省 1000。"),
       agentTimeoutMs: tool.schema.number().optional().describe("单 agent 超时毫秒数；缺省不设硬超时。"),
-      agentRetries: tool.schema.number().optional().describe("可恢复失败的自动重试次数（上限 3），缺省 0。"),
+      agentRetries: tool.schema.number().optional().describe("可恢复失败的自动重试次数（上限 3），缺省 1。"),
+      continueOnAgentFailure: tool.schema.boolean().optional().describe("agent 重试耗尽后继续执行（旧静默语义）；缺省 false——当前阶段收尾后终止 workflow 并报告失败明细。"),
       resumeFromRunId: tool.schema.string().optional().describe(
         "续跑某次历史 run（传入上次结果里的 runId）与修改后的 script：未变的 agent() 调用直接从 journal 回放（不调 LLM），首个变更调用及其后全部重跑。调用按位置匹配，保持前序调用不变且有序。",
       ),
@@ -86,6 +87,7 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
               maxAgents: input.maxAgents,
               agentTimeoutMs: input.agentTimeoutMs,
               agentRetries: input.agentRetries,
+              continueOnAgentFailure: input.continueOnAgentFailure,
               trigger: { type: "manual" },
             },
           )
@@ -208,6 +210,7 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
           maxAgents: input.maxAgents,
           agentTimeoutMs: input.agentTimeoutMs ?? null,
           agentRetries: input.agentRetries,
+          continueOnAgentFailure: input.continueOnAgentFailure,
           signal: runController.signal,
           resolveTier,
           confirm,

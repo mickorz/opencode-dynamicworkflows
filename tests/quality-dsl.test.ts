@@ -72,7 +72,8 @@ test("verify：reviewer 失败塌缩为弃权票，不计入 total", async () =>
   const result = await runWorkflow(
     `export const meta = { name: 'v3' }
 return await verify('x', { reviewers: 2 })`,
-    { agent: runner },
+    // 旧语义逃生口：本用例测弃权票机制，不测阶段失败闸门
+    { agent: runner, continueOnAgentFailure: true },
   )
   const verdict = result.result as { real: boolean; total: number }
   assert.equal(verdict.total, 0)

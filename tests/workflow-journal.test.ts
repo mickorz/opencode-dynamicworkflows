@@ -36,6 +36,8 @@ async function runOnce(script: string, runner: AgentSessionRunner) {
   const journal = new Map<string, JournalEntry>()
   const result = await runWorkflow(script, {
     agent: runner,
+    // 旧语义逃生口：本文件测 journal 机制本身（null 不入 journal），不测阶段失败闸门
+    continueOnAgentFailure: true,
     onAgentJournal: (entry) => journal.set(entry.key, entry),
   })
   return { result, journal }

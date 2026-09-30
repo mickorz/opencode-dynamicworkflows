@@ -140,6 +140,7 @@ test("前台 tool 全链路：journal entry 含展示元数据，失败 attempt 
     const output = await workflowTool.execute(
       {
         background: false, // 本用例验证前台链路（journal 同步落盘），缺省已是后台
+        continueOnAgentFailure: true, // 旧语义逃生口：本用例测 journal/executions 元数据，脚本内 try/catch 捕获失败节点但闸门登记不可见
         script: `export const meta = { name: 'e2e_node' }
 const ok = await agent('正常任务', { label: '成功节点' })
 let failed = null
@@ -152,6 +153,9 @@ return { ok, failed }`,
       },
       context,
     )
+    // 注：脚本用 try/catch 捕获失败节点，但 agent 耗尽登记在 phaseFailed（try/catch 不可见），
+    // 末阶段终检会判失败——本用例测 journal/executions 元数据，故上方 input 本应带逃生口；
+    // 改为在 input 对象里传（见上）
 
     // runId 从 tool 返回 metadata 直接取（C 通道契约；ToolResult 是 union，先窄化）
     const returned = typeof output === "object" ? output : undefined

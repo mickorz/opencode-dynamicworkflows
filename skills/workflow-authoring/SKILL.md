@@ -14,6 +14,7 @@ description: 编写 OpenCode 动态工作流 JavaScript 脚本时加载。涉及
 3. 禁止 `import` / `require` / `Date.now()` / `Math.random()` / `new Date()`（可确定性重放要求）
 4. `parallel()` 接收函数数组，不是 Promise 数组：`() => agent(...)`，返回结果按输入顺序
 5. `agent()` 缺省用只读的 explore 子代理；需要写文件时显式传 `{ agentType: 'general' }`
+6. **阶段失败闸门**：agent 重试耗尽（缺省重试 1 次）后，当前阶段收尾、下一 `phase()` 边界终止 run 并报告失败明细；需静默继续传工具参数 `continueOnAgentFailure: true`，需要容错降级用 `fallback()`（降级成功自动吸收失败）
 
 ## 可用全局
 

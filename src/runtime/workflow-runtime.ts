@@ -117,6 +117,8 @@ export interface WorkflowRunOptions {
   }
   /** 子 workflow 嵌套深度上限（缺省 MAX_WORKFLOW_DEPTH=3） */
   maxWorkflowDepth?: number
+  /** 阶段失败闸门逃生口（Bug1 修复）：true 恢复旧行为——agent 重试耗尽返回 null 静默继续；缺省 false（当前阶段收尾后终止并报告） */
+  continueOnAgentFailure?: boolean
 }
 
 /** checkpoint() 的可选项（P1-4，仅确认型：OpenCode 无自由文本 UI 通道） */
@@ -187,6 +189,10 @@ interface SharedRunContext {
   registryCache?: Map<string, string>
   /** 子 workflow 嵌套深度上限（分支 A） */
   maxWorkflowDepth: number
+  /** 阶段失败闸门明细（Bug1）：非空 = 有 agent 重试耗尽待裁决；下一 phase() 或 run 终检触发终止 */
+  phaseFailed: Array<{ label: string; phase?: string; error: string }>
+  /** 逃生口透传 */
+  continueOnAgentFailure: boolean
 }
 
 /** 单个 workflow invocation 的私有身份与游标 */
@@ -245,6 +251,8 @@ function createSharedRunContext(options: WorkflowRunOptions, runId: string): Sha
     composites: [],
     cwd: options.cwd ?? process.cwd(),
     maxWorkflowDepth: options.maxWorkflowDepth ?? MAX_WORKFLOW_DEPTH,
+    phaseFailed: [],
+    continueOnAgentFailure: options.continueOnAgentFailure ?? false,
   }
   const initial = normalizeConcurrency(
     options.concurrency ?? Math.max(1, (globalThis.navigator?.hardwareConcurrency ?? 8) - 2),
@@ -285,6 +293,8 @@ export async function runWorkflow<T = unknown>(
     )
   }
   const { meta, result } = await executeWorkflow(script, options.args, shared, rootScope)
+  // 阶段失败闸门终检（Bug1）：失败发生在最后一个 phase 且脚本正常 return 时，不允许静默成功
+  if (shared.phaseFailed.length > 0) throw buildFailedGateError(shared.phaseFailed)
   // 纯编排合法：root run 级至少一次实际 dispatch（agent 含 child 内与 checkpoint）
   if (shared.agentCount === 0) {
     throw new WorkflowError(
@@ -357,6 +367,8 @@ async function executeWorkflow(
   }
 
   const phase = (title: string) => {
+    // 阶段失败闸门（Bug1）：上一阶段有 agent 重试耗尽 -> 此处即阶段边界，终止并报告
+    if (shared.phaseFailed.length > 0) throw buildFailedGateError(shared.phaseFailed)
     scope.currentPhase = title
     const display = scope.phasePrefix + title
     if (!shared.phases.includes(display)) shared.phases.push(display)
@@ -429,7 +441,6 @@ async function executeWorkflow(
     shared.agents.push(record)
     // 通知进行中状态：让后台 run 注册表能反映 running agent，进度展示才不会 done/total 永远相等
     shared.onAgentUpdate?.(record)
-    const agentStarted = Date.now()
 
     // ---- journal / resume（P1-1）：确定性哈希 + 最长未变前缀回放 ----
     // 哈希身份：prompt/model/phase/agentType/schema（与 Pi 同思路，无 thread/agentDef/tier 面）
@@ -456,12 +467,16 @@ async function executeWorkflow(
       scope.firstMiss = Math.min(scope.firstMiss, callIndex)
     }
 
-    // 真实执行才记起始时间戳（journal 回放上面已 return，不带此字段；TUI phase 耗时用）
-    record.startedAt = agentStarted
-
     return shared.scheduler.run(async () => {
+      // 真实执行才记起始时间戳（journal 回放上面已 return，不带此字段；TUI phase 耗时用）。
+      // Bug2 修复：时间戳在拿到并发槽位后才打——排队等待期不计时、不计入 durationMs，
+      // TUI 对 running 且无 startedAt 的排队节点自然不显示计时（nodeLine 判空已具备）；
+      // 静默赋值不加 onAgentUpdate 事件（快照心跳 3s 内自然携带，避免多出事件破坏 F-20 序列）
+      record.startedAt = Date.now()
+      const agentStarted = record.startedAt
       const timeout = scriptOptions.timeoutMs !== undefined ? scriptOptions.timeoutMs : shared.agentTimeoutMs
-      const retries = normalizeAgentRetries(scriptOptions.retries ?? shared.agentRetries ?? 0)
+      // Bug1 修复：缺省重试 1 次（此前缺省 0——可恢复失败一次即静默返回 null，放大「不重试直接过」体感）
+      const retries = normalizeAgentRetries(scriptOptions.retries ?? shared.agentRetries ?? 1)
       const maxAttempts = retries + 1
 
       // worktree 隔离（P1-5）：确定性命名（runId-callIndex-label）保证 resume key 稳定；
@@ -601,6 +616,11 @@ async function executeWorkflow(
               emitExecution("failed", workflowError.message)
               shared.onAgentUpdate?.(record)
               log(`agent "${label}" ${maxAttempts} 次尝试后失败: ${workflowError.code} ${workflowError.message}`)
+              // 阶段失败闸门（Bug1）：登记待裁决——下一 phase() 边界或 run 终检触发终止报告；
+              // 逃生口开启时维持旧行为（静默继续）；fallback/race 成功吸收时清除
+              if (!shared.continueOnAgentFailure) {
+                shared.phaseFailed.push({ label, phase: displayPhase, error: workflowError.message })
+              }
               return null
             }
             emitExecution("failed", workflowError.message)
@@ -948,8 +968,21 @@ async function executeWorkflow(
   const fallback = (nodes: Array<WorkflowNode>): Promise<unknown> =>
     runComposite("fallback", nodes, async (list) => {
       for (const [index, node] of list.entries()) {
+        const before = shared.phaseFailed.length
         const r = await executeNode(node, undefined)
-        if (r.status === "success") return { value: r.value, failed: false }
+        if (r.status === "success") {
+          // 闸门归因（Bug1）：agent 耗尽失败以 null 值形态返回——「null + 候选窗口内新增登记」
+          // 判定为本候选失败：回滚这批登记（它们已被换候选显式吸收），继续尝试下一候选
+          const added = shared.phaseFailed.slice(before)
+          if (r.value === null && added.length > 0) {
+            shared.phaseFailed.length = before
+            log(`fallback[${index}] 候选返回 null 且有耗尽失败登记，视为候选失败换下一个`)
+            continue
+          }
+          // 阶段失败闸门：降级成功 = 失败已被显式吸收，清除登记（否则 fallback 语义报废）
+          if (shared.phaseFailed.length > 0) shared.phaseFailed = []
+          return { value: r.value, failed: false }
+        }
         if (r.status === "cancelled") throwCancelled()
         // 可恢复失败：尝试下一候选；结构性错误已由 executeNode 上抛，不会被吞噬
         const message = r.error instanceof Error ? r.error.message : String(r.error)
@@ -976,12 +1009,25 @@ async function executeWorkflow(
             finish()
           }
           list.forEach((node, index) => {
+            const startLen = shared.phaseFailed.length
             executeNode(node, undefined).then(
+              (result) => {
+                // 闸门归因（Bug1）：「null + 本候选产生耗尽登记」不是真成功，
+                // 回滚这批登记（被竞争吸收）并按可恢复失败参与竞争统计
+                const r =
+                  result.status === "success" && result.value === null && shared.phaseFailed.length > startLen
+                    ? (shared.phaseFailed.length = startLen, { status: "failure" as const, error: new Error("候选返回 null 且有耗尽失败登记") })
+                    : result
+                return r
+              },
+            ).then(
               (r) => {
                 if (r.status === "success") {
                   settle(() => {
                     controller.abort()
                     log(`race[${index}] 胜出，取消其余 ${list.length - 1} 个候选`)
+                    // 阶段失败闸门：败者的耗尽失败已被胜者吸收，清除登记
+                    if (shared.phaseFailed.length > 0) shared.phaseFailed = []
                     resolve({ value: r.value, failed: false })
                   })
                 } else if (r.status === "cancelled") {
@@ -1298,6 +1344,18 @@ async function withTimeout<T>(
   } finally {
     if (timeoutId) clearTimeout(timeoutId)
   }
+}
+
+/** 阶段失败闸门错误（Bug1）：报告全部重试耗尽的 agent 明细与续跑提示 */
+function buildFailedGateError(failures: Array<{ label: string; phase?: string; error: string }>): WorkflowError {
+  const lines = failures.map((f) => `  [${f.phase ?? "-"}] ${f.label}: ${f.error}`).join(`
+`)
+  return new WorkflowError(
+    `阶段失败闸门：${failures.length} 个 agent 重试耗尽，workflow 终止（已完成部分已记入 journal，修复后 resumeFromRunId 续跑；continueOnAgentFailure=true 可恢复静默继续的旧行为）
+${lines}`,
+    WorkflowErrorCode.WORKFLOW_FAILED,
+    { recoverable: false },
+  )
 }
 
 function normalizeConcurrency(value: unknown): number {
