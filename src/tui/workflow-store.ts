@@ -42,6 +42,10 @@ export interface WorkflowNode {
   compositePath?: string[]
   /** 节点类型（P2-4）：缺省普通 agent；checkpoint 用于区分「等待人工」与执行中 */
   kind?: "checkpoint"
+  /** 总尝试次数（重试进度 (2/3) 显示用，#32） */
+  maxAttempts?: number
+  /** 生效超时上限毫秒（计时显示 10s/1m 用；null = 无上限，#33） */
+  timeoutMs?: number | null
 }
 
 export interface WorkflowProgress {
@@ -138,6 +142,8 @@ export function parseWorkflowMetadata(raw: unknown): WorkflowProgress | null {
         ? n.compositePath.filter((p): p is string => typeof p === "string")
         : undefined,
       ...(n.kind === "checkpoint" ? { kind: "checkpoint" as const } : {}),
+      ...(typeof n.maxAttempts === "number" ? { maxAttempts: n.maxAttempts } : {}),
+      ...(n.timeoutMs === null || typeof n.timeoutMs === "number" ? { timeoutMs: n.timeoutMs } : {}),
     })
   }
   if (nodes.length === 0) return null
@@ -242,15 +248,33 @@ export function buildSidebarRows(progress: WorkflowProgress): SidebarRow[] {
 
 /** 节点展示行文本：label · 耗时 · token · 回放标记。running 且有 startedAt 时显示整数秒实时耗时
  *  （随轮询重渲染递增，约 3 秒一跳），完成态保持一位小数格式 */
+/** 超时上限显示（#33）：60s -> 1m，90s -> 1m（取整分），3600s -> 1h；亚分钟取整秒 */
+function formatTimeoutCap(ms: number): string {
+  if (ms < 60_000) return `${Math.max(1, Math.round(ms / 1000))}s`
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m`
+  return `${Math.floor(ms / 3_600_000)}h`
+}
+
 export function nodeLine(node: WorkflowNode): string {
+  // 重试进度前缀（#32）：running 且第 2 次及以后尝试显示 (2/3)
+  const retryPrefix =
+    node.status === "running" && node.attempt !== undefined && node.attempt > 1 && node.maxAttempts !== undefined
+      ? `(${node.attempt}/${node.maxAttempts}) `
+      : ""
+  // 计时（#33）：running 带上限显示 10s/1m（null 或缺省 = 纯耗时）
+  const capSuffix =
+    node.status === "running" && node.startedAt !== undefined && typeof node.timeoutMs === "number"
+      ? `/${formatTimeoutCap(node.timeoutMs)}`
+      : ""
   const duration =
     node.status === "running" && node.startedAt !== undefined
-      ? formatElapsed(Math.max(0, Date.now() - node.startedAt))
+      ? formatElapsed(Math.max(0, Date.now() - node.startedAt)) + capSuffix
       : formatDuration(node.durationMs)
-  const tokens = formatTokens(node.tokens)
+  // token 显示（#34）：去 tok 后缀，k/m 缩写大写（9.9k -> 9.9K）
+  const tokens = formatTokens(node.tokens).replace(/([km])$/, (ch) => ch.toUpperCase())
   const replayed = node.replayed ? " ·缓存" : ""
   const durationPart = duration ? ` ·${duration}` : ""
-  const tokensPart = tokens ? ` ·${tokens} tok` : ""
+  const tokensPart = tokens ? ` ·${tokens}` : ""
   // checkpoint 节点（P2-4）：状态词前缀区分「等待人工」与执行中，等待时不显示耗时避免误读为卡死
   if (node.kind === "checkpoint") {
     const state =
@@ -265,10 +289,10 @@ export function nodeLine(node: WorkflowNode): string {
               ? "[被拒绝]"
               : "[失败]"
             : "[已中止]"
-    if (node.status === "running") return `${state} ${node.label}`
-    return `${state} ${node.label}${durationPart}`
+    if (node.status === "running") return `${retryPrefix}${state} ${node.label}`
+    return `${retryPrefix}${state} ${node.label}${durationPart}`
   }
-  return `${node.label}${durationPart}${tokensPart}${replayed}`
+  return `${retryPrefix}${node.label}${durationPart}${tokensPart}${replayed}`
 }
 
 /** phase 耗时（毫秒）：start = 组内最早 startedAt；存在 running 节点时 now - start 递增，

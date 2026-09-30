@@ -190,3 +190,34 @@ return rs.length`,
   )
   assert.ok((second.durationMs ?? 999) < 150, "第二个的耗时不应含 80ms 排队等待")
 })
+
+test("#32/#33 数据面：重试中间态推送 attempt/maxAttempts，record 携带生效 timeout", async () => {
+  let n = 0
+  const updates: Array<{ attempt?: number; maxAttempts?: number }> = []
+  const runner: AgentSessionRunner = {
+    async run() {
+      n++
+      if (n <= 2) throw new Error(`第 ${n} 次失败`)
+      return { value: "ok", sessionId: "s", type: "text" }
+    },
+  }
+  const result = await runWorkflow(
+    `export const meta = { name: 'retry_progress' }
+phase('干活')
+return await agent('三次才成', { retries: 2, timeoutMs: 30000 })`,
+    {
+      agent: runner,
+      onAgentUpdate: (r) => {
+        if (r.attempt !== undefined) updates.push({ attempt: r.attempt, maxAttempts: r.maxAttempts })
+      },
+    },
+  )
+  assert.equal(result.result, "ok")
+  // 中间态：attempt=2 的推送出现过（第 1 次不推、第 2 次推、第 3 次推）
+  assert.ok(updates.some((u) => u.attempt === 2 && u.maxAttempts === 3), "attempt=2 中间态可见")
+  assert.ok(updates.some((u) => u.attempt === 3 && u.maxAttempts === 3), "attempt=3 可见")
+  // timeout 面板：单 agent timeoutMs 进 record
+  assert.equal(result.agents[0].timeoutMs, 30000)
+  assert.equal(result.agents[0].maxAttempts, 3)
+  assert.equal(result.agents[0].attempt, 3)
+})

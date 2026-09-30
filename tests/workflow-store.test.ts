@@ -266,7 +266,7 @@ test("nodeLine：running 有 startedAt 显示整数秒实时耗时，完成态�
   const running: WorkflowNode = { id: "n", label: "核查", status: "running", startedAt: now - 8400 }
   assert.match(nodeLine(running), /^核查 ·8s$/)
   const done: WorkflowNode = { id: "n", label: "核查", status: "ok", durationMs: 8400, tokens: 1234 }
-  assert.equal(nodeLine(done), "核查 ·8.4s ·1.2k tok")
+  assert.equal(nodeLine(done), "核查 ·8.4s ·1.2K")
 })
 
 test("parseWorkflowMetadata：解析 startedAt；老快照无此字段不回归", () => {
@@ -362,4 +362,41 @@ test("nodeLine：checkpoint 节点状态词前缀（等待/批准/拒绝/中止�
   assert.equal(nodeLine(mk("aborted")), "[已中止] 是否发布")
   // 普通 agent 不受影响
   assert.match(nodeLine({ id: "r:1", label: "干活", status: "ok", durationMs: 900 } as any), /^干活 ·900ms/)
+})
+
+test("nodeLine：重试进度前缀 + 超时上限 + token 去后缀（#32/#33/#34）", async () => {
+  const { nodeLine } = await import("../src/tui/workflow-store.js")
+  // #32 running 第 2 次尝试 -> (2/3) 前缀
+  assert.match(
+    nodeLine({ id: "r:0", label: "重试中", status: "running", attempt: 2, maxAttempts: 3, startedAt: Date.now() - 5000 } as any),
+    /^\(2\/3\) 重试中/,
+  )
+  // 首次尝试不显示前缀
+  assert.match(
+    nodeLine({ id: "r:1", label: "首轮", status: "running", attempt: 1, maxAttempts: 3 } as any),
+    /^首轮/,
+  )
+  // #33 带上限计时 10s/1m（60s 上限 -> 1m；不校验精确已耗时，只校验 /1m 后缀）
+  assert.match(
+    nodeLine({ id: "r:2", label: "限时", status: "running", startedAt: Date.now() - 9000, timeoutMs: 60_000 } as any),
+    /\/1m$/,
+  )
+  // 90s 上限 -> 1m（取整分）；1h 上限 -> 1h
+  assert.match(
+    nodeLine({ id: "r:3", label: "x", status: "running", startedAt: Date.now(), timeoutMs: 90_000 } as any),
+    /\/1m$/,
+  )
+  assert.match(
+    nodeLine({ id: "r:4", label: "x", status: "running", startedAt: Date.now(), timeoutMs: 3_600_000 } as any),
+    /\/1h$/,
+  )
+  // 无上限保持纯耗时；null 同样
+  assert.ok(!nodeLine({ id: "r:5", label: "无界", status: "running", startedAt: Date.now() - 3000 } as any).includes("/"))
+  assert.ok(!nodeLine({ id: "r:6", label: "空界", status: "running", startedAt: Date.now(), timeoutMs: null } as any).includes("/"))
+  // #34 token 9.9k -> 9.9K，无 tok 后缀
+  const line = nodeLine({ id: "r:7", label: "计费", status: "ok", durationMs: 1500, tokens: 9900 } as any)
+  assert.match(line, /9\.9K$/)
+  assert.ok(!line.includes("tok"))
+  // checkpoint 行不受 retry 前缀影响（无 attempt 语义）
+  assert.equal(nodeLine({ id: "r:8", label: "闸门", status: "running", kind: "checkpoint" } as any), "[等待人工确认] 闸门")
 })

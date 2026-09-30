@@ -475,6 +475,8 @@ async function executeWorkflow(
       record.startedAt = Date.now()
       const agentStarted = record.startedAt
       const timeout = scriptOptions.timeoutMs !== undefined ? scriptOptions.timeoutMs : shared.agentTimeoutMs
+      // 生效超时上限进 record（#33：TUI 计时显示 10s/1m；null = 无上限）
+      record.timeoutMs = timeout
       // Bug1 修复：缺省重试 1 次（此前缺省 0——可恢复失败一次即静默返回 null，放大「不重试直接过」体感）
       const retries = normalizeAgentRetries(scriptOptions.retries ?? shared.agentRetries ?? 1)
       const maxAttempts = retries + 1
@@ -497,6 +499,10 @@ async function executeWorkflow(
 
       try {
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          // 重试进度进 record（#32：TUI 显示 (2/3)）；attempt>1 时推送中间态让侧栏实时可见
+          record.attempt = attempt
+          record.maxAttempts = maxAttempts
+          if (attempt > 1) shared.onAgentUpdate?.(record)
           throwIfAborted()
           // 每次 attempt 一个独立 controller：超时只取消本次，run 级 abort 取消所有
           const attemptController = new AbortController()

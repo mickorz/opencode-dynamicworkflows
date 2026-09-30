@@ -97,6 +97,10 @@ export interface AgentRecord {
   compositePath?: string[]
   /** 节点类型标记（P2-4 观测）：缺省为普通 agent；checkpoint 节点用于 TUI 区分「等待人工」与执行中 */
   kind?: "checkpoint"
+  /** 总尝试次数（retries+1；重试进度显示 (2/3) 用，#32） */
+  maxAttempts?: number
+  /** 生效超时上限毫秒（单 agent > run 级；null = 无上限；计时显示 10s/1m 用，#33） */
+  timeoutMs?: number | null
 }
 
 /** Composite 组合节点执行记录（P2-3 观测；与 AgentRecord 同源的展示元数据，不进 journal key） */

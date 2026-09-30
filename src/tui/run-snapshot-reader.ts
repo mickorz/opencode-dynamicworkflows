@@ -77,6 +77,9 @@ export function parseRunSnapshot(raw: unknown): RunSnapshotView | null {
       compositePath: Array.isArray(n.compositePath)
         ? n.compositePath.filter((p): p is string => typeof p === "string")
         : undefined,
+      ...(n.kind === "checkpoint" ? { kind: "checkpoint" as const } : {}),
+      ...(typeof n.maxAttempts === "number" ? { maxAttempts: n.maxAttempts } : {}),
+      ...(n.timeoutMs === null || typeof n.timeoutMs === "number" ? { timeoutMs: n.timeoutMs } : {}),
     })
   }
   if (nodes.length === 0) return null
