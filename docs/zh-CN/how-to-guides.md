@@ -91,7 +91,8 @@ return r
 要点：
 
 - `timeoutMs` 毫秒；省略且未设 run 级缺省时不设硬超时；超时报错形如 `agent "x" 超时 (ms)`
-- `retries` 上限 3，默认 0；超时属于可重试失败，占用重试次数
+- `retries` 上限 3，默认 1（阶段失败闸门配套：重试耗尽不再静默返回 null，见下）；超时属于可重试失败，占用重试次数
+- 阶段失败闸门：重试耗尽后当前阶段收尾，下一 `phase()` 调用（或 run 结束）抛 `WORKFLOW_FAILED` 并附失败清单；`fallback`/`race` 成功时吸收失败；工具参数 `continueOnAgentFailure: true` 恢复静默继续旧行为
 - 优先级：单 agent `timeoutMs` / `retries` > 工具入参 `agentTimeoutMs` / `agentRetries` > 不设超时/不重试
 - 与质量 DSL 的 `retry` 区分：DSL retry 是「直到 until 条件通过」（对结果不满意就换着再来），`retries` 是「可恢复失败后原样重试」（网络/限流/超时）；两者可叠加
 

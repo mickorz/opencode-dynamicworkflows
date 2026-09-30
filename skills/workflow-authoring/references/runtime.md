@@ -108,6 +108,7 @@ const best = await race([
 
 - `parallel` / `pipeline` 中单个 agent 的可恢复失败 -> 该槽位为 `null`，其余照常；子脚本 throw 属可恢复失败，同样塌缩为 null（兄弟分支不受影响）
 - `sequence` / `fallback` / `race` 的可恢复失败 -> 返回 null / 换候选 / 等其余（见上节三态规则）
+- 阶段失败闸门：agent 重试耗尽（默认 1 次）返回 null 并登记——同 phase 照常收尾，下一 `phase()` 或 run 结束抛 `WORKFLOW_FAILED` 附失败清单终止；fallback/race 成功自动吸收（清除登记）；工具参数 `continueOnAgentFailure: true` 恢复静默继续旧行为
 - 需要"失败即终止"的调用，直接 `await agent(...)`（不放进 parallel）
 - 脚本内可对 agent / workflow 调用自行 try/catch 实现自定义降级；child 失败不再污染整 run，捕获后可继续执行
 

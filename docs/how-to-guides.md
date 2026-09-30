@@ -92,7 +92,8 @@ return r
 Key points:
 
 - `timeoutMs` in milliseconds; omit it (with no run-level default) for no hard timeout; the timeout error looks like `agent "x" timed out (ms)`
-- `retries` capped at 3, default 0; timeouts count as retryable failures and consume retry budget
+- `retries` capped at 3, default 1 (paired with the failure gate below — an exhausted agent no longer silently returns null); timeouts count as retryable failures and consume retry budget
+- Failure gate: after retries are exhausted the current phase wraps up, then the next `phase()` call (or run end) throws `WORKFLOW_FAILED` with a failure list. `fallback`/`race` absorb failures on success; tool arg `continueOnAgentFailure: true` restores the old silent-continue behavior
 - Priority: per-agent `timeoutMs` / `retries` > tool args `agentTimeoutMs` / `agentRetries` > no timeout/no retry
 - Distinction from the DSL `retry`: DSL retry means "repeat until the until-condition passes" (try differently when unsatisfied); `retries` means "retry as-is after recoverable failures" (network/rate-limit/timeout); they stack
 
