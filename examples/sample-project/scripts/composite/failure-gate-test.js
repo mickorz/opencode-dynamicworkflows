@@ -3,6 +3,7 @@
 // 2. 下一 phase() 边界终止 run，报错含失败明细与续跑提示
 export const meta = { name: 'failure_gate', description: '阶段失败闸门实机验收' }
 phase('执行')
-const bad = await agent('请直接回复固定文本：失败场景演示', { label: '会失败的节点', retries: 0 })
+// timeoutMs:1 做确定性失败注入（1ms 必超时；retries:0 立即耗尽触发闸门）
+const bad = await agent('回复任意文本（此调用 1ms 超时必失败）', { label: '会失败的节点', timeoutMs: 1, retries: 0 })
 phase('汇总')
 return { bad }
