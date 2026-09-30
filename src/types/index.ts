@@ -101,6 +101,8 @@ export interface AgentRecord {
   maxAttempts?: number
   /** 生效超时上限毫秒（单 agent > run 级；null = 无上限；计时显示 10s/1m 用，#33） */
   timeoutMs?: number | null
+  /** 本次尝试的起始时间戳（每次 attempt 重置；运行计时按此显示 1s/8s 而非累计 9s/8s，#33 修正） */
+  attemptStartedAt?: number
 }
 
 /** Composite 组合节点执行记录（P2-3 观测；与 AgentRecord 同源的展示元数据，不进 journal key） */

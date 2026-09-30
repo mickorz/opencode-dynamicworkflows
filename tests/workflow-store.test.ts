@@ -400,3 +400,21 @@ test("nodeLine：重试进度前缀 + 超时上限 + token 去后缀（#32/#33/#
   // checkpoint 行不受 retry 前缀影响（无 attempt 语义）
   assert.equal(nodeLine({ id: "r:8", label: "闸门", status: "running", kind: "checkpoint" } as any), "[等待人工确认] 闸门")
 })
+
+test("nodeLine：重试后计时按本次尝试重置（(2/3) ·Ns/8s 而非累计 9s/8s，#33 修正）", async () => {
+  const { nodeLine } = await import("../src/tui/workflow-store.js")
+  // 模拟：dispatch 于 20s 前，第 2 次尝试 3s 前开始 -> 应显示 (2/3) ·3s/8s（而非 20s/8s）
+  const now = Date.now()
+  const line = nodeLine({
+    id: "r:0", label: "重试中", status: "running",
+    startedAt: now - 20_000, attemptStartedAt: now - 3_000,
+    attempt: 2, maxAttempts: 3, timeoutMs: 8_000,
+  } as any)
+  assert.match(line, /^\(2\/3\) 重试中 ·[23]s\/8s$/)
+  // 无 attemptStartedAt（旧快照兼容）：退回 startedAt 基准
+  const legacy = nodeLine({
+    id: "r:1", label: "旧数据", status: "running",
+    startedAt: now - 20_000, attempt: 2, maxAttempts: 3, timeoutMs: 8_000,
+  } as any)
+  assert.match(legacy, /20s\/8s$/)
+})

@@ -46,6 +46,8 @@ export interface WorkflowNode {
   maxAttempts?: number
   /** 生效超时上限毫秒（计时显示 10s/1m 用；null = 无上限，#33） */
   timeoutMs?: number | null
+  /** 本次尝试起始时间戳（重试后计时重置，避免累计越界 9s/8s，#33 修正） */
+  attemptStartedAt?: number
 }
 
 export interface WorkflowProgress {
@@ -144,6 +146,7 @@ export function parseWorkflowMetadata(raw: unknown): WorkflowProgress | null {
       ...(n.kind === "checkpoint" ? { kind: "checkpoint" as const } : {}),
       ...(typeof n.maxAttempts === "number" ? { maxAttempts: n.maxAttempts } : {}),
       ...(n.timeoutMs === null || typeof n.timeoutMs === "number" ? { timeoutMs: n.timeoutMs } : {}),
+      ...(typeof n.attemptStartedAt === "number" ? { attemptStartedAt: n.attemptStartedAt } : {}),
     })
   }
   if (nodes.length === 0) return null
@@ -268,7 +271,7 @@ export function nodeLine(node: WorkflowNode): string {
       : ""
   const duration =
     node.status === "running" && node.startedAt !== undefined
-      ? formatElapsed(Math.max(0, Date.now() - node.startedAt)) + capSuffix
+      ? formatElapsed(Math.max(0, Date.now() - (node.attemptStartedAt ?? node.startedAt))) + capSuffix
       : formatDuration(node.durationMs)
   // token 显示（#34）：去 tok 后缀，k/m 缩写大写（9.9k -> 9.9K）
   const tokens = formatTokens(node.tokens).replace(/([km])$/, (ch) => ch.toUpperCase())

@@ -80,6 +80,7 @@ export function parseRunSnapshot(raw: unknown): RunSnapshotView | null {
       ...(n.kind === "checkpoint" ? { kind: "checkpoint" as const } : {}),
       ...(typeof n.maxAttempts === "number" ? { maxAttempts: n.maxAttempts } : {}),
       ...(n.timeoutMs === null || typeof n.timeoutMs === "number" ? { timeoutMs: n.timeoutMs } : {}),
+      ...(typeof n.attemptStartedAt === "number" ? { attemptStartedAt: n.attemptStartedAt } : {}),
     })
   }
   if (nodes.length === 0) return null

@@ -502,6 +502,8 @@ async function executeWorkflow(
           // 重试进度进 record（#32：TUI 显示 (2/3)）；attempt>1 时推送中间态让侧栏实时可见
           record.attempt = attempt
           record.maxAttempts = maxAttempts
+          // 计时基准按本次尝试重置（#33 修正：重试后显示 1s/8s 而非累计 9s/8s 越界）
+          record.attemptStartedAt = Date.now()
           if (attempt > 1) shared.onAgentUpdate?.(record)
           throwIfAborted()
           // 每次 attempt 一个独立 controller：超时只取消本次，run 级 abort 取消所有
