@@ -20,6 +20,7 @@ import {
   globalTuiJsonPath,
   globalCachePackageDir,
   mergePluginEntry,
+  mergeCheckpointPermission,
   projectOpenCodeJsonPath,
   projectTuiJsonPath,
   skillTargets,
@@ -109,6 +110,7 @@ export async function runInstall(): Promise<void> {
   // 展示变更清单
   const lines = [
     `修改  ${plan.openCodeJson}（plugin += ${plan.pluginEntry}）`,
+    `修改  ${plan.openCodeJson}（permission[workflow-checkpoint:*] = ask，checkpoint 必弹窗）`,
     `修改  ${plan.tuiJson}（plugin += ${plan.pluginEntry}）`,
   ]
   if (mode === "locked") lines.unshift(`执行  npm install ${PKG_NAME}（在 ${cwd}）`)
@@ -137,6 +139,7 @@ export async function runInstall(): Promise<void> {
     // 写两份配置（JSONC 增量合并，保留注释）
     s.start("合并 opencode.json")
     mergePluginEntry(plan.openCodeJson, plan.pluginEntry)
+    mergeCheckpointPermission(plan.openCodeJson)
     s.stop(`已更新 ${plan.openCodeJson}`)
 
     s.start("合并 tui.json")

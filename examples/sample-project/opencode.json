@@ -4,6 +4,9 @@
   // plugin 相对路径基准 = 本配置文件所在目录（config/plugin.ts:49-53），../.. 即仓库根
   // skills.paths 相对路径基准 = OpenCode 启动目录（skill/index.ts:215），../../skills 即仓库根/skills
   "plugin": ["../.."],
+  "permission": {
+    "workflow-checkpoint:*": "ask"
+  },
   "skills": {
     "paths": ["../../skills"]
   }

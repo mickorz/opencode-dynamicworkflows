@@ -20,6 +20,7 @@ import {
   mergePluginEntry,
   removeConfigWithBackup,
   removePluginEntries,
+  mergeCheckpointPermission,
   detectInstalled,
   copySkill,
   skillTargets,
@@ -202,4 +203,17 @@ test("补充 detectInstalled 识别包名 锁定 全局三种方式", () => {
   // 空场景不误报
   const emptyDir = mkdirSync(join(dir, "empty"), { recursive: true }) as string
   assert.deepEqual(detectInstalled(emptyDir, emptyDir), [])
+})
+
+test("mergeCheckpointPermission：写入 ask 规则且幂等；卸载清理", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "wf-cp-perm-"))
+  const file = path.join(dir, "opencode.json")
+  fs.writeFileSync(file, JSON.stringify({ plugin: ["x"] }), "utf-8")
+  assert.equal(mergeCheckpointPermission(file), true, "首次写入")
+  const first = JSON.parse(fs.readFileSync(file, "utf-8"))
+  assert.equal(first.permission["workflow-checkpoint:*"], "ask")
+  assert.equal(mergeCheckpointPermission(file), false, "幂等不重复写")
+  assert.equal(removePluginEntries(file), true, "卸载清理（plugin 与规则同批）")
+  const after = JSON.parse(fs.readFileSync(file, "utf-8"))
+  assert.equal(after.permission, undefined, "规则随最后一个键清空")
 })

@@ -222,6 +222,15 @@ export function removePluginEntries(path: string): boolean {
     }
   }
 
+  // 同步移除 checkpoint 权限规则（与 plugin 条目同生共灭）
+  const permission = loaded.data.permission as Record<string, unknown> | undefined
+  if (permission && permission[CHECKPOINT_PERMISSION_KEY] === "ask") {
+    delete permission[CHECKPOINT_PERMISSION_KEY]
+    const nextPermission = Object.keys(permission).length > 0 ? permission : undefined
+    text = applyEdits(text, modify(text, ["permission"], nextPermission, { formattingOptions: FORMAT }))
+    changed = true
+  }
+
   const skills = loaded.data.skills as Record<string, unknown> | undefined
   const paths = skills?.paths
   if (Array.isArray(paths)) {
@@ -426,3 +435,23 @@ export function expandHome(p: string): string {
 export function npxCacheHint(): string {
   return join(tmpdir(), "..", "npm-cache", "_npx")
 }
+
+/** checkpoint 权限规则（逐实例 ask）：覆盖 build agent 默认的 "*": "allow" 兜底，
+ *  使 workflow 的人工确认点必弹权限对话框（否则被默认放行静默直通——权限求值 findLast，
+ *  用户配置的规则在 defaults 之后故优先）。返回是否发生了修改 */
+export function mergeCheckpointPermission(path: string): boolean {
+  const loaded = ensureLoaded(path)
+  if (!loaded) return false
+  const original = loaded.text
+  let text = original
+  const permission = (loaded.data.permission as Record<string, unknown> | undefined) ?? {}
+  if (permission[CHECKPOINT_PERMISSION_KEY] === "ask") return false
+  text = applyEdits(
+    text,
+    modify(text, ["permission", CHECKPOINT_PERMISSION_KEY], "ask", { formattingOptions: FORMAT }),
+  )
+  return writeWithBackup(path, original, text)
+}
+
+/** checkpoint 权限规则键（安装器与 doctor 共用） */
+export const CHECKPOINT_PERMISSION_KEY = "workflow-checkpoint:*"
