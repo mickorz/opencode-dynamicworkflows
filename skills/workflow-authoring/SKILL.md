@@ -15,6 +15,7 @@ description: 编写 OpenCode 动态工作流 JavaScript 脚本时加载。涉及
 4. `parallel()` 接收函数数组，不是 Promise 数组：`() => agent(...)`，返回结果按输入顺序
 5. `agent()` 缺省用只读的 explore 子代理；需要写文件时显式传 `{ agentType: 'general' }`
 6. **阶段失败闸门**：agent 重试耗尽（缺省重试 1 次）后，当前阶段收尾、下一 `phase()` 边界终止 run 并报告失败明细；需静默继续传工具参数 `continueOnAgentFailure: true`，需要容错降级用 `fallback()`（降级成功自动吸收失败）
+7. **默认超时 1 小时**：生成的每个 `agent()` 调用默认带 `timeoutMs: 3600000`；任务明显更快（如固定文本回复）可用更小值，用户显式指定时从其指定——缺省无兜底超时的裸 agent 不要生成
 
 ## 可用全局
 
@@ -127,7 +128,7 @@ return { brief: spec.brief, design: design.design, code: code.code }
 | `agentType` | OpenCode agent 名；缺省 explore（只读），写任务传 general |
 | `model` | "provider/modelId"，如 anthropic/claude-sonnet-4-6 |
 | `isolation` | `"worktree"` 独立 git worktree 隔离（写型任务配合 agentType general） |
-| `timeoutMs` | 单 agent 超时毫秒 |
+| `timeoutMs` | 单 agent 超时毫秒；**生成时默认带 3600000（1h）**，快任务可调小 |
 | `retries` | 可恢复失败重试次数（上限 3） |
 | `phase` | 显式归属阶段（缺省用当前 phase） |
 
