@@ -151,11 +151,14 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
       }
       const modelTiers = loadModelTiers({ projectDir: context.directory })
       const resolveTier = (tier: string) => modelTiers[tier]
-      // checkpoint 人工确认通道：ToolContext.ask 的允许/拒绝映射为 true/false（拒绝不抛错，脚本可分支处理）
+      // checkpoint 人工确认通道：ToolContext.ask 的允许/拒绝映射为 true/false（拒绝走 CHECKPOINT_REJECTED 强停止）
+      // 逐实例唯一化 permission（含 runId + 递增序号）：防「Always allow」记忆规则覆盖后续 checkpoint——
+      // 权限规则按 Wildcard.match(permission, rule.permission) 全串匹配，唯一串永不命中旧记忆，必弹窗
+      let checkpointAskSeq = 0
       const confirm = async (promptText: string): Promise<unknown> => {
         try {
           await context.ask({
-            permission: "workflow-checkpoint",
+            permission: `workflow-checkpoint:${runId}:${checkpointAskSeq++}`,
             patterns: [promptText.slice(0, 120)],
             always: [],
             metadata: { message: promptText },
