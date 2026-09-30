@@ -121,28 +121,12 @@ export interface WorkflowRunOptions {
   continueOnAgentFailure?: boolean
 }
 
-/** question 型 checkpoint 的选项（与官方 Question schema 对齐，#35） */
-export interface CheckpointQuestionSpec {
-  header?: string
-  options: Array<{ label: string; description?: string }>
-  multiple?: boolean
-  custom?: boolean
-}
-
-/** checkpoint() 的可选项：无 options 走权限弹窗（allow/deny）；带 options 走 question 挂起流（异步人工作答） */
+/** checkpoint() 的可选项（P1-4，仅确认型：OpenCode 无自由文本 UI 通道） */
 export interface CheckpointOptions {
-  /** 无人工通道（headless）时的回复；缺省 true（仅权限型生效） */
+  /** 无人工通道（headless）时的回复；缺省 true */
   default?: unknown
-  /** "abort"：headless 时抛错终止而非取 default（仅权限型生效） */
+  /** "abort"：headless 时抛错终止而非取 default */
   headless?: "default" | "abort"
-  /** question 型：给出即切换为官方选项对话框流程（agent 中转 + journal 回放续跑） */
-  options?: Array<{ label: string; description?: string }>
-  /** question 型短标签（≤30 字符） */
-  header?: string
-  /** question 型允许多选 */
-  multiple?: boolean
-  /** question 型允许自由输入（缺省 true） */
-  custom?: boolean
 }
 
 /** 并发闸门封装：limiter 与 concurrency 两份状态不可能失同步；仅 agent dispatch 进入 */
@@ -239,19 +223,6 @@ interface WorkflowScope {
   pathLabels?: string[]
   /** 稳定身份链（keySegment 数组；root 为 ["root"]） */
   pathKeys?: string[]
-}
-
-/** question 型 checkpoint 挂起标记：journal entry.result 为此串表示等待作答（checkpoint_reply 覆写） */
-export const CHECKPOINT_PENDING_MARKER = "__checkpoint_pending__"
-
-/** CHECKPOINT_PENDING 错误载荷（工具层据此生成主 agent 指引，#35） */
-export interface CheckpointPendingPayload {
-  /** checkpoint 的 journal key（reply 定位用） */
-  journalKey: string
-  /** 调用哈希（reply 覆写 entry 时保留） */
-  callHash: string
-  /** 透传给主 agent question 工具的参数（官方 Prompt schema 形态） */
-  question: { question: string; header: string; options: Array<{ label: string; description?: string }>; multiple: boolean; custom: boolean }
 }
 
 function createSharedRunContext(options: WorkflowRunOptions, runId: string): SharedRunContext {
@@ -1203,29 +1174,11 @@ async function executeWorkflow(
   const checkpoint = async (promptText: string, checkpointOptions: CheckpointOptions = {}): Promise<unknown> => {
     throwIfAborted()
     if (typeof promptText !== "string") throw new TypeError("checkpoint(promptText, options?) 需要 prompt 字符串")
-    // question 型判定（#35）：带 options 即切换官方选项对话框流程（agent 中转 + journal 回放续跑）
-    const questionSpec =
-      Array.isArray(checkpointOptions.options) && checkpointOptions.options.length > 0
-        ? {
-            question: promptText,
-            header: checkpointOptions.header ?? promptText.slice(0, 30),
-            options: checkpointOptions.options,
-            multiple: checkpointOptions.multiple ?? false,
-            custom: checkpointOptions.custom ?? true,
-          }
-        : undefined
-    // 哈希身份：promptText + default + headless + question 型全部配置（改配置 = 重新询问）
+    // 哈希身份：promptText + default + headless（与结果相关的全部选项）
     const callIndex = scope.callSeq++
     const journalKey = scopedKey(shared, scope, callIndex)
     const callHash = createHash("sha256")
-      .update(
-        JSON.stringify({
-          promptText,
-          default: checkpointOptions.default ?? null,
-          headless: checkpointOptions.headless ?? null,
-          question: questionSpec ?? null,
-        }),
-      )
+      .update(JSON.stringify({ promptText, default: checkpointOptions.default ?? null, headless: checkpointOptions.headless ?? null }))
       .digest("hex")
     // 观测记录（P2-4）：checkpoint 与 agent 同一展示面，kind 区分；等待人工 = running
     const displayPhase = scope.phasePrefix ? scope.phasePrefix + (scope.currentPhase ?? "") : scope.currentPhase
@@ -1253,14 +1206,6 @@ async function executeWorkflow(
     if (cached != null && cached.hash === callHash && callIndex < scope.firstMiss) {
       shared.agentCount++
       cpRecord.startedAt = undefined
-      // 回放命中挂起标记：尚未作答就续跑（异常路径，确定性重现挂起而非死等）
-      if (cached.result === CHECKPOINT_PENDING_MARKER && questionSpec) {
-        throw new WorkflowError(
-          `checkpoint 等待人工作答（回放）："${promptText}"`,
-          WorkflowErrorCode.CHECKPOINT_PENDING,
-          { recoverable: false, details: { journalKey, callHash, question: questionSpec } satisfies CheckpointPendingPayload },
-        )
-      }
       // 回放同样确定性重现拒绝（Human Reject 强停止语义；改 prompt 文本才会重新询问）
       if (cached.result === false) {
         finishCp("failed", "人工拒绝（回放）", true)
@@ -1279,23 +1224,6 @@ async function executeWorkflow(
     shared.agentCount++
 
     cpRecord.startedAt = Date.now()
-    // question 型挂起（#35）：不走权限弹窗——写入挂起标记到 journal，抛 PENDING 由工具层引导
-    // 主 agent 调官方 question 工具作答，checkpoint_reply 覆写标记后续跑回放返回答案
-    if (questionSpec) {
-      log(`checkpoint（question 型）挂起等待作答："${promptText}"`)
-      shared.onAgentJournal?.({
-        key: journalKey,
-        hash: callHash,
-        result: CHECKPOINT_PENDING_MARKER,
-        label: cpRecord.label,
-        question: questionSpec,
-      })
-      throw new WorkflowError(
-        `checkpoint 等待人工作答："${promptText}"（question 型，经 checkpoint_reply 应答后续跑）`,
-        WorkflowErrorCode.CHECKPOINT_PENDING,
-        { recoverable: false, details: { journalKey, callHash, question: questionSpec } satisfies CheckpointPendingPayload },
-      )
-    }
     let reply: unknown
     if (shared.confirm) {
       try {

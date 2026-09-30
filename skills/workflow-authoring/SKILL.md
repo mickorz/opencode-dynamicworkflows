@@ -160,19 +160,6 @@ const out = await retry(() => agent('生成'), { attempts: 3, until: (r) => r &&
 await checkpoint('即将改动生产配置，确认？')
 // 需要优雅处理拒绝时自己 try/catch：
 try { await checkpoint('即将改动生产配置，确认？') } catch { return '已取消' }
-
-// question 型（带 options 即切换官方选项对话框流程）：
-// run 挂起 -> 主 agent 用 question 工具弹选项 -> 用户选 -> checkpoint_reply 写 journal -> 续跑回放返回答案
-const target = await checkpoint('选择部署目标', {
-  header: '部署目标',
-  options: [
-    { label: '预发环境', description: '先灰度验证' },
-    { label: '生产环境', description: '直接全量' },
-  ],
-  multiple: false,   // 多选
-  custom: true,      // 允许自由输入（缺省 true）
-})
-// target = ['预发环境']（label 数组）；用户取消 -> 续跑时 CHECKPOINT_REJECTED
 ```
 
 ## 交付前语法自检（必做）

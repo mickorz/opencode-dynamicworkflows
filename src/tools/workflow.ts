@@ -1,5 +1,5 @@
 import { tool, type PluginInput } from "@opencode-ai/plugin"
-import { runWorkflow, CHECKPOINT_PENDING_MARKER, type CheckpointPendingPayload } from "../runtime/workflow-runtime.js"
+import { runWorkflow } from "../runtime/workflow-runtime.js"
 import { OpenCodeSessionAdapter } from "../adapters/opencode-session-adapter.js"
 import { JournalStore } from "../persistence/journal.js"
 import { loadModelTiers } from "../agent/model-tiers.js"
@@ -173,11 +173,6 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
         try {
           // 整条 entry 直通（Node Inspector 展示元数据随 JournalEntry 扩展字段自动落盘）
           const { key, ...entryBody } = entry
-          // question 型挂起（#35）：补记续跑入口（scriptPath/args），checkpoint_reply 的指引与自动续跑消费
-          if (entryBody.result === CHECKPOINT_PENDING_MARKER) {
-            entryBody.scriptPath = typeof input.scriptPath === "string" ? input.scriptPath : "(inline script)"
-            entryBody.args = input.args ?? undefined
-          }
           journalStore.append(journaledRunId, key, entryBody)
         } catch {
           // 落盘失败不阻断运行（journal 仅影响回放优化）
@@ -265,55 +260,6 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
           },
         }
       } catch (error) {
-        // question 型 checkpoint 挂起（#35）：转为指引性结果而非报错——主 agent 调官方 question
-        // 工具作答后经 checkpoint_reply 写入 journal，再按指引续跑
-        if (error instanceof Error && (error as { code?: string }).code === "CHECKPOINT_PENDING") {
-          const payload = (error as { details?: CheckpointPendingPayload }).details
-          writeTerminalSnapshot(progressRecords, "aborted")
-          if (!payload) {
-            return { title: "workflow", output: `checkpoint 挂起但载荷缺失：${error.message}` }
-          }
-          const q = payload.question
-          const questionArgs = JSON.stringify(
-            {
-              questions: [
-                {
-                  question: q.question,
-                  header: q.header,
-                  options: q.options,
-                  ...(q.multiple ? { multiple: true } : {}),
-                  ...(q.custom === false ? { custom: false } : {}),
-                },
-              ],
-            },
-            null,
-            2,
-          )
-          return {
-            title: "workflow checkpoint 待作答",
-            output: [
-              `工作流在人工确认点挂起（runId: ${runId}），请按以下两步继续：`,
-              ``,
-              `第 1 步：用你的 question 工具向用户提问，参数原样传：`,
-              "```json",
-              questionArgs,
-              "```",
-              ``,
-              `第 2 步：根据用户作答调用 workflow_control 工具：`,
-              `- 用户作答 -> { "action": "checkpoint_reply", "runId": "${runId}", "answers": ["所选 label 或自定义文本"] }`,
-              `- 用户取消 -> { "action": "checkpoint_reply", "runId": "${runId}", "rejected": true }`,
-              ``,
-              `（作答后答案会写入 journal，续跑时此处 checkpoint 回放返回作答结果，已完成部分不重烧 token）`,
-            ].join("\n"),
-            metadata: buildProgressMetadata({
-              runId,
-              name: workflowName,
-              status: "aborted",
-              records: progressRecords,
-              composites: progressComposites,
-            }),
-          }
-        }
         if (runController.signal.aborted || (error instanceof Error && /abort/i.test(error.message))) {
           // 用户中断：返回已完成的进度摘要而非抛错（平台会把 tool part 标记为 interrupted）
           const resumeHint = journaledRunId

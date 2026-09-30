@@ -152,12 +152,6 @@ export interface WorkflowRunResult<T = unknown> {
 export interface JournalEntry {
   hash: string
   result: unknown
-  /** question 型 checkpoint 挂起载荷（#35）：官方 Prompt 形态，checkpoint_reply 消费 */
-  question?: { question: string; header?: string; options: Array<{ label: string; description?: string }>; multiple?: boolean; custom?: boolean }
-  /** question 型挂起时由工具层补记：续跑入口（#35） */
-  scriptPath?: string
-  /** question 型挂起时由工具层补记：原 run 的 args（续跑需一致，#35） */
-  args?: unknown
   model?: string
   label?: string
   /** 所属子 workflow 的实例显示名（分支 A：断点反查哪个子流程的哪一步；root 的 agent 无此字段） */

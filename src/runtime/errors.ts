@@ -14,23 +14,18 @@ export enum WorkflowErrorCode {
   CHECK_FAILED = "CHECK_FAILED",
   /** 阶段失败闸门（Bug1 修复）：agent 重试耗尽后 workflow 在下一 phase 边界终止；非可恢复、不可被吞 */
   WORKFLOW_FAILED = "WORKFLOW_FAILED",
-  /** question 型 checkpoint 挂起（#35）：等待人工作答后经 checkpoint_reply + resume 续跑；携带 journalKey/question 载荷 */
-  CHECKPOINT_PENDING = "CHECKPOINT_PENDING",
 }
 
 export class WorkflowError extends Error {
   readonly code: WorkflowErrorCode
   /** recoverable=true 的失败在 parallel/pipeline 中塌缩为 null，且可被重试 */
   readonly recoverable: boolean
-  /** 结构化载荷（如 CHECKPOINT_PENDING 的 journalKey/question，工具层消费，#35） */
-  readonly details?: unknown
 
-  constructor(message: string, code: WorkflowErrorCode, options: { recoverable: boolean; details?: unknown }) {
+  constructor(message: string, code: WorkflowErrorCode, options: { recoverable: boolean }) {
     super(message)
     this.name = "WorkflowError"
     this.code = code
     this.recoverable = options.recoverable
-    this.details = options.details
   }
 }
 
