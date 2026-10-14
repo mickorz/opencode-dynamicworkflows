@@ -181,7 +181,7 @@ export class OpenCodeSessionAdapter implements AgentSessionRunner {
   }
 
   /** 原生结构化路径：format: json_schema，结果取 info.structured
-   *  方案 A（见 Docs/05_问题与注意事项/schema格式无中间执行过程分析.md）：server 端
+   *  方案 A（见 dev-docs/troubleshooting/schema格式无中间执行过程分析.md）：server 端
    *  toolChoice required + 强系统提示会让模型第一轮直接调 StructuredOutput 交卷，
    *  丢失全部中间探索过程与结果质量。这里追加任务级指令对冲：先调查后提交。 */
   private static readonly INVESTIGATE_FIRST =

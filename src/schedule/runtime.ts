@@ -8,7 +8,7 @@
  *   -> tryClaim(scheduleId, slot)       原子抢锁（wx）；失败静默（另一实例/历史已认领）
  *   -> execute：fresh session + BackgroundRunManager 后台执行 + Record 落盘
  *
- * 设计边界（Docs/01_需求与规划/Schedule功能P1执行计划.md v4）：
+ * 设计边界（dev-docs/planning/Schedule功能P1执行计划.md v4）：
  *  - at-most-once per slot：claim 成功后执行前崩溃 = 丢一轮（承诺内）
  *  - schedule JSON 运行时零写入（纯配置，无游标；claim 即游标）
  *  - 每 Run 独立 fresh session，不 prompt 回传（结果进 Record）

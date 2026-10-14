@@ -1,5 +1,5 @@
 /**
- * 嵌套 workflow 血统注册表（B1 方案 / Docs/02_设计与说明/嵌套workflow的TUI显示可行性报告.md）
+ * 嵌套 workflow 血统注册表（B1 方案 / dev-docs/design/嵌套workflow的TUI显示可行性报告.md）
  *
  * 问题：嵌套 run（子代理会话内再调 workflow 工具）的快照 parentSessionId 是子代理会话 id，
  *       主会话 TUI 按 parentSessionId 过滤，嵌套树不可见。

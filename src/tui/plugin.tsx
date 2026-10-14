@@ -89,7 +89,7 @@ const collapsedBySession = new Map<
  * 跨副本的依赖追踪不生效（Read 一次后永不更新，需求文档 9.3 的教训），
  * 因此只用 api.event.on 镜像数据到自己 signal。
  *
- * 内存修复（Docs/05_问题与注意事项/workflow内存不释放问题分析与修复.md）：
+ * 内存修复（dev-docs/troubleshooting/workflow内存不释放问题分析与修复.md）：
  * 原实现每缓存会话挂 1 个 1s poll + 4 个事件监听，注册到 api.lifecycle.onDispose
  * （宿主实现为插件进程级，组件销毁不清理），会话数累积导致轮询数与内存线性增长。
  * 现改为全局单 poll + 单套事件监听驱动全部缓存，缓存会话从宿主 store 消失即自清。

@@ -13,7 +13,7 @@ examples/sample-project/          # 测试工程（在这里启动 OpenCode，�
    ├─ smoke-test.js               # 冒烟：3 个 agent
    ├─ acceptance-10docs.js        # 标准验收 A-01/A-02/A-03
    ├─ schema-test.js              # 结构化输出 A-07（P1 后经降级路径，验证 R-07）
-   ├─ resume-test.js              # P1 journal/resume 首跑（续跑步骤见 Docs/03_测试指南/P1测试指南.md）
+   ├─ resume-test.js              # P1 journal/resume 首跑（续跑步骤见 dev-docs/guides/P1测试指南.md）
    ├─ quality-dsl-test.js         # P1 质量 DSL：judgePanel + verify + checkpoint
    ├─ tier-fallback-test.js       # P1 tier 回退告警演示
    ├─ worktree-test.js            # P1 worktree 隔离演示

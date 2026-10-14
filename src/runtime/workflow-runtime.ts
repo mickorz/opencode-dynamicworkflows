@@ -18,7 +18,7 @@
  *                  本身不占 callSeq/childSeq/journal，对 resume 透明
  *   -> 汇总 AgentRecord / logs / phases / token 用量 返回
  *
- * 一 Run 多 Scope（v0.8 设计，Docs/01_需求与规划/Native子工作流workflow原语执行计划.md）：
+ * 一 Run 多 Scope（v0.8 设计，dev-docs/planning/Native子工作流workflow原语执行计划.md）：
  *  - SharedRunContext 共享：scheduler（仅限 agent dispatch）/ maxAgents / abort / agents / logs / phases / journal
  *  - WorkflowScope 私有：currentPhase / callSeq / childSeq / firstMiss / args / globals
  *  - 三身份：name（定义 meta.name）/ label（实例 UI 名）/ keySegment（journal wfN，childSeq 生成）

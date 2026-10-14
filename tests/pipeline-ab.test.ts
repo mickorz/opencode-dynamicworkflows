@@ -7,7 +7,7 @@
  *
  * 覆盖维度：纯 JS 结果、agent 结果、journal key 序、null 传播、可恢复失败塌缩、
  *           结构性错误、并发峰值、abort 行为
- * 结论供 P2「pipeline 去留」决策使用，报告见 Docs/02_设计与说明/Pipeline等价性AB报告.md
+ * 结论供 P2「pipeline 去留」决策使用，报告见 dev-docs/design/Pipeline等价性AB报告.md
  */
 
 import test from "node:test"

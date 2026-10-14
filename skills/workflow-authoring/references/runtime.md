@@ -54,7 +54,7 @@ const reports = await pipeline(
 )
 ```
 
-与 Composite 的关系：`pipeline(items, A, B)` 等价于 `parallel(items.map(item => () => sequence([...])))`（等价性 A/B 已验证，见仓库 Docs/02_设计与说明/Pipeline等价性AB报告.md）；简单场景继续用 pipeline 更简短，复杂控制流用组合写法。
+与 Composite 的关系：`pipeline(items, A, B)` 等价于 `parallel(items.map(item => () => sequence([...])))`（等价性 A/B 已验证，见仓库 dev-docs/design/Pipeline等价性AB报告.md）；简单场景继续用 pipeline 更简短，复杂控制流用组合写法。
 
 ## sequence(nodes) / fallback(nodes) / race(nodes)（Composite 组合控制流）
 
