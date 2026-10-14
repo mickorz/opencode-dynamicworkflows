@@ -18,6 +18,8 @@ export interface WorkflowNode {
   phase?: string
   /** 展示身份（scope 链 label 数组；root 的 agent 无此字段，旧快照兼容） */
   workflowPath?: string[]
+  /** 稳定身份（scope 链 keySegment 数组；root 的 agent 无此字段，旧快照兼容） */
+  workflowScopePath?: string[]
   status: WorkflowNodeStatus
   /** 该 agent 开始执行的绝对时间戳（毫秒）；回放与老快照无此字段 */
   startedAt?: number
@@ -76,6 +78,8 @@ export interface CompositeInfo {
   label: string
   status: "running" | "ok" | "failed" | "aborted"
   compositePath: string[]
+  /** 所属 workflow scope 身份链（兄弟子 Workflow 的同 id composite 据此区分） */
+  scopePath?: string[]
 }
 
 /** sidebar 展示行：workflow 分组行（子流程一级）/ composite 组合行（P2-3）/ phase 标题行 / agent 节点行 */
@@ -100,6 +104,7 @@ export function parseCompositeInfos(raw: unknown[]): CompositeInfo[] {
       label: typeof c.label === "string" && c.label ? c.label : c.id,
       status: c.status === "running" || c.status === "ok" || c.status === "failed" || c.status === "aborted" ? c.status : "running",
       compositePath: c.compositePath.filter((x): x is string => typeof x === "string"),
+      ...(Array.isArray(c.scopePath) ? { scopePath: c.scopePath.filter((x): x is string => typeof x === "string") } : {}),
     })
   }
   return out
@@ -124,6 +129,9 @@ export function parseWorkflowMetadata(raw: unknown): WorkflowProgress | null {
       phase: typeof n.phase === "string" ? n.phase : undefined,
       workflowPath: Array.isArray(n.workflowPath)
         ? n.workflowPath.filter((p): p is string => typeof p === "string")
+        : undefined,
+      workflowScopePath: Array.isArray(n.workflowScopePath)
+        ? n.workflowScopePath.filter((p): p is string => typeof p === "string")
         : undefined,
       status: n.status,
       startedAt: typeof n.startedAt === "number" ? n.startedAt : undefined,
@@ -203,9 +211,11 @@ export function findWorkflowMetadata(
 
 /**
  * 组装 sidebar 展示行（两级分组 + 全链，分支 A）：按执行顺序遍历节点，
- * 子流程分组键用 workflowPath 全链 join（深层唯一不碰撞），行标题显示完整链（a / b）；
+ * 子流程分组键用 workflowScopePath（keySegment 链，兄弟 scope 唯一不碰撞），
+ * 行标题显示 workflowPath 全链（a / b，给人看）；
  * root 节点（无 workflowPath）直接按 phase 平铺（旧行为兼容）。
  * 交错场景（并行 child 网络序）同一 workflow 行可能重复出现——与 phase 行同为时间线式语义。
+ * 交错时 composite 状态按组保存/恢复：切回已见过的组不重复发 [Sequence] 行。
  */
 export function buildSidebarRows(progress: WorkflowProgress): SidebarRow[] {
   const rows: SidebarRow[] = []
@@ -216,16 +226,30 @@ export function buildSidebarRows(progress: WorkflowProgress): SidebarRow[] {
   let currentWorkflow: string | undefined
   let currentComposite: string | undefined
   let currentPhase: string | undefined
+  // 交错并行时按组保存 composite 状态，切回已见过的组时恢复（不重复发 [Sequence] 行）
+  // phase 不保存——切回组时重新发行 phase 行（时间线式语义，workflow-deep 测试验证）
+  const compositeByGroup = new Map<string, string | undefined>()
   for (const node of progress.nodes) {
-    const wfGroup = node.workflowPath?.length ? node.workflowPath.join("\u0000") : undefined
+    // 分组键用 workflowScopePath（keySegment 链，兄弟 scope 唯一），
+    // 缺省时回退 workflowPath（旧快照兼容），root 节点两者都无则 undefined（平铺不分组）
+    const wfGroup = node.workflowScopePath?.length
+      ? node.workflowScopePath.join("\u0000")
+      : node.workflowPath?.length
+        ? node.workflowPath.join("\u0000")
+        : undefined
     if (wfGroup && wfGroup !== currentWorkflow) {
+      // 保存当前组的 composite 状态
+      if (currentWorkflow) compositeByGroup.set(currentWorkflow, currentComposite)
       rows.push({ kind: "workflow", title: node.workflowPath!.join(" / ") })
       currentWorkflow = wfGroup
-      currentComposite = undefined // 换组后组合链重新起头
-      currentPhase = undefined // 换组后 phase 重新起头
+      // 恢复目标组的 composite 状态（已见过的组不重复发 [Sequence] 行）
+      currentComposite = compositeByGroup.get(wfGroup)
+      currentPhase = undefined // 换组后 phase 重新起头（时间线式：切回组重新发行 phase）
     }
     // 组合链分组（P2-3）：链变化时为新进入的段发 composite 行；退出组合（undefined）不发
-    const cmpChain = node.compositePath?.length ? node.compositePath.join("\u0000") : undefined
+    // 分组键含 scopePath：兄弟子 Workflow 的同 id composite（如各自 cmp0）不合并为一条
+    const scopeKey = node.workflowScopePath?.join("\u0000") ?? ""
+    const cmpChain = node.compositePath?.length ? scopeKey + "\u0000" + node.compositePath.join("\u0000") : undefined
     if (cmpChain !== currentComposite) {
       const prev = currentComposite ? currentComposite.split("\u0000") : []
       for (const segment of node.compositePath ?? []) {

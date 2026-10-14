@@ -408,8 +408,14 @@ async function executeWorkflow(
     ensureAgentCapacity()
 
     // 显示 phase（child 内带 "▸ label / " 前缀；hash 身份含前缀——child 与 root 的同 prompt 不混缓存）
+    // assignedPhase 为 undefined 时（脚本未声明 meta.phases 也未调 phase()），
+    // child 仍保留前缀去掉尾部 " / "（"▸ child_seq"），保证 hash 与 root 区分；root 保持 undefined
     const assignedPhase = scriptOptions.phase ?? scope.currentPhase
-    const displayPhase = scope.phasePrefix ? scope.phasePrefix + assignedPhase : assignedPhase
+    const displayPhase = scope.phasePrefix
+      ? assignedPhase
+        ? scope.phasePrefix + assignedPhase
+        : scope.phasePrefix.replace(/ \/$/, "")
+      : assignedPhase
     // 模型优先级：显式 model > tier（经 resolveTier）> 会话默认（P1-3）
     let modelSpec = scriptOptions.model
     if (!modelSpec && scriptOptions.tier) {

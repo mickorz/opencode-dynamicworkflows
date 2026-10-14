@@ -235,7 +235,11 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
             writeTerminalSnapshot(progressRecords, "running")
           },
           onCompositeUpdate: (record) => {
-            const index = progressComposites.findIndex((c) => c.id === record.id)
+            // 匹配键用 scopePath + compositePath：兄弟子 Workflow 的 cmpN 重名不冲突
+            const key = record.scopePath.join(":") + ":" + record.compositePath.join(":")
+            const index = progressComposites.findIndex(
+              (c) => c.scopePath.join(":") + ":" + c.compositePath.join(":") === key,
+            )
             if (index >= 0) progressComposites[index] = record
             else progressComposites.push(record)
           },
