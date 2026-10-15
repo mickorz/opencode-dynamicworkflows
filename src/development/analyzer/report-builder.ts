@@ -83,14 +83,11 @@ export function buildProposals(
     if (candidate.determinism === "unlikely") continue
     if (candidate.observedExecutions < 1) continue
 
-    // 评估证据完整性
-    const createEvent = events.find((e) => e.callID === candidate.executionEvents[0]?.callID)
-    // 找到创建脚本的事件（write/edit/heredoc bash）
-    const scriptEvent = findScriptCreateEvent(events, candidate)
-    const integrity = scriptEvent ? assessIntegrity(scriptEvent) : "partial" as EvidenceIntegrity
+    // 评估证据完整性（P3.1: 直接用 candidate.createEvent，不再查找）
+    const integrity = assessIntegrity(candidate.createEvent) as EvidenceIntegrity
     const confidence = assessConfidence(candidate, integrity)
 
-    // 构建证据引用
+    // 构建证据引用（P3.1: 使用真实 createEvent 数据）
     const evidenceRefs = buildEvidenceRefs(candidate, runAttemptId)
 
     // 构建签名
@@ -129,43 +126,24 @@ export function buildProposals(
   return proposals
 }
 
-/** 找到创建脚本的事件 */
-function findScriptCreateEvent(
-  events: AnalysisToolEvent[],
-  candidate: ScriptExtractionCandidate,
-): AnalysisToolEvent | undefined {
-  // write/edit 的 filePath 应与 candidate.filePath 匹配
-  for (const event of events) {
-    if (event.tool === candidate.sourceTool || (candidate.sourceTool === "bash" && event.tool === "bash")) {
-      const filePath = event.input.filePath as string | undefined
-      if (filePath === candidate.filePath) return event
-      // heredoc 的 filePath 可能在 command 中
-      const command = event.input.command as string | undefined
-      if (command && candidate.filePath && command.includes(candidate.filePath)) return event
-    }
-  }
-  return undefined
-}
-
-/** 构建证据引用列表 */
+/** 构建证据引用列表（P3.1: 使用真实 createEvent 数据，可追溯到原始 Trace） */
 function buildEvidenceRefs(
   candidate: ScriptExtractionCandidate,
   runAttemptId: string,
 ): EvidenceRef[] {
   const refs: EvidenceRef[] = []
 
-  // 创建事件的引用
-  if (candidate.filePath) {
-    refs.push({
-      runAttemptId,
-      sessionId: "",
-      callID: "",
-      ts: 0,
-      tool: candidate.sourceTool,
-      agentLabel: "",
-      note: `脚本创建：${candidate.filePath}`,
-    })
-  }
+  // P3.1: 创建事件的引用 — 使用真实的 sessionId/callID/ts/agentLabel
+  const createEvent = candidate.createEvent
+  refs.push({
+    runAttemptId,
+    sessionId: createEvent.sessionId,
+    callID: createEvent.callID,
+    ts: createEvent.startedAt ?? 0,
+    tool: createEvent.tool,
+    agentLabel: createEvent.agentLabel,
+    note: `脚本创建：${candidate.filePath ?? "unknown"}`,
+  })
 
   // 执行事件的引用
   for (const exec of candidate.executionEvents) {
@@ -177,6 +155,19 @@ function buildEvidenceRefs(
       tool: exec.tool,
       agentLabel: exec.agentLabel,
       note: `脚本执行：${exec.input.command ?? ""}`,
+    })
+  }
+
+  // P3.1: 可能提及的事件（不算确认执行，但保留为参考证据）
+  for (const possible of candidate.possibleExecutions) {
+    refs.push({
+      runAttemptId,
+      sessionId: possible.sessionId,
+      callID: possible.callID,
+      ts: possible.startedAt ?? 0,
+      tool: possible.tool,
+      agentLabel: possible.agentLabel,
+      note: `可能提及（未确认执行）：${possible.input.command ?? ""}`,
     })
   }
 

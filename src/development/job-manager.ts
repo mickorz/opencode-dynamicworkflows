@@ -83,9 +83,11 @@ export class DevJobManager {
     }
   }
 
-  /** 幂等创建 Optimizer Job */
+  /** 幂等创建 Optimizer Job（P3.1: 按 runId+runAttemptId 去重，Resume 可独立分析） */
   createOnce(input: CreateOnceInput): DevJob | undefined {
-    const existing = this.jobs.get(input.runId)
+    // P3.1: Resume 场景同一 runId 有不同 runAttemptId，需独立记录分析结果
+    const dedupKey = input.runAttemptId ? `${input.runId}:${input.runAttemptId}` : input.runId
+    const existing = this.jobs.get(dedupKey)
     if (existing) return existing
 
     const job: DevJob = {
@@ -95,7 +97,7 @@ export class DevJobManager {
       createdAt: Date.now(),
       historyPath: input.historyPath,
     }
-    this.jobs.set(input.runId, job)
+    this.jobs.set(dedupKey, job)
     this.persist(input.directory)
 
     this.startOptimizer(job, input)

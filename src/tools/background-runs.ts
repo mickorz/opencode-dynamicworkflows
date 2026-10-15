@@ -82,7 +82,7 @@ export interface BackgroundStartInput {
   /** P2: 防递归标记（Optimizer Run 设为 true，禁止本 Run 再触发 Optimizer） */
   developmentForbidden?: boolean
   /** P2: History 就绪后回调（finalizeRun 完成后调用，用于触发 DevJobManager） */
-  onHistoryReady?: (info: { runId: string; historyPath: string; completeness: string; agents: AgentRecord[] }) => void
+  onHistoryReady?: (info: { runId: string; runAttemptId: string; historyPath: string; completeness: string; agents: AgentRecord[] }) => void
 }
 
 /** 完成后注册表里保留的历史条数（内存瘦身：每条含全量 records/logs，条数过多常驻可达数十 MB） */
@@ -307,7 +307,7 @@ export class BackgroundRunManager {
       // P1: Trace 采集与 History 构建（不阻断 run 终态）
       const finalStatus: "completed" | "failed" | "aborted" =
         info.status === "running" ? "aborted" : info.status
-      let finalizerResult: { historyPath: string; completeness: string } | undefined
+      let finalizerResult: { historyPath: string; completeness: string; manifest: { runAttemptId: string } } | undefined
       try {
         finalizerResult = await finalizeRun({
           runId: info.runId,
@@ -331,6 +331,7 @@ export class BackgroundRunManager {
         try {
           input.onHistoryReady({
             runId: info.runId,
+            runAttemptId: finalizerResult.manifest.runAttemptId,
             historyPath: finalizerResult.historyPath,
             completeness: finalizerResult.completeness,
             agents: info.records,

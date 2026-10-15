@@ -38,11 +38,11 @@ export function detectScriptExtractions(events: AnalysisToolEvent[]): ScriptExtr
   const scriptCreates = collectScriptCreates(events)
 
   for (const create of scriptCreates) {
-    // 2. 关联后续执行事件
-    const executionEvents = findExecutionEvents(events, create)
+    // 2. 关联后续执行事件（区分确认执行和可能提及）
+    const { confirmed, possible } = findExecutionEvents(events, create)
 
-    // 3. 如果没有执行事件，跳过（只关心被实际执行的脚本）
-    if (executionEvents.length === 0) continue
+    // 3. 如果没有确认执行事件，跳过（只关心被实际执行的脚本）
+    if (confirmed.length === 0) continue
 
     // 4. 检查工具调用完成状态
     const toolCallCompleted = create.event.status === "completed"
@@ -54,9 +54,11 @@ export function detectScriptExtractions(events: AnalysisToolEvent[]): ScriptExtr
       sourceTool: create.sourceTool,
       scriptContent: create.scriptContent,
       filePath: create.filePath,
-      executionEvents,
+      createEvent: create.event,
+      executionEvents: confirmed,
+      possibleExecutions: possible,
       toolCallCompleted,
-      observedExecutions: executionEvents.length,
+      observedExecutions: confirmed.length,
       determinism,
     })
   }
@@ -64,13 +66,12 @@ export function detectScriptExtractions(events: AnalysisToolEvent[]): ScriptExtr
   // 6. 处理 bash heredoc 创建的脚本
   const heredocCreates = collectHeredocCreates(events)
   for (const heredoc of heredocCreates) {
-    // heredoc 创建的脚本可能在同一 bash 调用或后续 bash 调用中执行
-    const executionEvents = findExecutionEvents(events, {
+    const { confirmed, possible } = findExecutionEvents(events, {
       filePath: heredoc.filePath,
       event: heredoc.event,
     })
 
-    if (executionEvents.length === 0) continue
+    if (confirmed.length === 0) continue
 
     const determinism = assessDeterminism(heredoc.scriptContent)
 
@@ -78,9 +79,11 @@ export function detectScriptExtractions(events: AnalysisToolEvent[]): ScriptExtr
       sourceTool: "bash",
       scriptContent: heredoc.scriptContent,
       filePath: heredoc.filePath,
-      executionEvents,
+      createEvent: heredoc.event,
+      executionEvents: confirmed,
+      possibleExecutions: possible,
       toolCallCompleted: heredoc.event.status === "completed",
-      observedExecutions: executionEvents.length,
+      observedExecutions: confirmed.length,
       determinism,
     })
   }
@@ -227,14 +230,43 @@ function extractHeredocFilePath(command: string): string | undefined {
 // 执行事件关联
 // ============================================================
 
-/** 查找后续执行同一文件的事件 */
+/** 执行模式：匹配明确执行脚本的命令前缀 */
+const EXECUTION_PATTERNS: Array<{ runtime: string; extensions: string[] }> = [
+  { runtime: "python", extensions: ["py"] },
+  { runtime: "python3", extensions: ["py"] },
+  { runtime: "node", extensions: ["js", "mjs", "cjs"] },
+  { runtime: "npx", extensions: ["js", "ts"] },
+  { runtime: "tsx", extensions: ["ts"] },
+  { runtime: "bash", extensions: ["sh", "bash"] },
+  { runtime: "sh", extensions: ["sh", "bash"] },
+  { runtime: "ruby", extensions: ["rb"] },
+  { runtime: "perl", extensions: ["pl"] },
+  { runtime: "lua", extensions: ["lua"] },
+  { runtime: "go", extensions: ["go"] },
+  { runtime: "cargo", extensions: ["rs"] },
+  { runtime: "java", extensions: ["java"] },
+]
+
+/**
+ * 查找后续执行同一文件的事件
+ *
+ * P3.1 修正：
+ *  - 区分"确认执行"和"可能提及"
+ *  - 确认执行：命令以 `python script.py`、`node script.js` 等形式开头
+ *  - 可能提及：命令中包含文件名但不是执行形式（如 `echo "check script.py"`）
+ *  - 只收集 status=completed 或 status=error 的事件（跳过 pending/running）
+ *
+ * @returns confirmed=已确认执行, possible=可能提及但未确认
+ */
 function findExecutionEvents(
   events: AnalysisToolEvent[],
   create: { filePath: string; event: AnalysisToolEvent },
-): AnalysisToolEvent[] {
-  const executions: AnalysisToolEvent[] = []
+): { confirmed: AnalysisToolEvent[]; possible: AnalysisToolEvent[] } {
+  const confirmed: AnalysisToolEvent[] = []
+  const possible: AnalysisToolEvent[] = []
   const createTs = create.event.startedAt ?? 0
   const fileName = getBaseName(create.filePath)
+  const fileExt = getFileExtension(create.filePath)
 
   for (const event of events) {
     // 跳过创建事件本身
@@ -243,17 +275,57 @@ function findExecutionEvents(
     if ((event.startedAt ?? 0) < createTs) continue
     // 只看 bash 工具
     if (event.tool !== "bash") continue
+    // P3.1: 只收集 completed 或 error 的事件（跳过 pending/running）
+    if (event.status !== "completed" && event.status !== "error") continue
 
     const command = event.input.command as string | undefined
     if (!command) continue
 
-    // 检查 command 中是否包含文件路径或文件名
-    if (command.includes(create.filePath) || command.includes(fileName)) {
-      executions.push(event)
+    // 检查命令是否包含文件路径或文件名
+    const mentionsFile = command.includes(create.filePath) || command.includes(fileName)
+    if (!mentionsFile) continue
+
+    // 检查是否为明确的执行形式
+    if (isConfirmedExecution(command, fileName, fileExt)) {
+      confirmed.push(event)
+    } else {
+      possible.push(event)
     }
   }
 
-  return executions
+  return { confirmed, possible }
+}
+
+/** 判断命令是否为明确的脚本执行形式 */
+function isConfirmedExecution(command: string, fileName: string, fileExt: string | undefined): boolean {
+  const trimmedCmd = command.trim()
+
+  for (const pattern of EXECUTION_PATTERNS) {
+    // 检查 `runtime fileName` 或 `runtime ./fileName` 或 `runtime path/to/fileName`
+    const execRegex = new RegExp(`^${pattern.runtime}\\s+.*${escapeRegex(fileName)}`)
+    if (execRegex.test(trimmedCmd)) return true
+
+    // 也检查直接执行形式 `./script.sh`
+    if (pattern.extensions.includes(fileExt ?? "")) {
+      const directExecRegex = new RegExp(`^\\.?/?.*${escapeRegex(fileName)}`)
+      if (directExecRegex.test(trimmedCmd) && !trimmedCmd.startsWith("echo") && !trimmedCmd.startsWith("cat") && !trimmedCmd.startsWith("type")) {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+/** 转义正则特殊字符 */
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+/** 获取文件扩展名（不含点） */
+function getFileExtension(filePath: string): string | undefined {
+  const match = filePath.match(/\.([^.]+)$/)
+  return match?.[1]?.toLowerCase()
 }
 
 // ============================================================

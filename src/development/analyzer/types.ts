@@ -163,13 +163,17 @@ export interface ScriptExtractionCandidate {
   scriptContent: string
   /** 创建时记录的文件路径 */
   filePath?: string
-  /** 后续执行该脚本的命令关联 */
+  /** P3.1: 创建脚本的真实事件（用于生成可追溯的 EvidenceRef） */
+  createEvent: AnalysisToolEvent
+  /** 后续执行该脚本的命令关联（已确认的执行） */
   executionEvents: AnalysisToolEvent[]
+  /** P3.1: 可能提及但未确认执行的命令（如 echo "check validate.py"） */
+  possibleExecutions: AnalysisToolEvent[]
   /** 工具调用 status=completed（不代表业务成功，仅工具层面完成） */
   toolCallCompleted: boolean
-  /** 观察到的执行次数 */
+  /** 观察到的执行次数（仅计已确认执行） */
   observedExecutions: number
-  /** 确定性评估：likely / unknown / unlikely */
+  /** 确定性评估：likely（无 Date.now/Math.random 等非确定性 API）/ unknown（含网络/外部依赖）/ unlikely */
   determinism: DeterminismAssessment
 }
 

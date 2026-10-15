@@ -23,6 +23,9 @@
 import type { PluginInput } from "@opencode-ai/plugin"
 import type { AgentExecutionResult, AgentRunOptions, AgentSessionRunner } from "../agent/session-runner.js"
 import { parseSessionMessages, type RawSessionMessage, type ToolCallEvent } from "../trace/collector.js"
+import { resolve, relative, isAbsolute, join } from "node:path"
+import { statSync, readFileSync } from "node:fs"
+import { homedir } from "node:os"
 
 /**
  * OpenCode SDK client 的类型出口（Adapter 唯一触碰 SDK 的类型边界）。
@@ -355,35 +358,32 @@ export class OpenCodeSessionAdapter implements AgentSessionRunner {
    *
    * v3 修正：不用 startsWith 做路径前缀检查（不安全），
    * 改用 path.relative 判断路径是否在允许的目录树内。
+   * P3.1 修正：移除 require()，改用静态 ESM import（项目 type=module）。
    */
   readToolOutput(event: ToolCallEvent, projectDir: string): string | null {
     const outputPath = event.metadata?.outputPath
     if (typeof outputPath !== "string" || !outputPath) return null
 
     try {
-      const resolved = require("node:path").resolve(outputPath)
+      const resolved = resolve(outputPath)
 
       // 允许的目录：项目目录 + 宿主存储目录
-      const path = require("node:path")
-      const fs = require("node:fs")
-      const os = require("node:os")
-
       const allowedRoots = [
-        path.resolve(projectDir),
-        path.join(os.homedir(), ".local", "share", "opencode"),
-        path.join(os.homedir(), ".config", "opencode"),
+        resolve(projectDir),
+        join(homedir(), ".local", "share", "opencode"),
+        join(homedir(), ".config", "opencode"),
       ].filter(Boolean)
 
-      const isAllowed = allowedRoots.some((root: string) => {
-        const rel = path.relative(root, resolved)
-        return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel)
+      const isAllowed = allowedRoots.some((root) => {
+        const rel = relative(root, resolved)
+        return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel)
       })
       if (!isAllowed) return null
 
       // 文件大小限制：1MB
-      const stat = fs.statSync(resolved)
+      const stat = statSync(resolved)
       if (stat.size > 1_048_576) return null
-      return fs.readFileSync(resolved, "utf8")
+      return readFileSync(resolved, "utf8")
     } catch {
       return null
     }

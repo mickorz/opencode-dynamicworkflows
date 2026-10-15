@@ -105,6 +105,7 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
                       devJobManager.createOnce({
                         runId: info.runId,
                         originRunId: info.runId,
+                        runAttemptId: info.runAttemptId,
                         directory: context.directory,
                         historyPath: info.historyPath,
                         client: ctx.client,
@@ -358,6 +359,7 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
             devJobManager.createOnce({
               runId,
               originRunId: runId,
+              runAttemptId: finalizerResult.manifest.runAttemptId,
               directory: context.directory,
               historyPath: finalizerResult.historyPath,
               client: ctx.client,

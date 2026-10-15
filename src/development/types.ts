@@ -38,6 +38,8 @@ export interface DevJobFile {
 export interface CreateOnceInput {
   runId: string
   originRunId: string
+  /** P3.1: Run 执行轮次 ID（Resume 场景同一 runId 有不同 runAttemptId，用于独立去重） */
+  runAttemptId?: string
   directory: string
   historyPath: string
   /** SDK client（由调用方传入，tools 层合法触碰 SDK） */

@@ -35,14 +35,29 @@ import type {
  * 该 replacer 会过滤嵌套对象的属性（只保留 replacer 数组中列出的键），
  * 导致不同对象的嵌套属性被丢弃，序列化结果错误相同。
  *
- * 例如 { options: { command: "npm test" } } 和 { options: { command: "npm run build" } }
- * 在 v2 实现下都会序列化为 {"options":{}}，签名相同，误判为重复。
+ * P3.1 加固：
+ *  - 对象键使用 JSON.stringify(k) 转义（正确处理特殊字符如引号、反斜杠）
+ *  - undefined 值跳过（与 JSON.stringify 行为一致，不产生无效序列化）
+ *  - 函数和 Symbol 值跳过（JSON 不支持）
+ *  - 数组保持顺序（不排序数组元素）
  */
 export function stableStringify(obj: unknown): string {
-  if (obj === null || typeof obj !== "object") return JSON.stringify(obj)
-  if (Array.isArray(obj)) return `[${obj.map(stableStringify).join(",")}]`
+  if (obj === null) return "null"
+  if (typeof obj !== "object") {
+    if (typeof obj === "undefined") return "null"
+    return JSON.stringify(obj)
+  }
+  if (Array.isArray(obj)) {
+    return `[${obj.map(stableStringify).join(",")}]`
+  }
   const keys = Object.keys(obj as Record<string, unknown>).sort()
-  const pairs = keys.map((k) => `"${k}":${stableStringify((obj as Record<string, unknown>)[k])}`)
+  const pairs: string[] = []
+  for (const k of keys) {
+    const val = (obj as Record<string, unknown>)[k]
+    // 跳过 undefined 和函数（与 JSON.stringify 行为一致）
+    if (val === undefined || typeof val === "function" || typeof val === "symbol") continue
+    pairs.push(`${JSON.stringify(k)}:${stableStringify(val)}`)
+  }
   return `{${pairs.join(",")}}`
 }
 
