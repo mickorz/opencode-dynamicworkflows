@@ -6,11 +6,13 @@ import { loadModelTiers } from "../agent/model-tiers.js"
 import { renderWorkflowResult } from "./render.js"
 import { buildProgressMetadata, type WorkflowProgressStatus } from "./workflow-progress.js"
 import { buildRunSnapshot, cleanupRunSnapshots, RUN_SNAPSHOT_HEARTBEAT_MS, tryWriteRunSnapshot } from "./run-snapshot.js"
-import { lookupRootSessionId, registerAgentSession, unregisterAgentSessions } from "./run-lineage.js"
+import { lookupRootSessionId, lookupDevelopmentForbidden, registerAgentSession, registerDevelopmentForbidden, unregisterAgentSessions } from "./run-lineage.js"
 import { parseWorkflowScript } from "../runtime/vm.js"
 import { resolveScriptText } from "./script-source.js"
 import { BackgroundRunManager } from "./background-runs.js"
-import type { JournalEntry, AgentRecord, AgentExecutionRecord, CompositeRecord } from "../types/index.js"
+import { finalizeRun, type FinalizerResult } from "./run-finalizer.js"
+import type { DevJobManager } from "../development/job-manager.js"
+import type { JournalEntry, AgentRecord, AgentExecutionRecord, CompositeRecord, WorkflowRunResult } from "../types/index.js"
 
 const DESCRIPTION = [
   "运行动态工作流：执行一段 JavaScript 编排脚本，通过 agent() 将任务分发给子代理（独立会话）并行执行，",
@@ -23,7 +25,7 @@ const DESCRIPTION = [
   "缺省后台运行：立即返回 runId 不阻塞，完成后结果自动发回本会话。需要同步拿结果或 checkpoint 人工确认时显式传 background:false 走前台。",
 ].join("")
 
-export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunManager) {
+export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunManager, devJobManager: DevJobManager) {
   return tool({
     description: DESCRIPTION,
 
@@ -48,6 +50,9 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
       background: tool.schema.boolean().optional().describe(
         "后台运行（P2）：缺省 true，立即返回 runId 不阻塞本轮对话，完成后结果自动发回本会话；用 workflow_control 工具查状态或停止。两个例外强制前台：agent 嵌套会话内调用（需同步拿结果继续编排）、resumeFromRunId 续跑（后台未接 journal 回放）。显式传 false 前台阻塞直到完成（checkpoint 才有人工确认弹窗，后台走 headless 默认值）。",
       ),
+      development: tool.schema.boolean().optional().describe(
+        "开启 Development 模式（P2）：Workflow 完成后自动创建 Optimizer Job 分析执行历史，产出 analysis/report.md 与 proposals.json。Optimizer 自身不递归触发。缺省 false。",
+      ),
     },
 
     async execute(input, context) {
@@ -68,6 +73,9 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
 
       // B1 嵌套显示：若本会话是某活跃 run 的 agent 子会话，透传其根会话；否则自己就是根
       const rootSessionId = lookupRootSessionId(context.sessionID) ?? context.sessionID
+      // P2: 防递归——Optimizer Run 的 agent 子会话调用 workflow 时强制关闭 development
+      const developmentForbidden = lookupDevelopmentForbidden(context.sessionID)
+      const effectiveDevelopment = input.development === true && !developmentForbidden
       // 缺省后台（长跑任务不阻塞对话）。两个例外强制前台，即使显式传 true 也降级：
       //  1) agent 嵌套会话内调用：后台结果只会回传到 agent 会话，中间层拿不到工具返回值，嵌套编排链会断
       //  2) resumeFromRunId 续跑：后台路径未接 journal 回放，避免 resume 参数被静默丢弃
@@ -89,6 +97,26 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
               agentRetries: input.agentRetries,
               continueOnAgentFailure: input.continueOnAgentFailure,
               trigger: { type: "manual" },
+              development: effectiveDevelopment,
+              developmentForbidden,
+              onHistoryReady: effectiveDevelopment
+                ? (info) => {
+                    try {
+                      devJobManager.createOnce({
+                        runId: info.runId,
+                        originRunId: info.runId,
+                        directory: context.directory,
+                        historyPath: info.historyPath,
+                        client: ctx.client,
+                        parentSessionId: context.sessionID,
+                        rootSessionId,
+                        agents: info.agents,
+                      })
+                    } catch {
+                      // Job 创建失败不阻断
+                    }
+                  }
+                : undefined,
             },
           )
         } catch (error) {
@@ -119,6 +147,8 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
       let journaledRunId: string | undefined
       // F-20 实时通道：runId 提前生成，脚本名宽松解析（仅展示用）
       const runId = input.resumeFromRunId ?? `run-${Date.now().toString(36)}`
+      const runAttemptId = `${runId}:${Date.now().toString(36)}`
+      const runStartedAt = Date.now()
       let workflowName: string | undefined
       try {
         workflowName = parseWorkflowScript(script).meta.name
@@ -205,6 +235,8 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
       // 心跳：agent 状态迁移间隔可达数十秒（并行期无迁移），补时间戳防 TUI 误判失联
       const heartbeat = setInterval(() => writeTerminalSnapshot(progressRecords, "running"), RUN_SNAPSHOT_HEARTBEAT_MS)
 
+      let runStatus: "completed" | "failed" | "aborted" = "aborted"
+      let runResult: WorkflowRunResult<unknown> | undefined
       try {
         const result = await runWorkflow(script, {
           agent: adapter,
@@ -231,6 +263,10 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
             if (record.sessionId) {
               registeredSessions.add(record.sessionId)
               registerAgentSession(record.sessionId, rootSessionId)
+              // P2: Optimizer Run 的 agent 子会话标记 developmentForbidden（防递归）
+              if (developmentForbidden) {
+                registerDevelopmentForbidden(record.sessionId)
+              }
             }
             writeTerminalSnapshot(progressRecords, "running")
           },
@@ -244,6 +280,8 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
             else progressComposites.push(record)
           },
         })
+        runStatus = "completed"
+        runResult = result
         // 结构化降级可观测性：附在日志尾部（P1-2）
         for (const note of degradeNotes) result.logs.push(note)
         // 完成态双落盘：镜像快照（B 通道终态）与 tool 返回值 metadata（C 通道兜底，
@@ -270,6 +308,7 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
             ? `\n已完成的 agent 已记入 journal，续跑请传 resumeFromRunId="${journaledRunId}"。`
             : ""
           writeTerminalSnapshot(progressRecords, "aborted")
+          runStatus = "aborted"
           return {
             title: "workflow",
             output: `工作流被用户中断：${error instanceof Error ? error.message : String(error)}${resumeHint}`,
@@ -285,12 +324,51 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
         }
         // 失败终态：异常上抛前写一次终态快照，TUI 不至于永久显示 running
         writeTerminalSnapshot(progressRecords, "failed")
+        runStatus = "failed"
         throw error
       } finally {
         clearInterval(heartbeat)
         context.abort.removeEventListener("abort", onAbort)
         // 本 run 结束：注销血统（嵌套工具调用均已返回，不存在仍在使用注册项的窗口）
         unregisterAgentSessions(registeredSessions)
+        // P1: Trace 采集与 History 构建（不阻断 run 终态）
+        let finalizerResult: FinalizerResult | undefined
+        try {
+          finalizerResult = await finalizeRun({
+            runId,
+            runAttemptId,
+            rootRunId: rootSessionId,
+            directory: context.directory,
+            status: runStatus,
+            startedAt: runStartedAt,
+            agents: progressRecords,
+            workflows: runResult?.workflows ?? [],
+            composites: progressComposites,
+            adapter,
+            trigger: { type: "manual" },
+            ...(input.resumeFromRunId ? { resumeFromRunId: input.resumeFromRunId } : {}),
+            development: effectiveDevelopment,
+          })
+        } catch {
+          // 采集失败不阻断
+        }
+        // P2: history.ready -> 创建 Development Job（仅根 Run + development + 非 Optimizer）
+        if (finalizerResult && effectiveDevelopment && rootSessionId === context.sessionID) {
+          try {
+            devJobManager.createOnce({
+              runId,
+              originRunId: runId,
+              directory: context.directory,
+              historyPath: finalizerResult.historyPath,
+              client: ctx.client,
+              parentSessionId: context.sessionID,
+              rootSessionId,
+              agents: progressRecords,
+            })
+          } catch {
+            // Job 创建失败不阻断
+          }
+        }
       }
     },
   })

@@ -29,8 +29,9 @@ import {
   RUN_SNAPSHOT_HEARTBEAT_MS,
   tryWriteRunSnapshot,
 } from "./run-snapshot.js"
-import { lookupRootSessionId, registerAgentSession, unregisterAgentSessions } from "./run-lineage.js"
-import type { AgentRecord, CompositeRecord } from "../types/index.js"
+import { lookupRootSessionId, registerAgentSession, registerDevelopmentForbidden, unregisterAgentSessions } from "./run-lineage.js"
+import { finalizeRun } from "./run-finalizer.js"
+import type { AgentRecord, CompositeRecord, WorkflowRunResult } from "../types/index.js"
 
 export type BackgroundRunStatus = "running" | "completed" | "failed" | "aborted"
 
@@ -74,8 +75,14 @@ export interface BackgroundStartInput {
   onFinished?: (info: BackgroundRunInfo) => void
   /** checkpoint 人工确认通道（scheduled run 注入即败版本，需求 17） */
   confirm?: (promptText: string) => Promise<unknown>
-  /** 触发来源（manual / schedule） */
+  /** 触发来源（manual / schedule / development-optimizer） */
   trigger?: RunTrigger
+  /** P2: Development 模式（透传给 finalizeRun 记录 manifest） */
+  development?: boolean
+  /** P2: 防递归标记（Optimizer Run 设为 true，禁止本 Run 再触发 Optimizer） */
+  developmentForbidden?: boolean
+  /** P2: History 就绪后回调（finalizeRun 完成后调用，用于触发 DevJobManager） */
+  onHistoryReady?: (info: { runId: string; historyPath: string; completeness: string; agents: AgentRecord[] }) => void
 }
 
 /** 完成后注册表里保留的历史条数（内存瘦身：每条含全量 records/logs，条数过多常驻可达数十 MB） */
@@ -173,6 +180,8 @@ export class BackgroundRunManager {
     }, RUN_SNAPSHOT_HEARTBEAT_MS)
     // 血统注册面：本 run 的 agent 子会话 -> rootSessionId；run 结束统一注销（见 finally）
     const registeredSessions = new Set<string>()
+    const runAttemptId = `${info.runId}:${Date.now().toString(36)}`
+    let runResult: WorkflowRunResult<unknown> | undefined
     try {
       const result = await runWorkflow(input.script, {
         agent: adapter,
@@ -221,10 +230,15 @@ export class BackgroundRunManager {
           if (record.sessionId) {
             registeredSessions.add(record.sessionId)
             registerAgentSession(record.sessionId, rootSessionId)
+            // P2: Optimizer Run 的 agent 子会话标记 developmentForbidden（防递归）
+            if (input.developmentForbidden) {
+              registerDevelopmentForbidden(record.sessionId)
+            }
           }
           writeSnapshot("running")
         },
       })
+      runResult = result
       info.status = "completed"
       info.logs.push(...result.logs, ...degradeNotes)
       writeSnapshot("completed")
@@ -290,6 +304,41 @@ export class BackgroundRunManager {
       unregisterAgentSessions(registeredSessions)
       // 终态就地裁剪历史（原仅在新 run 启动时 prune，完成后历史会驻留到下次启动）
       this.prune()
+      // P1: Trace 采集与 History 构建（不阻断 run 终态）
+      const finalStatus: "completed" | "failed" | "aborted" =
+        info.status === "running" ? "aborted" : info.status
+      let finalizerResult: { historyPath: string; completeness: string } | undefined
+      try {
+        finalizerResult = await finalizeRun({
+          runId: info.runId,
+          runAttemptId,
+          rootRunId: rootSessionId,
+          directory: deps.directory,
+          status: finalStatus,
+          startedAt: info.startedAt,
+          agents: info.records,
+          workflows: runResult?.workflows ?? [],
+          composites: info.composites,
+          adapter,
+          ...(input.trigger ? { trigger: input.trigger } : {}),
+          ...(input.development !== undefined ? { development: input.development } : {}),
+        })
+      } catch {
+        // 采集失败不阻断
+      }
+      // P2: History 就绪后触发回调（DevJobManager 创建 Optimizer Job）
+      if (finalizerResult && input.onHistoryReady) {
+        try {
+          input.onHistoryReady({
+            runId: info.runId,
+            historyPath: finalizerResult.historyPath,
+            completeness: finalizerResult.completeness,
+            agents: info.records,
+          })
+        } catch {
+          // 回调失败不阻断
+        }
+      }
     }
   }
 

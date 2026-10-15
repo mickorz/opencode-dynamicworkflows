@@ -22,6 +22,7 @@
 
 import type { PluginInput } from "@opencode-ai/plugin"
 import type { AgentExecutionResult, AgentRunOptions, AgentSessionRunner } from "../agent/session-runner.js"
+import { parseSessionMessages, type RawSessionMessage, type ToolCallEvent } from "../trace/collector.js"
 
 /**
  * OpenCode SDK client 的类型出口（Adapter 唯一触碰 SDK 的类型边界）。
@@ -316,6 +317,76 @@ export class OpenCodeSessionAdapter implements AgentSessionRunner {
       total: (source.input ?? 0) + (source.output ?? 0) + (source.reasoning ?? 0),
       ...(message.info.cost !== undefined ? { cost: message.info.cost } : {}),
     })
+  }
+
+  /**
+   * 采集某 Session 的完整工具调用 Trace（P1）。
+   * 调 session.messages() 拉取全部消息，喂 parseSessionMessages 解析。
+   *
+   * 每个 agent() 调用创建独立 session，一次 prompt 产生多条 Assistant 消息，
+   * 全部 ToolPart 分布在各条消息中——不能只取最后一条。
+   *
+   * 返回空数组表示采集失败（session 已清理或服务端不可达），
+   * 调用方据此在 manifest 标记 outputIntegrity 为 missing。
+   */
+  async collectSessionTrace(
+    sessionId: string,
+    directory?: string,
+  ): Promise<ToolCallEvent[]> {
+    try {
+      const result = await this.client.session.messages({
+        path: { id: sessionId },
+        query: directory ? { directory } : undefined,
+      })
+      if (result.error) return []
+      const messages = result.data as RawSessionMessage[]
+      return parseSessionMessages(messages)
+    } catch {
+      // session 可能已清理或服务端不可达；返回空数组，manifest 标 missing
+      return []
+    }
+  }
+
+  /**
+   * P3: 安全读取工具输出全文
+   *
+   * 在 Adapter 层执行，因为 outputPath 的路径归属校验需要了解宿主存储结构。
+   * 返回受大小限制（1MB）的内容，调用方（Analyzer）不再直接读文件。
+   *
+   * v3 修正：不用 startsWith 做路径前缀检查（不安全），
+   * 改用 path.relative 判断路径是否在允许的目录树内。
+   */
+  readToolOutput(event: ToolCallEvent, projectDir: string): string | null {
+    const outputPath = event.metadata?.outputPath
+    if (typeof outputPath !== "string" || !outputPath) return null
+
+    try {
+      const resolved = require("node:path").resolve(outputPath)
+
+      // 允许的目录：项目目录 + 宿主存储目录
+      const path = require("node:path")
+      const fs = require("node:fs")
+      const os = require("node:os")
+
+      const allowedRoots = [
+        path.resolve(projectDir),
+        path.join(os.homedir(), ".local", "share", "opencode"),
+        path.join(os.homedir(), ".config", "opencode"),
+      ].filter(Boolean)
+
+      const isAllowed = allowedRoots.some((root: string) => {
+        const rel = path.relative(root, resolved)
+        return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel)
+      })
+      if (!isAllowed) return null
+
+      // 文件大小限制：1MB
+      const stat = fs.statSync(resolved)
+      if (stat.size > 1_048_576) return null
+      return fs.readFileSync(resolved, "utf8")
+    } catch {
+      return null
+    }
   }
 }
 

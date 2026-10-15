@@ -20,9 +20,14 @@ import { createWorkflowControlTool } from "./tools/workflow-control.js"
 import { createScheduleTools } from "./tools/schedule.js"
 import { BackgroundRunManager } from "./tools/background-runs.js"
 import { ScheduleRuntime } from "./schedule/runtime.js"
+import { DevJobManager } from "./development/job-manager.js"
 
 export const DynamicWorkflowPlugin: Plugin = async (input) => {
   const background = new BackgroundRunManager()
+  // P2: Development Job 管理（自动触发 Optimizer 分析）
+  const devJobManager = new DevJobManager(background)
+  // 启动恢复：加载历史 Job，标记中断的 running 为 failed
+  devJobManager.load(input.directory)
   // 定时调度：与插件同生命周期；schedules 目录不存在时 tick 即空列表，无需前置检测
   const scheduler = new ScheduleRuntime({
     client: input.client,
@@ -32,7 +37,7 @@ export const DynamicWorkflowPlugin: Plugin = async (input) => {
   scheduler.start()
   return {
     tool: {
-      workflow: createWorkflowTool(input, background),
+      workflow: createWorkflowTool(input, background, devJobManager),
       workflow_control: createWorkflowControlTool(background),
       ...createScheduleTools(input, scheduler),
     },

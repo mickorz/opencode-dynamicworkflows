@@ -119,6 +119,10 @@ export interface WorkflowRunOptions {
   maxWorkflowDepth?: number
   /** 阶段失败闸门逃生口（Bug1 修复）：true 恢复旧行为——agent 重试耗尽返回 null 静默继续；缺省 false（当前阶段收尾后终止并报告） */
   continueOnAgentFailure?: boolean
+  /** P2: Development 模式（Run 完成后自动触发 Optimizer 分析；runtime 透传不消费） */
+  development?: boolean
+  /** P2: 防递归标记（Optimizer Run 设为 true；runtime 透传不消费） */
+  developmentForbidden?: boolean
 }
 
 /** checkpoint() 的可选项（P1-4，仅确认型：OpenCode 无自由文本 UI 通道） */
