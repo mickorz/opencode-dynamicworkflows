@@ -20,9 +20,12 @@ Docs/*
 !docs/zh-CN/
 !docs/zh-CN/*.md
 
-# 开发过程目录（不进 git，project-init skill 标准）
+# 开发过程目录（dev-docs 不入库；dev-examples 入库含测试脚本和配置）
 dev-docs/
-dev-examples/
+
+# dev-examples 运行时生成物（脚本和配置入库，运行产物忽略）
+dev-examples/**/p*_test_output.txt
+dev-examples/**/server-*.log
 
 # workflow 运行时产物（journal、运行状态）；examples 的验收 workflow 脚本入库（自包含承诺）
 .opencode-workflows/

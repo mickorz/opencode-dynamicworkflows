@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["../.."],
+  "permission": {
+    "workflow-checkpoint:*": "ask"
+  },
+  "skills": {
+    "paths": ["../../skills"]
+  }
+}
