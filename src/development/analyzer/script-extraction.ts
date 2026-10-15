@@ -296,22 +296,30 @@ function findExecutionEvents(
   return { confirmed, possible }
 }
 
-/** 判断命令是否为明确的脚本执行形式 */
+/**
+ * 判断命令是否为明确的脚本执行形式
+ *
+ * P3.2 修正：移除通配 `.*` 直接执行分支（v3 的 `^\\.?/?.*` 过宽，
+ * 会匹配 `grep script.py`、`rm script.py`、`sed script.py` 等）。
+ *
+ * 只确认两种形式：
+ * 1. 解释器前缀：`python script.py`、`node script.js`、`bash script.sh` 等
+ * 2. 直接执行：`./script.sh`（仅 shell 脚本，必须有明确的 `./` 前缀）
+ */
 function isConfirmedExecution(command: string, fileName: string, fileExt: string | undefined): boolean {
   const trimmedCmd = command.trim()
+  const escapedName = escapeRegex(fileName)
 
   for (const pattern of EXECUTION_PATTERNS) {
-    // 检查 `runtime fileName` 或 `runtime ./fileName` 或 `runtime path/to/fileName`
-    const execRegex = new RegExp(`^${pattern.runtime}\\s+.*${escapeRegex(fileName)}`)
+    // 匹配 `runtime <args> fileName`（允许中间有路径参数，如 python ./validate.py）
+    const execRegex = new RegExp(`^${pattern.runtime}\\s+\\S*${escapedName}`)
     if (execRegex.test(trimmedCmd)) return true
+  }
 
-    // 也检查直接执行形式 `./script.sh`
-    if (pattern.extensions.includes(fileExt ?? "")) {
-      const directExecRegex = new RegExp(`^\\.?/?.*${escapeRegex(fileName)}`)
-      if (directExecRegex.test(trimmedCmd) && !trimmedCmd.startsWith("echo") && !trimmedCmd.startsWith("cat") && !trimmedCmd.startsWith("type")) {
-        return true
-      }
-    }
+  // 直接执行：`./script.sh`（仅 shell 脚本，必须有明确的 `./` 前缀）
+  if (fileExt === "sh" || fileExt === "bash") {
+    const directExecRegex = new RegExp(`^\\./${escapedName}`)
+    if (directExecRegex.test(trimmedCmd)) return true
   }
 
   return false

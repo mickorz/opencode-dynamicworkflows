@@ -12,8 +12,10 @@ export type DevJobStatus = "pending" | "running" | "completed" | "failed"
 
 /** 单个 Development Job 记录 */
 export interface DevJob {
-  /** 业务 Run 的 runId（幂等键） */
+  /** 业务 Run 的 runId（幂等键的一部分） */
   runId: string
+  /** P3.2: Run 执行轮次 ID（Resume 场景同 runId 不同 attempt，用于复合键去重） */
+  runAttemptId?: string
   /** 触发本次优化的业务 Run ID */
   originRunId: string
   /** Optimizer Run 的 runId（BackgroundRunManager 分配） */

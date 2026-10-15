@@ -51,6 +51,14 @@ import type { AnalysisResult } from "./analyzer/index.js"
 const DEV_DIR = path.join(".opencode-workflows", "development")
 const JOBS_FILE = "jobs.json"
 
+/**
+ * P3.2: 统一的 Job Key 生成函数
+ * 有 runAttemptId 时用复合键（Resume 可独立），无则回退到 runId
+ */
+export function makeJobKey(runId: string, runAttemptId?: string): string {
+  return runAttemptId ? `${runId}:${runAttemptId}` : runId
+}
+
 export class DevJobManager {
   private readonly background: BackgroundRunManager
   private jobs = new Map<string, DevJob>()
@@ -70,7 +78,8 @@ export class DevJobManager {
           job.error = "插件重启时被中断"
           job.endedAt = Date.now()
         }
-        this.jobs.set(job.runId, job)
+        // P3.2: 用 makeJobKey 恢复 Map Key（与 createOnce 一致）
+        this.jobs.set(makeJobKey(job.runId, job.runAttemptId), job)
       }
       this.persist(directory)
       for (const job of this.jobs.values()) {
@@ -83,15 +92,15 @@ export class DevJobManager {
     }
   }
 
-  /** 幂等创建 Optimizer Job（P3.1: 按 runId+runAttemptId 去重，Resume 可独立分析） */
+  /** 幂等创建 Optimizer Job（P3.2: 按 runId+runAttemptId 去重，Resume 可独立分析） */
   createOnce(input: CreateOnceInput): DevJob | undefined {
-    // P3.1: Resume 场景同一 runId 有不同 runAttemptId，需独立记录分析结果
-    const dedupKey = input.runAttemptId ? `${input.runId}:${input.runAttemptId}` : input.runId
+    const dedupKey = makeJobKey(input.runId, input.runAttemptId)
     const existing = this.jobs.get(dedupKey)
     if (existing) return existing
 
     const job: DevJob = {
       runId: input.runId,
+      runAttemptId: input.runAttemptId,
       originRunId: input.originRunId,
       status: "pending",
       createdAt: Date.now(),
@@ -117,13 +126,15 @@ export class DevJobManager {
 
     try {
       const store = new TraceStore(input.directory)
-      const manifest = store.readManifest(job.originRunId)
+      // P3.2: 用 runAttemptId 定位 attempt 目录（Resume 隔离）
+      const attemptId = job.runAttemptId ?? input.runAttemptId
+      const manifest = store.readManifest(job.originRunId, attemptId)
       if (!manifest) throw new Error("manifest not found")
       if (manifest.sessions.length === 0) throw new Error("manifest has no sessions")
 
       // 预计算分析
       const agents: AgentRecord[] = input.agents ?? []
-      analysisResult = analyzeRun(store, job.originRunId, manifest, agents, generatedAt)
+      analysisResult = analyzeRun(store, job.originRunId, manifest, agents, generatedAt, attemptId)
     } catch (e) {
       // 确定性分析失败：记录状态，不静默吞错
       analysisResult = {
@@ -156,7 +167,7 @@ export class DevJobManager {
       this.startOptimizerReview(job, input, analysisResult, "deterministic-success")
     } else {
       // 分支 B：确定性分析失败
-      const historyAvailable = this.checkHistoryAvailable(job.originRunId, input.directory)
+      const historyAvailable = this.checkHistoryAvailable(job.originRunId, input.directory, job.runAttemptId ?? input.runAttemptId)
       if (historyAvailable) {
         // 分支 B1：History 可用，进入独立 LLM 分析分支
         this.startOptimizerReview(job, input, analysisResult, "llm-fallback")
@@ -200,7 +211,9 @@ export class DevJobManager {
           developmentForbidden: true,
           trigger: { type: "development-optimizer" },
           onFinished: (info) => {
-            this.onOptimizerFinished(job.runId, input.directory, info.status, info.error)
+            // P3.2: 用复合键查找 Job（与 createOnce 一致）
+            const jobKey = makeJobKey(job.runId, job.runAttemptId)
+            this.onOptimizerFinished(jobKey, input.directory, info.status, info.error)
           },
         },
       )
@@ -216,9 +229,11 @@ export class DevJobManager {
     }
   }
 
-  /** 检查 History 是否可用（history.jsonl 存在且非空） */
-  private checkHistoryAvailable(runId: string, directory: string): boolean {
-    const historyPath = path.join(directory, ".opencode-workflows", "history", runId, "history.jsonl")
+  /** 检查 History 是否可用（P3.2: 在 attempt 目录中检查 history.jsonl） */
+  private checkHistoryAvailable(runId: string, directory: string, runAttemptId?: string): boolean {
+    const store = new TraceStore(directory)
+    const dir = store.runDir(runId, runAttemptId)
+    const historyPath = path.join(dir, "history.jsonl")
     try {
       return fs.existsSync(historyPath) && fs.readFileSync(historyPath, "utf8").trim().length > 0
     } catch {
@@ -238,14 +253,14 @@ export class DevJobManager {
     }
   }
 
-  /** Optimizer Run 完成回调 */
+  /** Optimizer Run 完成回调（P3.2: 用复合键查找 Job） */
   private onOptimizerFinished(
-    runId: string,
+    jobKey: string,
     directory: string,
     status: string,
     error?: string,
   ): void {
-    const job = this.jobs.get(runId)
+    const job = this.jobs.get(jobKey)
     if (!job) return
     job.status = status === "completed" ? "completed" : "failed"
     if (error) job.error = error

@@ -34,6 +34,7 @@ import { assessOverallIntegrity } from "./evidence.js"
  * @param manifest Trace Manifest
  * @param agents 真实 AgentRecord 数组（缺失时标 unknown）
  * @param generatedAt 外部注入的时间戳（保证纯函数确定性）
+ * @param runAttemptId P3.2: Run 执行轮次 ID（Resume 隔离，传给 TraceStore 定位 attempt 目录）
  * @returns AnalysisResult（含 ruleResults + proposals + analysisStatus）
  */
 export function analyzeRun(
@@ -42,9 +43,10 @@ export function analyzeRun(
   manifest: TraceManifest,
   agents: AgentRecord[],
   generatedAt: number,
+  runAttemptId?: string,
 ): AnalysisResult {
   // 适配层：合并 ToolCallEvent + Agent 元数据
-  const events = buildAnalysisEvents(store, runId, manifest, agents)
+  const events = buildAnalysisEvents(store, runId, manifest, agents, runAttemptId)
 
   // 五类规则
   const ruleResults: RuleResults = {
@@ -70,9 +72,9 @@ export function analyzeRun(
     analysisStatus: "completed",
   }
 
-  // 生成报告并写入磁盘
+  // 生成报告并写入磁盘（P3.2: 写入 attempt 目录）
   const report = buildReport(result, generatedAt)
-  store.writeAnalysis(runId, report.reportMd, report.proposalsJson)
+  store.writeAnalysis(runId, report.reportMd, report.proposalsJson, runAttemptId)
 
   return result
 }

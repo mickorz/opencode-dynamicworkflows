@@ -130,12 +130,12 @@ test("正常完成采集：manifest completeness = full，traces 有文件", asy
     assert.equal(result.manifest.sessions[1].outputIntegrity, "full")
 
     // traces 文件存在
-    const tracePath = join(dir, ".opencode-workflows", "history", "run-test", "traces", "ses-a.jsonl")
+    const tracePath = join(dir, ".opencode-workflows", "history", "run-test", "attempts", "run-test-abc", "traces", "ses-a.jsonl")
     assert.ok(existsSync(tracePath))
 
     // history.jsonl 和 history.md 存在
-    const jsonlPath = join(dir, ".opencode-workflows", "history", "run-test", "history.jsonl")
-    const mdPath = join(dir, ".opencode-workflows", "history", "run-test", "history.md")
+    const jsonlPath = join(dir, ".opencode-workflows", "history", "run-test", "attempts", "run-test-abc", "history.jsonl")
+    const mdPath = join(dir, ".opencode-workflows", "history", "run-test", "attempts", "run-test-abc", "history.md")
     assert.ok(existsSync(jsonlPath))
     assert.ok(existsSync(mdPath))
   })
@@ -175,7 +175,7 @@ test("全部采集失败：completeness = failed，manifest 仍写入", async ()
     assert.equal(result.manifest.sessions[0].eventCount, 0)
 
     // manifest 仍写入
-    const manifestPath = join(dir, ".opencode-workflows", "history", "run-test", "manifest.json")
+    const manifestPath = join(dir, ".opencode-workflows", "history", "run-test", "attempts", "run-test-abc", "manifest.json")
     assert.ok(existsSync(manifestPath))
     const manifest = JSON.parse(readFileSync(manifestPath, "utf8"))
     assert.equal(manifest.completeness, "failed")
@@ -327,7 +327,7 @@ test("history.jsonl 含工具调用事件", async () => {
       adapter,
     }))
 
-    const jsonlPath = join(dir, ".opencode-workflows", "history", "run-test", "history.jsonl")
+    const jsonlPath = join(dir, ".opencode-workflows", "history", "run-test", "attempts", "run-test-abc", "history.jsonl")
     const jsonl = readFileSync(jsonlPath, "utf8")
     const events = jsonl.split("\n").map((l) => JSON.parse(l))
     const toolCalls = events.filter((e: { type: string }) => e.type === "tool_call")

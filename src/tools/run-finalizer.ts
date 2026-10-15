@@ -87,7 +87,7 @@ export async function finalizeRun(input: FinalizerInput): Promise<FinalizerResul
     if (!isReplayed && agent.sessionId) {
       // 真实执行：拉取 session.messages() 并解析
       const events = await input.adapter.collectSessionTrace(agent.sessionId, input.directory)
-      store.writeSessionTrace(input.runId, agent.sessionId, events)
+      store.writeSessionTrace(input.runId, agent.sessionId, events, input.runAttemptId)
       allEvents.push({ sessionId: agent.sessionId, agentId: agent.id, events })
 
       sessionEntries.push({
@@ -103,6 +103,8 @@ export async function finalizeRun(input: FinalizerInput): Promise<FinalizerResul
       // 回放 agent：无新 session，引用原始执行
       const originalSessionId = agent.sessionId
       const hasOriginalTrace = originalSessionId
+        // P3.2: 不传 runAttemptId（resumeFromRunId 是 runId 不是 attemptId），
+        // 让 hasSessionTrace 回退到旧路径查找（兼容无 attempt 目录的历史数据）
         ? store.hasSessionTrace(input.resumeFromRunId ?? input.runId, originalSessionId)
         : false
 
@@ -152,8 +154,8 @@ export async function finalizeRun(input: FinalizerInput): Promise<FinalizerResul
     status: input.status,
   })
 
-  store.writeHistory(input.runId, history.jsonl)
-  store.writeHistoryMd(input.runId, history.md)
+  store.writeHistory(input.runId, history.jsonl, input.runAttemptId)
+  store.writeHistoryMd(input.runId, history.md, input.runAttemptId)
 
   // 写 manifest
   const manifest: TraceManifest = {
@@ -170,10 +172,10 @@ export async function finalizeRun(input: FinalizerInput): Promise<FinalizerResul
     ...(input.development !== undefined ? { development: input.development } : {}),
     sessions: sessionEntries,
   }
-  store.writeManifest(input.runId, manifest)
+  store.writeManifest(input.runId, manifest, input.runAttemptId)
 
   return {
-    historyPath: store.runDir(input.runId),
+    historyPath: store.runDir(input.runId, input.runAttemptId),
     manifest,
     completeness,
   }

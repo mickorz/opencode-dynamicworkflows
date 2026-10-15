@@ -54,14 +54,18 @@ function makeFakeBackground(opts: {
 }
 
 /** 构造 CreateOnceInput 并创建必要的 Trace 文件（manifest + history） */
-function makeInput(dir: string, runId: string) {
+function makeInput(dir: string, runId: string, runAttemptId?: string) {
   const historyDir = join(dir, ".opencode-workflows", "history", runId)
   mkdirSync(historyDir, { recursive: true })
-  // 创建 manifest（P3 预计算需要）
+  // P3.2: 在 attempt 目录下创建文件
+  const attemptId = runAttemptId ?? `${runId}:abc`
+  const safeId = attemptId.replace(/[:<>|?*"\\/]/g, "-")
+  const attemptDir = join(historyDir, "attempts", safeId)
+  mkdirSync(attemptDir, { recursive: true })
   const manifest = {
     version: 1,
     runId,
-    runAttemptId: `${runId}:abc`,
+    runAttemptId: attemptId,
     rootRunId: runId,
     startedAt: 1000,
     endedAt: 5000,
@@ -77,15 +81,15 @@ function makeInput(dir: string, runId: string) {
       outputIntegrity: "full" as const,
     }],
   }
-  writeFileSync(join(historyDir, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8")
-  // 创建 history.jsonl（分支 B2 检查用）
-  writeFileSync(join(historyDir, "history.jsonl"), '{"type":"agent_start"}\n', "utf8")
+  writeFileSync(join(attemptDir, "manifest.json"), JSON.stringify(manifest, null, 2), "utf8")
+  writeFileSync(join(attemptDir, "history.jsonl"), '{"type":"agent_start"}\n', "utf8")
   return {
     runId,
     originRunId: runId,
+    runAttemptId: attemptId,
     directory: dir,
-    historyPath: historyDir,
-    client: {} as never, // fake client（FakeBackground 不消费）
+    historyPath: attemptDir,
+    client: {} as never,
     parentSessionId: "ses-parent",
     rootSessionId: "ses-root",
     agents: [] as never[],

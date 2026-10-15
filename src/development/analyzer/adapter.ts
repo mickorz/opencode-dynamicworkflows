@@ -33,6 +33,7 @@ import type { AnalysisToolEvent } from "./types.js"
  * @param runId Run ID
  * @param manifest Trace Manifest
  * @param agents 真实 AgentRecord 数组
+ * @param runAttemptId P3.2: Run 执行轮次 ID（定位 attempt 目录）
  * @returns 合并后的 AnalysisToolEvent[]（按 startedAt 排序）
  */
 export function buildAnalysisEvents(
@@ -40,6 +41,7 @@ export function buildAnalysisEvents(
   runId: string,
   manifest: TraceManifest,
   agents: AgentRecord[],
+  runAttemptId?: string,
 ): AnalysisToolEvent[] {
   // 按 sessionId 建立索引
   const agentBySession = new Map<string, AgentRecord>()
@@ -52,8 +54,8 @@ export function buildAnalysisEvents(
   const result: AnalysisToolEvent[] = []
 
   for (const session of manifest.sessions) {
-    // 读取该 session 的全部 ToolCallEvent
-    const rawEvents = store.readSessionTrace(runId, session.sessionId)
+    // 读取该 session 的全部 ToolCallEvent（P3.2: 传入 runAttemptId 定位 attempt 目录）
+    const rawEvents = store.readSessionTrace(runId, session.sessionId, runAttemptId)
     if (rawEvents.length === 0) continue
 
     // callID 去重：同一 callID 只保留最终态
