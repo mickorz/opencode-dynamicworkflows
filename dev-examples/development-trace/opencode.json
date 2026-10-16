@@ -3,7 +3,7 @@
   "plugin": ["../.."],
   "permission": {
     "workflow-checkpoint:*": "ask",
-    "optimization-approve:*": "allow"
+    "optimization-approve:*": "ask"
   },
   "skills": {
     "paths": ["../../skills"]

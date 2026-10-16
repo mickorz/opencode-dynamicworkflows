@@ -1,8 +1,11 @@
 /**
  * P4 全链路状态检查（半实机：真实落盘数据 + 断言）
  *
- * 用法：npx tsx scripts/p4/p4-full-check.ts [阶段]
+ * 用法：npx tsx scripts/p4/p4-full-check.ts [阶段] [--strict]
  *   不传阶段 = 全部检查；传 all|aggregation|candidate|ab|approval|apply 只查对应阶段
+ *   --strict 产物缺失（无 history/candidates/ab-result/approval/apply-log）算失败，
+ *            用于验收封版：要求 P4-A～D 指定产物与状态全部存在且符合预期；
+ *            不加时缺失输出 [跳过]（分阶段逐步验收友好）
  *
  * 检查项（按 P4 阶段）：
  *   aggregation：manifest.workflowSource 溯源 + candidates.json 聚合视图
@@ -18,7 +21,8 @@ import path from "node:path"
 import { createHash } from "node:crypto"
 
 const wf = path.join(process.cwd(), ".opencode-workflows")
-const phase = process.argv[2] ?? "all"
+const phase = process.argv[2] === "--strict" ? "all" : (process.argv[2] ?? "all")
+const strict = process.argv.includes("--strict")
 const want = (p: string) => phase === "all" || phase === p
 
 const sha = (s: string) => createHash("sha256").update(s, "utf8").digest("hex")
@@ -34,6 +38,17 @@ function check(cond: boolean, ok: string, bad: string) {
   }
 }
 
+/** 产物缺失检查：strict 模式算失败（要求指定阶段产物全部存在），普通模式跳过 */
+function requireArtifact(cond: boolean, skipped: string, strictBad: string) {
+  if (cond) return
+  if (strict) {
+    failures += 1
+    console.log(`  [失败] ${strictBad}`)
+  } else {
+    console.log(`  [跳过] ${skipped}`)
+  }
+}
+
 console.log("== P4 全链路状态检查 ==")
 
 // ------------------------------------------------------------
@@ -41,7 +56,7 @@ if (want("aggregation")) {
   console.log("[阶段A 聚合]")
   const historyDir = path.join(wf, "history")
   if (!exists(historyDir)) {
-    console.log("  [跳过] 无 history 目录（尚未跑过 development Workflow）")
+    requireArtifact(exists(historyDir), "无 history 目录（尚未跑过 development Workflow）", "无 history 目录：--strict 要求已完成 development 运行")
   } else {
     let fileSources = 0
     for (const runId of fs.readdirSync(historyDir)) {
@@ -73,7 +88,7 @@ if (want("aggregation")) {
       }
       check((data.candidates ?? []).length > 0, "存在聚合候选", "无聚合候选（需 >=2 个独立 Run）")
     } else {
-      console.log("  [跳过] candidates.json 不存在（DevJob 尚未完成触发聚合）")
+      requireArtifact(exists(candPath), "candidates.json 不存在（DevJob 尚未完成触发聚合）", "candidates.json 不存在：--strict 要求聚合已完成")
     }
   }
 }
@@ -128,7 +143,7 @@ if (activeJob && (want("candidate") || want("ab") || want("approval") || want("a
     console.log("[阶段C A/B 验证]")
     const abPath = path.join(fpDir, "ab-result.json")
     if (!exists(abPath)) {
-      console.log("  [跳过] ab-result.json 不存在（验证未执行或 failed）")
+      requireArtifact(exists(abPath), "ab-result.json 不存在（验证未执行或 failed）", "ab-result.json 不存在：--strict 要求 A/B 验证已执行")
     } else {
       const r = readJson(abPath)
       console.log(`  [信息] 原版: ${JSON.stringify(r.original)}`)
@@ -151,7 +166,7 @@ if (activeJob && (want("candidate") || want("ab") || want("approval") || want("a
     console.log("[阶段D-1 批准记录]")
     const recPath = path.join(wf, "development", "approval-records", `${activeJob.optimizationId}.json`)
     if (!exists(recPath)) {
-      console.log("  [跳过] approval-record 不存在（尚未 approve）")
+      requireArtifact(exists(recPath), "approval-record 不存在（尚未 approve）", "approval-record 不存在：--strict 要求已完成人工批准")
     } else {
       const rec = readJson(recPath)
       check(rec.approvalChannel?.startsWith("ask:"), `批准通道 ${rec.approvalChannel}`, "批准通道缺失（非 ask 事件？）")
@@ -163,7 +178,7 @@ if (activeJob && (want("candidate") || want("ab") || want("approval") || want("a
     console.log("[阶段D-2 应用结果]")
     const logPath = path.join(fpDir, "apply-log.jsonl")
     if (!exists(logPath)) {
-      console.log("  [跳过] apply-log.jsonl 不存在（尚未应用）")
+      requireArtifact(exists(logPath), "apply-log.jsonl 不存在（尚未应用）", "apply-log.jsonl 不存在：--strict 要求候选已应用")
     } else {
       const lines = fs.readFileSync(logPath, "utf8").trim().split("\n").map((l) => JSON.parse(l))
       const last = lines[lines.length - 1]
@@ -185,5 +200,5 @@ if (activeJob && (want("candidate") || want("ab") || want("approval") || want("a
   }
 }
 
-console.log(failures === 0 ? "== 全部通过 ==" : `== ${failures} 项失败 ==`)
+console.log(failures === 0 ? `== 全部通过 ==${strict ? "（strict 模式：指定阶段产物与状态全部存在且符合预期）" : ""}` : `== ${failures} 项失败 ==`)
 process.exit(failures === 0 ? 0 : 1)
