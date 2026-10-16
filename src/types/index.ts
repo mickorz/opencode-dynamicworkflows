@@ -142,6 +142,8 @@ export interface WorkflowRunResult<T = unknown> {
   /** 全部组合节点执行记录（P2-3 观测；TUI 组合层级树源） */
   composites: CompositeRecord[]
   agentCount: number
+  /** runTool 调用次数（P4.1：确定性工具节点；纯 Tool Workflow 时 agentCount 为 0） */
+  toolCount?: number
   durationMs: number
   runId: string
 }

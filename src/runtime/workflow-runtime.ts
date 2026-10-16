@@ -27,7 +27,7 @@
 
 import fs from "node:fs"
 import path from "node:path"
-import { exec } from "node:child_process"
+import { exec, execFile } from "node:child_process"
 import { createLimiter } from "./semaphore.js"
 import { parseWorkflowScript, runScriptInVm } from "./vm.js"
 import { WorkflowError, WorkflowErrorCode, wrapError } from "./errors.js"
@@ -166,6 +166,8 @@ interface SharedRunContext {
   maxAgents: number
   /** 实际 agent dispatch 计数（root 级配额，含 child 与 checkpoint） */
   agentCount: number
+  /** runTool 调用计数（P4.1：确定性工具节点，不计 agentCount 配额；有效性判定用） */
+  toolCount: number
   /** root 脚本异常即置位（child 失败不污染，V1 Composite 修正）：与外部 signal 一起构成整 run 中止面 */
   aborted: boolean
   signal?: AbortSignal
@@ -235,6 +237,7 @@ function createSharedRunContext(options: WorkflowRunOptions, runId: string): Sha
     scheduler: undefined as never, // 下一行装配（闭包需要 shared.log）
     maxAgents: options.maxAgents ?? MAX_AGENTS_PER_RUN,
     agentCount: 0,
+    toolCount: 0,
     aborted: false,
     signal: options.signal,
     agentRunner: options.agent,
@@ -299,10 +302,11 @@ export async function runWorkflow<T = unknown>(
   const { meta, result } = await executeWorkflow(script, options.args, shared, rootScope)
   // 阶段失败闸门终检（Bug1）：失败发生在最后一个 phase 且脚本正常 return 时，不允许静默成功
   if (shared.phaseFailed.length > 0) throw buildFailedGateError(shared.phaseFailed)
-  // 纯编排合法：root run 级至少一次实际 dispatch（agent 含 child 内与 checkpoint）
-  if (shared.agentCount === 0) {
+  // 纯编排合法：root run 级至少一次实际 dispatch（agent 含 child 内与 checkpoint；
+  // P4.1：runTool 等确定性工具节点同样有效——纯 Tool Workflow 零 Agent 零 token 合法）
+  if (shared.agentCount === 0 && shared.toolCount === 0) {
     throw new WorkflowError(
-      "workflow 脚本必须至少调用一次 agent()（或经 workflow() 子流程间接调用）；纯计算请直接在对话中完成，不要用 workflow",
+      "workflow 脚本必须至少调用一次 agent() 或 runTool()（或经 workflow() 子流程间接调用）；纯计算请直接在对话中完成，不要用 workflow",
       WorkflowErrorCode.SCRIPT_VALIDATION_ERROR,
       { recoverable: false },
     )
@@ -317,6 +321,7 @@ export async function runWorkflow<T = unknown>(
     workflows: shared.workflows,
     composites: shared.composites,
     agentCount: shared.agentCount,
+    toolCount: shared.toolCount,
     durationMs: Date.now() - started,
     runId,
   }
@@ -900,6 +905,138 @@ async function executeWorkflow(
     })
   }
 
+  // ── runTool：原生确定性工具节点（P4.1-B）──
+  // 零 token 调用项目内脚本并返回结构化输出；与 check 的布尔语义互补。
+  // 失败语义（需求 3.2）：缺省 throw TOOL_FAILED（可恢复，node-contract 的 resolve 即 success
+  // 语义下，返回失败对象不会触发 fallback）；显式 onFailure: "return" 才返回对象。
+  // Journal：消耗 callSeq（与 agent/checkpoint 同构），执行记录走 executions 通道
+  // （不写 hash/result，resume 永远 miss 重跑）；下游 agent 若 prompt 嵌入输出，变化经
+  // 既有 prompt-hash 机制失效。
+  const TOOL_INTERPRETER: Record<string, string> = { ".py": "python", ".js": "node" }
+  const TOOL_MAX_BUFFER = 1024 * 1024 // stdout+stderr 合计上限 1MB，超限即失败（maxBuffer）
+
+  interface RunToolResult {
+    ok: boolean
+    exitCode: number
+    stdout: string
+    stderr: string
+    durationMs: number
+    parsed?: unknown
+  }
+
+  const runTool = async (
+    scriptPath: unknown,
+    options: {
+      args?: unknown
+      timeoutMs?: unknown
+      parseJson?: unknown
+      onFailure?: unknown
+    } = {},
+  ): Promise<RunToolResult> => {
+    throwIfAborted()
+    // 入参校验（结构性错误，不可恢复）
+    if (typeof scriptPath !== "string" || !scriptPath.trim()) {
+      throw new WorkflowError("runTool(scriptPath, options?) 需要字符串脚本路径", WorkflowErrorCode.SCRIPT_VALIDATION_ERROR, { recoverable: false })
+    }
+    const args = options.args
+    if (args !== undefined && (!Array.isArray(args) || args.some((a) => typeof a !== "string"))) {
+      throw new WorkflowError("runTool 的 args 必须是字符串数组（execFile 参数式传递，无 shell 拼接）", WorkflowErrorCode.SCRIPT_VALIDATION_ERROR, { recoverable: false })
+    }
+    const onFailure = options.onFailure === "return" ? "return" : "throw"
+
+    // 边界：仅项目目录内脚本（realpathSync.native 归一 8.3 短名与 symlink 后判定）
+    const abs = path.resolve(shared.cwd, scriptPath)
+    const cwdReal = fs.realpathSync.native(shared.cwd)
+
+    /** 统一失败收尾：journal 执行记录 + log + onFailure 语义（throw/return） */
+    const finishTool = async (
+      outcome: { ok: boolean; exitCode: number; stdout: string; stderr: string; durationMs: number; parsed?: unknown },
+      journalKey: string,
+      startedAt: number,
+    ): Promise<RunToolResult> => {
+      if (options.parseJson === true && outcome.ok && outcome.stdout.trim()) {
+        try {
+          outcome.parsed = JSON.parse(outcome.stdout)
+        } catch {
+          // 非法 JSON：parsed 缺省，业务自行处理 stdout
+        }
+      }
+      shared.onAgentExecution?.({
+        key: journalKey,
+        execution: {
+          executionId: `${journalKey}:1`,
+          attempt: 1,
+          status: outcome.ok ? "ok" : "failed",
+          label: `tool ${path.basename(abs)}`,
+          ...(outcome.ok ? {} : { error: `exit ${outcome.exitCode}: ${outcome.stderr.slice(0, 200)}` }),
+          startedAt,
+          durationMs: outcome.durationMs,
+        },
+      })
+      log(`runTool ${scriptPath} -> ${outcome.ok ? "ok" : `failed(exit ${outcome.exitCode})`} (${outcome.durationMs}ms)`)
+      if (!outcome.ok && onFailure === "throw") {
+        const detail = outcome.stderr.trim().slice(0, 300)
+        throw new WorkflowError(
+          `工具执行失败（exit ${outcome.exitCode}）：${scriptPath}${detail ? `\n${detail}` : ""}`,
+          WorkflowErrorCode.TOOL_FAILED,
+          { recoverable: true },
+        )
+      }
+      return outcome
+    }
+
+    let targetReal: string
+    try {
+      targetReal = fs.realpathSync.native(abs)
+    } catch {
+      // 启动失败（脚本不存在）：与退出码/超时同语义，受 onFailure 控制
+      const callIndex0 = scope.callSeq++
+      shared.toolCount += 1
+      return finishTool(
+        { ok: false, exitCode: -1, stdout: "", stderr: `脚本不存在或不可读：${scriptPath}（解析为 ${abs}）`, durationMs: 0 },
+        scopedKey(shared, scope, callIndex0),
+        Date.now(),
+      )
+    }
+    if (targetReal !== cwdReal && !targetReal.startsWith(cwdReal + path.sep)) {
+      throw new WorkflowError(`runTool 仅允许项目目录内脚本（解析到项目外：${targetReal}）`, WorkflowErrorCode.SCRIPT_VALIDATION_ERROR, { recoverable: false })
+    }
+    const ext = path.extname(targetReal).toLowerCase()
+    const interpreter = TOOL_INTERPRETER[ext] ?? (ext === ".sh" ? null : undefined)
+    if (interpreter === undefined) {
+      throw new WorkflowError(`runTool 扩展名不在白名单（.py/.js/.sh）：${scriptPath}`, WorkflowErrorCode.SCRIPT_VALIDATION_ERROR, { recoverable: false })
+    }
+
+    // 调用序与计数（journal key 与 agent/checkpoint 同构；不计 agentCount 配额）
+    const callIndex = scope.callSeq++
+    shared.toolCount += 1
+    const key = scopedKey(shared, scope, callIndex)
+    const toolArgs = (args as string[] | undefined) ?? []
+    const startedAt = Date.now()
+
+    const execOutcome = await new Promise<{ ok: boolean; exitCode: number; stdout: string; stderr: string; durationMs: number }>((resolve) => {
+      const cmd = interpreter ?? targetReal // .sh 直接执行（Windows 下不假定可用，启动失败即失败）
+      const fileArgs = interpreter ? [targetReal, ...toolArgs] : toolArgs
+      execFile(
+        cmd,
+        fileArgs,
+        { cwd: shared.cwd, timeout: typeof options.timeoutMs === "number" ? options.timeoutMs : 30_000, windowsHide: true, maxBuffer: TOOL_MAX_BUFFER },
+        (error, stdout, stderr) => {
+          const exitCode = error && typeof (error as NodeJS.ErrnoException & { code?: number }).code === "number" ? ((error as unknown as { code: number }).code) : error ? 1 : 0
+          resolve({
+            ok: !error,
+            exitCode,
+            stdout: String(stdout ?? ""),
+            stderr: String(stderr ?? ""),
+            durationMs: Date.now() - startedAt,
+          })
+        },
+      )
+    })
+
+    return finishTool(execOutcome, key, startedAt)
+  }
+
   const consoleShim = {
     log,
     info: log,
@@ -1298,6 +1435,7 @@ async function executeWorkflow(
     check,
     fileExists,
     commandSuccess,
+    runTool,
     phase,
     log,
     args,

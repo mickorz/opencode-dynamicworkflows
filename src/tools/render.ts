@@ -27,8 +27,12 @@ export function renderWorkflowResult(
   const cost = result.agents.reduce((sum, a) => sum + (a.cost ?? 0), 0)
 
   const lines: string[] = []
+  const nodeSummary =
+    result.agentCount > 0 || !result.toolCount
+      ? `${result.agentCount} 个 agent`
+      : `${result.toolCount} 个工具节点，0 个 agent`
   lines.push(
-    `工作流 ${result.meta.name} 完成：${result.agentCount} 个 agent` +
+    `工作流 ${result.meta.name} 完成：${nodeSummary}` +
       `${failed ? `，${failed} 失败` : ""}${abortedCount ? `，${abortedCount} 中止` : ""}` +
       `${replayed ? `，${replayed} 缓存回放` : ""}` +
       `，耗时 ${(result.durationMs / 1000).toFixed(1)}s，共 ${tokens} tokens${cost > 0 ? `，成本 $${cost.toFixed(4)}` : ""}` +

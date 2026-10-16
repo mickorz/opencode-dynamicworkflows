@@ -143,6 +143,25 @@ await check(() => args.config.debug !== undefined, 'config.debug 必须存在')
 // 职责边界：check=客观事实 / verify=AI 质量判断 / checkpoint=人工决定
 ```
 
+## 确定性工具节点（runTool，零 token）
+
+`runTool(scriptPath, options)` 调用项目内脚本并返回结构化输出，适合已固化的确定性业务逻辑（校验/统计/转换）。**非沙箱**：与 commandSuccess 同边界，仅限项目目录内、扩展名 .py/.js/.sh；args 经数组传递不经 shell 拼接。
+
+```javascript
+// 缺省失败即抛 TOOL_FAILED（可恢复：fallback 换候选 / retry 重试 / sequence 停止）
+const r = await runTool('tools/validate.py', { args: ['opencode.json'], parseJson: true })
+const summary = await agent(`根据校验结果生成报告：${JSON.stringify(r.parsed)}`)
+
+// 需要自行检查失败详情时显式声明 return 模式
+const r2 = await runTool('tools/check.py', { onFailure: 'return' })
+if (!r2.ok) log(`失败：exit ${r2.exitCode} ${r2.stderr.slice(0, 200)}`)
+```
+
+要点：返回 `{ ok, exitCode, stdout, stderr, durationMs, parsed? }`；parseJson 仅在 stdout
+为合法 JSON 时填 parsed；runTool 不计 agent 配额，纯 runTool 工作流（零 Agent 零 token）合法；
+resume 时工具一律重跑（执行记录进 journal executions，下游 agent 若引用其输出会因 prompt
+变化自动失效重跑）。
+
 ## 质量与控制助手
 
 ```javascript
