@@ -1,0 +1,91 @@
+{"group":"a","id":1,"cat":"serial","phase":"gen","ok":true,"sessionOk":true,"chars":1209}
+{"group":"a","id":2,"cat":"serial","phase":"gen","ok":false,"sessionOk":true,"chars":0}
+{"group":"a","id":3,"cat":"serial","phase":"gen","ok":false,"sessionOk":true,"chars":0}
+{"group":"a","id":4,"cat":"serial","phase":"gen","ok":true,"sessionOk":true,"chars":1345}
+{"group":"a","id":5,"cat":"par","phase":"gen","ok":true,"sessionOk":true,"chars":1557}
+{"group":"a","id":6,"cat":"par","phase":"gen","ok":true,"sessionOk":true,"chars":1608}
+{"group":"a","id":7,"cat":"par","phase":"gen","ok":true,"sessionOk":true,"chars":1612}
+{"group":"a","id":8,"cat":"par","phase":"gen","ok":true,"sessionOk":true,"chars":1374}
+{"group":"a","id":9,"cat":"fallback","phase":"gen","ok":false,"sessionOk":true,"chars":0}
+{"group":"a","id":10,"cat":"fallback","phase":"gen","ok":true,"sessionOk":true,"chars":2868}
+{"group":"a","id":11,"cat":"fallback","phase":"gen","ok":false,"sessionOk":true,"chars":0}
+{"group":"a","id":12,"cat":"fallback","phase":"gen","ok":true,"sessionOk":true,"chars":3565}
+{"group":"a","id":13,"cat":"nested","phase":"gen","ok":true,"sessionOk":true,"chars":1020}
+{"group":"a","id":14,"cat":"nested","phase":"gen","ok":true,"sessionOk":true,"chars":1426}
+{"group":"a","id":15,"cat":"nested","phase":"gen","ok":true,"sessionOk":true,"chars":1083}
+{"group":"a","id":16,"cat":"nested","phase":"gen","ok":true,"sessionOk":true,"chars":1871}
+{"group":"a","id":17,"cat":"complex","phase":"gen","ok":true,"sessionOk":true,"chars":5405}
+{"group":"a","id":18,"cat":"complex","phase":"gen","ok":true,"sessionOk":true,"chars":5970}
+{"group":"a","id":19,"cat":"complex","phase":"gen","ok":false,"sessionOk":true,"chars":0}
+{"group":"a","id":20,"cat":"complex","phase":"gen","ok":true,"sessionOk":true,"chars":6134}
+{"group":"b","id":1,"cat":"serial","phase":"gen","ok":true,"sessionOk":true,"chars":1397}
+{"group":"b","id":2,"cat":"serial","phase":"gen","ok":true,"sessionOk":true,"chars":1132}
+{"group":"b","id":3,"cat":"serial","phase":"gen","ok":true,"sessionOk":true,"chars":1436}
+{"group":"b","id":4,"cat":"serial","phase":"gen","ok":true,"sessionOk":true,"chars":1132}
+{"group":"b","id":5,"cat":"par","phase":"gen","ok":false,"sessionOk":true,"chars":0}
+{"group":"b","id":6,"cat":"par","phase":"gen","ok":false,"sessionOk":true,"chars":0}
+{"group":"b","id":7,"cat":"par","phase":"gen","ok":true,"sessionOk":true,"chars":1598}
+{"group":"b","id":8,"cat":"par","phase":"gen","ok":true,"sessionOk":true,"chars":1400}
+{"group":"b","id":9,"cat":"fallback","phase":"gen","ok":false,"sessionOk":true,"chars":0}
+{"group":"b","id":10,"cat":"fallback","phase":"gen","ok":false,"sessionOk":true,"chars":0}
+{"group":"b","id":11,"cat":"fallback","phase":"gen","ok":true,"sessionOk":true,"chars":4253}
+{"group":"b","id":12,"cat":"fallback","phase":"gen","ok":false,"sessionOk":true,"chars":0}
+{"group":"b","id":13,"cat":"nested","phase":"gen","ok":true,"sessionOk":true,"chars":1135}
+{"group":"b","id":14,"cat":"nested","phase":"gen","ok":true,"sessionOk":true,"chars":1898}
+{"group":"b","id":15,"cat":"nested","phase":"gen","ok":true,"sessionOk":true,"chars":1108}
+{"group":"b","id":16,"cat":"nested","phase":"gen","ok":true,"sessionOk":true,"chars":1960}
+{"group":"b","id":17,"cat":"complex","phase":"gen","ok":true,"sessionOk":true,"chars":3901}
+{"group":"b","id":18,"cat":"complex","phase":"gen","ok":true,"sessionOk":true,"chars":6713}
+{"group":"b","id":19,"cat":"complex","phase":"gen","ok":false,"sessionOk":true,"chars":0}
+{"group":"b","id":20,"cat":"complex","phase":"gen","ok":true,"sessionOk":true,"chars":6953}
+{"group":"a","id":1,"cat":"serial","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"a","id":2,"cat":"serial","phase":"exec","ok":false,"repairs":0,"err":"workflow 参数错误：scriptPath 读取失败（E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\a-02.js）：ENOENT: no such file or directory, open 'E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\a-02.js'\r\n\n[stderr]\n\u001b[0m\r\n> build · deepseek-v4.1-flash-official\r\n\u001b[0m\r\n\u001b[0m✱ \u001b[0mGlob \"scripts/ab/a-02.js\"\u001b[90m 0 matches\u001b[0m\r\n\u001b[0m✱ \u001b[0mGlob \"**/a-02.js\"\u001b[90m 0 m"}
+{"group":"a","id":2,"cat":"serial","phase":"repair1","ok":false,"err":"workflow 参数错误：scriptPath 读取失败（E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\a-02.js）：ENOENT: no such file or directory, open 'E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\a-02.js'\r\n\n[stderr]\n\u001b[0m\r\n> build · deepseek-v4.1-flash-official\r\n\u001b[0m\r\n\u001b[0m⚙ \u001b[0mworkflow workflow\r\n\u001b[0m✱ \u001b[0mGlob \"**/a-02.js\"\u001b[90m 0 matches\u001b[0m\r\n\u001b[0m✱ \u001b[0mGlob"}
+{"group":"a","id":3,"cat":"serial","phase":"exec","ok":false,"repairs":0,"err":"workflow 参数错误：scriptPath 读取失败（E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\a-03.js）：ENOENT: no such file or directory, open 'E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\a-03.js'\r\n\n[stderr]\n\u001b[0m\r\n> build · deepseek-v4.1-flash-official\r\n\u001b[0m\r\n\u001b[0m⚙ \u001b[0mworkflow workflow\r\n\u001b[0m✱ \u001b[0mGlob \"**/a-03.js\"\u001b[90m 0 matches\u001b[0m\r\n\u001b[0m✱ \u001b[0mGlob"}
+{"group":"a","id":3,"cat":"serial","phase":"repair1","ok":false,"err":"workflow 参数错误：scriptPath 读取失败（E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\a-03.js）：ENOENT: no such file or directory, open 'E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\a-03.js'（该目录下无 a-03.js）\r\n\n[stderr]\n\u001b[0m\r\n> build · deepseek-v4.1-flash-official\r\n\u001b[0m\r\n\u001b[0m⚙ \u001b[0mworkflow workflow\r\n\u001b[0m✱ \u001b[0mGlob \"**/a-03.js\"\u001b[90m 0 matches\u001b[0m"}
+{"group":"a","id":4,"cat":"serial","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"a","id":5,"cat":"par","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"a","id":6,"cat":"par","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"a","id":7,"cat":"par","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"a","id":8,"cat":"par","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"a","id":9,"cat":"fallback","phase":"exec","ok":false,"repairs":0,"err":"workflow 参数错误：scriptPath 读取失败（E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\a-09.js）：ENOENT: no such file or directory, open 'E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\a-09.js'\r\n\n[stderr]\n\u001b[0m\r\n> build · deepseek-v4.1-flash-official\r\n\u001b[0m\r\n\u001b[0m✗ \u001b[0mRead scripts/ab/a-09.js failed\r\n\u001b[91m\u001b[1mError: \u001b[0mFile not found: E:\\WorkProject"}
+{"group":"a","id":9,"cat":"fallback","phase":"repair1","ok":true,"err":null}
+{"group":"a","id":10,"cat":"fallback","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"a","id":11,"cat":"fallback","phase":"exec","ok":false,"repairs":0,"err":"workflow 参数错误：scriptPath 读取失败（E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\a-11.js）：ENOENT: no such file or directory, open 'E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\a-11.js'\r\n\n[stderr]\n\u001b[0m\r\n> build · deepseek-v4.1-flash-official\r\n\u001b[0m\r\n\u001b[0m⚙ \u001b[0mworkflow workflow\r\n\u001b[0m✱ \u001b[0mGlob \"**/ab/a-11.js\"\u001b[90m 0 matches\u001b[0m\r\n\u001b[0m✱ \u001b[0mGl"}
+{"group":"a","id":11,"cat":"fallback","phase":"repair1","ok":true,"err":null}
+{"group":"a","id":12,"cat":"fallback","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"a","id":13,"cat":"nested","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"a","id":14,"cat":"nested","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"a","id":15,"cat":"nested","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"a","id":16,"cat":"nested","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"a","id":17,"cat":"complex","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"a","id":18,"cat":"complex","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"a","id":19,"cat":"complex","phase":"exec","ok":false,"repairs":0,"err":"workflow 参数错误：scriptPath 读取失败（E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\a-19.js）：ENOENT: no such file or directory, open 'E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\a-19.js'\r\n\n[stderr]\n\u001b[0m\r\n> build · deepseek-v4.1-flash-official\r\n\u001b[0m\r\n\u001b[0m⚙ \u001b[0mworkflow workflow\r\n\u001b[0m✱ \u001b[0mGlob \"**/a-19.js\"\u001b[90m 0 matches\u001b[0m\r\n\u001b[0m✱ \u001b[0mGlob"}
+{"group":"a","id":19,"cat":"complex","phase":"repair1","ok":true,"err":null}
+{"group":"a","id":20,"cat":"complex","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"b","id":1,"cat":"serial","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"b","id":2,"cat":"serial","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"b","id":3,"cat":"serial","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"b","id":4,"cat":"serial","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"b","id":5,"cat":"par","phase":"exec","ok":false,"repairs":0,"err":"workflow 参数错误：scriptPath 读取失败（E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\b-05.js）：ENOENT: no such file or directory, open 'E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\b-05.js'\r\n\n[stderr]\n\u001b[0m\r\n> build · deepseek-v4.1-flash-official\r\n\u001b[0m\r\n\u001b[0m$ \u001b[0mTest-Path -LiteralPath \"scripts/ab/b-05.js\"\r\nFalse\r\n\u001b[0m\r\n\u001b[0m$ \u001b[0mGet-Location"}
+{"group":"b","id":5,"cat":"par","phase":"repair1","ok":true,"err":null}
+{"group":"b","id":6,"cat":"par","phase":"exec","ok":false,"repairs":0,"err":"workflow 参数错误：scriptPath 读取失败（E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\b-06.js）：ENOENT: no such file or directory, open 'E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\b-06.js'（目录下仅有 a-06.js，无 b-06.js）\r\n\n[stderr]\n\u001b[0m\r\n> build · deepseek-v4.1-flash-official\r\n\u001b[0m\r\n\u001b[0m⚙ \u001b[0mworkflow workflow\r\n\u001b[0m✱ \u001b[0mGlob \"**/scripts/ab/*.js\"\u001b[9"}
+{"group":"b","id":6,"cat":"par","phase":"repair1","ok":false,"err":"workflow 参数错误：scriptPath 读取失败（E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\b-06.js）：ENOENT: no such file or directory, open 'E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\b-06.js'\r\n\n[stderr]\n\u001b[0m\r\n> build · deepseek-v4.1-flash-official\r\n\u001b[0m\r\n\u001b[0m✗ \u001b[0mRead E:/WorkProjects/opencode-dynamic-workflows/scripts/ab/b-06.js failed\r\n\u001b[91m\u001b["}
+{"group":"b","id":7,"cat":"par","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"b","id":8,"cat":"par","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"b","id":9,"cat":"fallback","phase":"exec","ok":false,"repairs":0,"err":"scriptPath 读取失败（E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\b-09.js）：ENOENT: no such file or directory, open 'E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\b-09.js'（该目录下无 b-09.js，现有为 b-01~b-08、b-11 等）\r\n\n[stderr]\n\u001b[0m\r\n> build · deepseek-v4.1-flash-official\r\n\u001b[0m\r\n\u001b[0m✱ \u001b[0mGlob \"**/scripts/ab/b-09.js\"\u001b[90m 0 matches\u001b[0m\r\n\u001b[0m\r\n\u001b[0m$"}
+{"group":"b","id":9,"cat":"fallback","phase":"repair1","ok":true,"err":null}
+{"group":"b","id":10,"cat":"fallback","phase":"exec","ok":false,"repairs":0,"err":"workflow 参数错误：scriptPath 读取失败（E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\b-10.js）：ENOENT: no such file or directory, open 'E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\b-10.js'\r\n\n[stderr]\n\u001b[0m\r\n> build · deepseek-v4.1-flash-official\r\n\u001b[0m\r\n\u001b[0m⚙ \u001b[0mworkflow workflow\r\n\u001b[0m✱ \u001b[0mGlob \"**/b-10.js\"\u001b[90m 0 matches\u001b[0m\r\n\u001b[0m✱ \u001b[0mGlob"}
+{"group":"b","id":10,"cat":"fallback","phase":"repair1","ok":false,"err":"workflow 参数错误：scriptPath 读取失败（E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\b-10.js）：ENOENT: no such file or directory, open 'E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\b-10.js'\r\n\n[stderr]\n\u001b[0m\r\n> build · deepseek-v4.1-flash-official\r\n\u001b[0m\r\n\u001b[0m⚙ \u001b[0mworkflow workflow\r\n\u001b[0m✱ \u001b[0mGlob \"**/b-10.js\"\u001b[90m 0 matches\u001b[0m\r\n\u001b[0m✱ \u001b[0mGlob"}
+{"group":"b","id":11,"cat":"fallback","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"b","id":12,"cat":"fallback","phase":"exec","ok":false,"repairs":0,"err":"workflow 参数错误：scriptPath 读取失败（E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\b-12.js）：ENOENT: no such file or directory, open 'E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\b-12.js'（该目录下存在 b-11.js 与 b-13.js，无 b-12.js）\r\n\n[stderr]\n\u001b[0m\r\n> build · deepseek-v4.1-flash-official\r\n\u001b[0m\r\n\u001b[0m⚙ \u001b[0mworkflow workflow\r\n\u001b[0m✱ \u001b[0mGlob \"**/ab/b-12."}
+{"group":"b","id":12,"cat":"fallback","phase":"repair1","ok":false,"err":"scriptPath 读取失败（E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\b-12.js）：ENOENT: no such file or directory, open 'E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\b-12.js'（该目录下只有 a-12.js 与 b-11.js/b-13.js，不存在 b-12.js）\r\n\n[stderr]\n\u001b[0m\r\n> build · deepseek-v4.1-flash-official\r\n\u001b[0m\r\n\u001b[0m⚙ \u001b[0mworkflow workflow\r\n\u001b[0m✱ \u001b[0mGlob \"**/scripts/ab/b"}
+{"group":"b","id":13,"cat":"nested","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"b","id":14,"cat":"nested","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"b","id":15,"cat":"nested","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"b","id":16,"cat":"nested","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"b","id":17,"cat":"complex","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"b","id":18,"cat":"complex","phase":"exec","ok":true,"repairs":0,"err":null}
+{"group":"b","id":19,"cat":"complex","phase":"exec","ok":false,"repairs":0,"err":"workflow 参数错误：scriptPath 读取失败（E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\b-19.js）：ENOENT: no such file or directory, open 'E:\\WorkProjects\\opencode-dynamic-workflows\\examples\\sample-project\\scripts\\ab\\b-19.js'\r\n\n[stderr]\n\u001b[0m\r\n> build · deepseek-v4.1-flash-official\r\n\u001b[0m\r\n\u001b[0m✗ \u001b[0mRead scripts/ab/b-19.js failed\r\n\u001b[91m\u001b[1mError: \u001b[0mFile not found: E:\\WorkProject"}
+{"group":"b","id":19,"cat":"complex","phase":"repair1","ok":true,"err":null}
+{"group":"b","id":20,"cat":"complex","phase":"exec","ok":true,"repairs":0,"err":null}
