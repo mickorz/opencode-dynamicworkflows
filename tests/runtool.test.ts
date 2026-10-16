@@ -29,7 +29,15 @@ function withTempDir(fn: (dir: string) => Promise<void>) {
     try {
       await fn(dir)
     } finally {
-      fs.rmSync(dir, { recursive: true, force: true })
+      // Windows 下刚被杀的子进程句柄短暂未释放，rmSync 可能 EPERM：重试几次
+      for (let i = 0; i < 5; i++) {
+        try {
+          fs.rmSync(dir, { recursive: true, force: true })
+          break
+        } catch {
+          await new Promise((r) => setTimeout(r, 100))
+        }
+      }
     }
   }
 }
@@ -376,5 +384,114 @@ return report
       resumeJournal: store.load("run-rt-r2"),
     })
     assert.equal(prompts2.length, 0, "输出未变 -> prompt 未变 -> agent 命中缓存回放")
+  })()
+})
+
+// ============================================================
+// P0 修复验证：Abort 与执行历史（评审补充）
+// ============================================================
+
+test("abort：run 级中止终止子进程（长跑脚本被杀，标记文件未写完）", async () => {
+  await withTempDir(async (dir) => {
+    const slow = path.join(dir, "tools", "very-slow.py")
+    mkdirSync(path.dirname(slow), { recursive: true })
+    // 脚本 1 秒后才写完成标记：中止发生在 300ms，标记不应出现
+    writeFileSync(slow, `import time\nwith open("done.marker", "w") as f:\n    f.write("start")\ntime.sleep(1)\nwith open("done.marker", "a") as f:\n    f.write("end")\n`, "utf8")
+    const controller = new AbortController()
+    setTimeout(() => controller.abort(), 300)
+    await assert.rejects(
+      runWorkflow(
+        META + `await runTool("tools/very-slow.py")\nreturn "unreachable"`,
+        { agent: fakeAgent([]), cwd: dir, runId: "run-rt-ab1", signal: controller.signal },
+      ),
+      (e: unknown) => e instanceof WorkflowError && e.code === WorkflowErrorCode.WORKFLOW_ABORTED,
+      "中止应抛 WORKFLOW_ABORTED 而非 TOOL_FAILED",
+    )
+    assert.ok(!fs.existsSync(path.join(dir, "done.marker")) || !fs.readFileSync(path.join(dir, "done.marker"), "utf8").includes("end"), "子进程被终止，未写完 end 标记")
+  })()
+})
+
+test("abort：race 败者的慢工具被局部取消（Composite signal 传播）", async () => {
+  await withTempDir(async (dir) => {
+    const slow = path.join(dir, "tools", "slow-race.py")
+    const fast = path.join(dir, "tools", "fast-race.py")
+    mkdirSync(path.dirname(slow), { recursive: true })
+    writeFileSync(slow, `import time\ntime.sleep(2)\nprint("slow")\n`, "utf8")
+    writeFileSync(fast, `print("fast")\n`, "utf8")
+    const startedAt = Date.now()
+    const r = await runWorkflow(
+      META + `
+const winner = await race([
+  () => runTool("tools/slow-race.py"),
+  () => runTool("tools/fast-race.py"),
+])
+return winner
+`,
+      { agent: fakeAgent([]), cwd: dir, runId: "run-rt-ab2" },
+    )
+    assert.equal((r.result as { stdout: string }).stdout.trim(), "fast")
+    assert.ok(Date.now() - startedAt < 1500, "慢工具被局部取消，不等 2 秒自然结束")
+  })()
+})
+
+test("executionId 唯一：多次执行（含 resume 重跑）保留全部执行事实", async () => {
+  await withTempDir(async (dir) => {
+    const store = new JournalStore(dir)
+    writePyTool(dir, "{'status': 'ok'}")
+    const script = META + `await runTool("tools/probe.py")\nreturn "done"`
+    // 同一 runId 执行三次（模拟 resume 重跑两次）
+    for (let i = 0; i < 3; i++) {
+      await runWorkflow(script, {
+        agent: fakeAgent([]),
+        cwd: dir,
+        runId: "run-rt-h1",
+        onAgentExecution: ({ key, execution }) => store.recordExecution("run-rt-h1", key, execution),
+      })
+    }
+    const journal = store.load("run-rt-h1")
+    const entries = [...journal.values()]
+    assert.equal(entries.length, 1, "同一 key 只有一条 entry")
+    const executions = entries[0].executions ?? []
+    assert.equal(executions.length, 3, "三次执行全部保留（executionId 唯一不互相覆盖）")
+    assert.equal(new Set(executions.map((e) => e.executionId)).size, 3, "executionId 互不相同")
+    assert.ok(executions.every((e) => (e as { hash?: string }).hash === undefined), "工具执行不写 hash/result（resume 不回放）")
+  })()
+})
+
+test("sequence：真实 sequence() 调用中工具失败即停止（第二节点不执行，返回 null）", async () => {
+  await withTempDir(async (dir) => {
+    const bad = path.join(dir, "tools", "seq-bad.py")
+    mkdirSync(path.dirname(bad), { recursive: true })
+    writeFileSync(bad, `import sys\nsys.exit(1)\n`, "utf8")
+    const prompts: string[] = []
+    const r = await runWorkflow(
+      META + `
+const outcome = await sequence([
+  () => runTool("tools/seq-bad.py"),
+  () => agent("sequence 第二节点不应执行"),
+])
+return outcome === null ? "stopped" : "leaked"
+`,
+      { agent: fakeAgent(prompts), cwd: dir, runId: "run-rt-s1" },
+    )
+    assert.equal(r.result, "stopped", "sequence 可恢复失败返回 null（停止）")
+    assert.equal(prompts.length, 0, "第二节点未执行")
+  })()
+})
+
+test("timeoutMs 非法参数拒绝（负数 / NaN / Infinity）", async () => {
+  await withTempDir(async (dir) => {
+    writePyTool(dir, "{'status': 'ok'}")
+    for (const bad of [-100, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await assert.rejects(
+        runWorkflow(META + `await runTool("tools/probe.py", { timeoutMs: ${JSON.stringify(bad)} })`, {
+          agent: fakeAgent([]),
+          cwd: dir,
+          runId: "run-rt-p1",
+        }),
+        (e: unknown) => e instanceof WorkflowError && e.code === WorkflowErrorCode.SCRIPT_VALIDATION_ERROR && /timeoutMs/.test(e.message),
+        `timeoutMs=${bad} 应被结构性拒绝`,
+      )
+    }
   })()
 })

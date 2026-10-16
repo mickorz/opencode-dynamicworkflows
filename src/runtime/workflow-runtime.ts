@@ -913,7 +913,7 @@ async function executeWorkflow(
   // （不写 hash/result，resume 永远 miss 重跑）；下游 agent 若 prompt 嵌入输出，变化经
   // 既有 prompt-hash 机制失效。
   const TOOL_INTERPRETER: Record<string, string> = { ".py": "python", ".js": "node" }
-  const TOOL_MAX_BUFFER = 1024 * 1024 // stdout+stderr 合计上限 1MB，超限即失败（maxBuffer）
+  const TOOL_MAX_BUFFER = 1024 * 1024 // execFile 的 maxBuffer 分别限制 stdout 与 stderr：各 1MB，任一超限即失败
 
   interface RunToolResult {
     ok: boolean
@@ -943,14 +943,20 @@ async function executeWorkflow(
       throw new WorkflowError("runTool 的 args 必须是字符串数组（execFile 参数式传递，无 shell 拼接）", WorkflowErrorCode.SCRIPT_VALIDATION_ERROR, { recoverable: false })
     }
     const onFailure = options.onFailure === "return" ? "return" : "throw"
+    // timeoutMs：仅允许有限正数（负数/NaN/Infinity 是结构性错误，不让其进入原生层抛模糊异常）
+    const timeoutMs = options.timeoutMs === undefined ? 30_000 : (options.timeoutMs as number)
+    if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new WorkflowError("runTool 的 timeoutMs 必须是有限正数（毫秒）", WorkflowErrorCode.SCRIPT_VALIDATION_ERROR, { recoverable: false })
+    }
 
     // 边界：仅项目目录内脚本（realpathSync.native 归一 8.3 短名与 symlink 后判定）
     const abs = path.resolve(shared.cwd, scriptPath)
     const cwdReal = fs.realpathSync.native(shared.cwd)
 
-    /** 统一失败收尾：journal 执行记录 + log + onFailure 语义（throw/return） */
+    /** 统一失败收尾：journal 执行记录 + log + 失败语义。
+     *  中止（aborted）是运行面事件非工具失败：穿透 onFailure，抛 WORKFLOW_ABORTED（与 agent 中止同构）。 */
     const finishTool = async (
-      outcome: { ok: boolean; exitCode: number; stdout: string; stderr: string; durationMs: number; parsed?: unknown },
+      outcome: { ok: boolean; exitCode: number; stdout: string; stderr: string; durationMs: number; parsed?: unknown; aborted?: boolean },
       journalKey: string,
       startedAt: number,
     ): Promise<RunToolResult> => {
@@ -961,19 +967,23 @@ async function executeWorkflow(
           // 非法 JSON：parsed 缺省，业务自行处理 stdout
         }
       }
+      // executionId 含时间因子：每次真实执行唯一（resume 重跑不覆盖历史，保留全部执行事实）
       shared.onAgentExecution?.({
         key: journalKey,
         execution: {
-          executionId: `${journalKey}:1`,
+          executionId: `${journalKey}:t${startedAt.toString(36)}`,
           attempt: 1,
-          status: outcome.ok ? "ok" : "failed",
+          status: outcome.aborted ? "aborted" : outcome.ok ? "ok" : "failed",
           label: `tool ${path.basename(abs)}`,
           ...(outcome.ok ? {} : { error: `exit ${outcome.exitCode}: ${outcome.stderr.slice(0, 200)}` }),
           startedAt,
           durationMs: outcome.durationMs,
         },
       })
-      log(`runTool ${scriptPath} -> ${outcome.ok ? "ok" : `failed(exit ${outcome.exitCode})`} (${outcome.durationMs}ms)`)
+      log(`runTool ${scriptPath} -> ${outcome.aborted ? "aborted" : outcome.ok ? "ok" : `failed(exit ${outcome.exitCode})`} (${outcome.durationMs}ms)`)
+      if (outcome.aborted) {
+        throw new WorkflowError("workflow aborted", WorkflowErrorCode.WORKFLOW_ABORTED, { recoverable: true })
+      }
       if (!outcome.ok && onFailure === "throw") {
         const detail = outcome.stderr.trim().slice(0, 300)
         throw new WorkflowError(
@@ -1014,14 +1024,28 @@ async function executeWorkflow(
     const toolArgs = (args as string[] | undefined) ?? []
     const startedAt = Date.now()
 
-    const execOutcome = await new Promise<{ ok: boolean; exitCode: number; stdout: string; stderr: string; durationMs: number }>((resolve) => {
+    // Abort 面（P0 修复）：run 级 signal + Composite 局部取消（race 败者，经 AsyncLocalStorage
+    // 传播）任一触发即终止子进程；中止后统一记 aborted 并抛 WORKFLOW_ABORTED（非 TOOL_FAILED）
+    const toolAbort = new AbortController()
+    const triggerAbort = () => toolAbort.abort()
+    const runSignal = shared.signal
+    const compositeSignal = compositeScopeStorage.getStore()?.signal
+    runSignal?.addEventListener("abort", triggerAbort)
+    compositeSignal?.addEventListener("abort", triggerAbort)
+    if (runSignal?.aborted || compositeSignal?.aborted) toolAbort.abort()
+
+    const execOutcome = await new Promise<{ ok: boolean; exitCode: number; stdout: string; stderr: string; durationMs: number; aborted?: boolean }>((resolve) => {
       const cmd = interpreter ?? targetReal // .sh 直接执行（Windows 下不假定可用，启动失败即失败）
       const fileArgs = interpreter ? [targetReal, ...toolArgs] : toolArgs
       execFile(
         cmd,
         fileArgs,
-        { cwd: shared.cwd, timeout: typeof options.timeoutMs === "number" ? options.timeoutMs : 30_000, windowsHide: true, maxBuffer: TOOL_MAX_BUFFER },
+        { cwd: shared.cwd, timeout: timeoutMs, windowsHide: true, maxBuffer: TOOL_MAX_BUFFER, signal: toolAbort.signal },
         (error, stdout, stderr) => {
+          if (toolAbort.signal.aborted) {
+            resolve({ ok: false, exitCode: -1, stdout: String(stdout ?? ""), stderr: "工具执行被中止", durationMs: Date.now() - startedAt, aborted: true })
+            return
+          }
           const exitCode = error && typeof (error as NodeJS.ErrnoException & { code?: number }).code === "number" ? ((error as unknown as { code: number }).code) : error ? 1 : 0
           resolve({
             ok: !error,
@@ -1032,6 +1056,9 @@ async function executeWorkflow(
           })
         },
       )
+    }).finally(() => {
+      runSignal?.removeEventListener("abort", triggerAbort)
+      compositeSignal?.removeEventListener("abort", triggerAbort)
     })
 
     return finishTool(execOutcome, key, startedAt)
