@@ -40,6 +40,7 @@ import { readdirSync, readFileSync, existsSync, mkdirSync, writeFileSync } from 
 import { join } from "node:path"
 import type { EvidenceRef, CandidateConfidence } from "./analyzer/types.js"
 import type { WorkflowSource } from "../trace/types.js"
+import { normalizedFingerprint, structuralFingerprint, similarityGroupId } from "./similarity.js"
 import {
   OptimizationJobManager,
   type OptimizationJob,
@@ -60,6 +61,8 @@ export interface CandidateOccurrence {
   workflowScriptPath?: string
   workflowScriptHash?: string
   workflowSourceKind?: WorkflowSource["kind"]
+  /** 原 L0 精确指纹（similar 组成员追溯用，P4.1-A） */
+  originalFingerprint?: string
 }
 
 /** 跨 Run 聚合候选（同一 fingerprint 的多条证据合并） */
@@ -76,10 +79,18 @@ export interface AggregatedCandidate {
   distinctRunCount: number
   /** 聚合证据引用（合并全部 occurrence 的 evidenceRefs，按稳定标识去重） */
   aggregatedEvidenceRefs: EvidenceRef[]
-  /** 最高置信度 */
+  /** 最高置信度（similar-candidate 上限 low；reviewed-compatible 上限 medium，需求 2.3） */
   bestConfidence: CandidateConfidence
   /** 全部 occurrence 都来自可 Patch 的 file 型 Workflow 才有自动 Patch 资格 */
   patchEligible: boolean
+  /** P4.1-A：匹配模式（缺省 exact 向后兼容） */
+  matchMode?: "exact" | "similar"
+  /** similar 组 ID（锚点代表制派生，跨轮次稳定） */
+  similarityGroupId?: string
+  /** 三分类：similar-candidate（仅结构相似，待人工确认）/ reviewed-compatible（L3 复核+人工确认） */
+  matchResult?: "similar-candidate" | "reviewed-compatible"
+  /** 匹配级别 */
+  matchLevel?: "L1" | "L2" | "L3"
 }
 
 const CONFIDENCE_RANK: Record<CandidateConfidence, number> = { high: 3, medium: 2, low: 1 }
@@ -161,7 +172,7 @@ function evidenceKey(ref: EvidenceRef): string {
  */
 export function aggregateCandidates(
   historyDir: string,
-  options: { excludeFingerprints?: string[] } = {},
+  options: { excludeFingerprints?: string[]; reviews?: SimilarityReviewsFile } = {},
 ): AggregatedCandidate[] {
   const excluded = new Set(options.excludeFingerprints ?? [])
   const scanned = scanHistory(historyDir).filter((s) => !excluded.has(s.fingerprint))
@@ -224,9 +235,167 @@ export function aggregateCandidates(
       patchEligible: occurrences.every(
         (o) => o.workflowSourceKind === "file" && !!o.workflowScriptPath && !!o.workflowScriptHash,
       ),
+      matchMode: "exact",
     })
   }
+
+  // P4.1-A：Similar Match（锦点代表制，需求 2.2/2.2.1）
+  candidates.push(...buildSimilarCandidates(scanned, options.reviews))
   return candidates
+}
+
+// ============================================================
+// P4.1-A：Similar Match 相似组（锦点代表制 + 三分类）
+// ============================================================
+
+/** L3 复核记录（人工确认时触发一次；持久化在 development/similarity-reviews.json） */
+export interface SimilarityReviewRecord {
+  compatible: boolean
+  note: string
+  reviewedAt: number
+}
+
+export interface SimilarityReviewsFile {
+  schemaVersion: 1
+  reviews: Record<string, SimilarityReviewRecord>
+}
+
+export function loadSimilarityReviews(workflowsDir: string): SimilarityReviewsFile {
+  try {
+    const raw = JSON.parse(readFileSync(join(workflowsDir, "development", "similarity-reviews.json"), "utf8")) as SimilarityReviewsFile
+    return { schemaVersion: 1, reviews: raw.reviews ?? {} }
+  } catch {
+    return { schemaVersion: 1, reviews: {} }
+  }
+}
+
+export function saveSimilarityReview(workflowsDir: string, groupId: string, record: SimilarityReviewRecord): void {
+  const file = loadSimilarityReviews(workflowsDir)
+  file.reviews[groupId] = record
+  const dir = join(workflowsDir, "development")
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, "similarity-reviews.json"), JSON.stringify(file, null, 2), "utf8")
+}
+
+/** 相似组内部形状（锦点代表制） */
+interface SimilarGroup {
+  anchorF1: string
+  f2: string
+  level: "L1" | "L2"
+  members: ScannedProposal[]
+}
+
+/**
+ * Similar Match 分组（锦点代表制，需求 2.2.1）：
+ *  - 按 ts 升序遍历，新脚本先比 L1 锦点再比 L2 锦点，命中入组；都未命中则自建组成为新锦点
+ *  - 非传递：成员不注册比对索引（A约B、B约C 不代表 A约C 同组）
+ *  - L2 成员加入后组级降 L2（保守）；组 ID 固定用建组锦点 L1 指纹（跨轮次稳定）
+ *  - 仅产出增量组：成员 >=2 且组内 L0 指纹 >=2 种（全同 L0 已被 exact 覆盖）
+ *  - 三分类（需求 2.2）：无复核记录 -> similar-candidate（不自动生成）；
+ *    reviews[groupId].compatible -> reviewed-compatible（可进入生成，仍需 A/B 与审批）
+ */
+function buildSimilarCandidates(
+  scanned: ScannedProposal[],
+  reviews: SimilarityReviewsFile | undefined,
+): AggregatedCandidate[] {
+  // 仅 script-extraction 且带脚本内容的 occurrence 参与，按 ts 升序（锦点=最早成员）
+  const pool = scanned
+    .filter((s) => s.proposal.category === "script-extraction" && typeof s.proposal.sourceScript === "string")
+    .sort((a, b) => a.ts - b.ts)
+
+  const groups: SimilarGroup[] = []
+  const byF1 = new Map<string, SimilarGroup>()
+  const byF2 = new Map<string, SimilarGroup>()
+  for (const item of pool) {
+    const script = item.proposal.sourceScript as string
+    const f1 = normalizedFingerprint(script)
+    const existing1 = byF1.get(f1)
+    if (existing1) {
+      existing1.members.push(item)
+      continue
+    }
+    const f2 = structuralFingerprint(script)
+    const existing2 = byF2.get(f2)
+    if (existing2) {
+      existing2.members.push(item)
+      existing2.level = "L2" // 组内最低匹配级别（保守）
+      continue
+    }
+    const group: SimilarGroup = { anchorF1: f1, f2, level: "L1", members: [item] }
+    groups.push(group)
+    byF1.set(f1, group)
+    byF2.set(f2, group)
+  }
+
+  const out: AggregatedCandidate[] = []
+  for (const group of groups) {
+    if (group.members.length < 2) continue
+    const l0Fingerprints = new Set(group.members.map((m) => m.fingerprint))
+    if (l0Fingerprints.size < 2) continue // exact 已覆盖，无增量
+
+    const groupId = similarityGroupId(group.anchorF1)
+    const review = reviews?.reviews[groupId]
+    const reviewed = review?.compatible === true
+    const matchResult = reviewed ? "reviewed-compatible" : "similar-candidate"
+
+    const occurrences: CandidateOccurrence[] = group.members.map((item) => ({
+      runId: item.runId,
+      runAttemptId: item.runAttemptId,
+      proposalId: typeof item.proposal.id === "string" ? item.proposal.id : "",
+      ts: item.ts,
+      confidence: (typeof item.proposal.candidateConfidence === "string"
+        ? item.proposal.candidateConfidence
+        : "low") as CandidateConfidence,
+      integrity: typeof item.proposal.evidenceIntegrity === "string" ? item.proposal.evidenceIntegrity : "missing",
+      sourceScript: item.proposal.sourceScript as string,
+      suggestedTarget: typeof item.proposal.suggestedTarget === "string" ? item.proposal.suggestedTarget : undefined,
+      workflowScriptPath: item.workflowSource?.scriptPath,
+      workflowScriptHash: item.workflowSource?.scriptHash,
+      workflowSourceKind: item.workflowSource?.kind,
+      originalFingerprint: item.fingerprint,
+    }))
+
+    const mergedRefs: EvidenceRef[] = []
+    const seen = new Set<string>()
+    for (const item of group.members) {
+      const refs = Array.isArray(item.proposal.evidenceRefs) ? (item.proposal.evidenceRefs as EvidenceRef[]) : []
+      for (const ref of refs) {
+        const key = evidenceKey(ref)
+        if (!seen.has(key)) {
+          seen.add(key)
+          mergedRefs.push(ref)
+        }
+      }
+    }
+
+    const latest = group.members[group.members.length - 1]
+    const rawBest = occurrences.reduce<CandidateConfidence>(
+      (acc, o) => (CONFIDENCE_RANK[o.confidence] > CONFIDENCE_RANK[acc] ? o.confidence : acc),
+      "low",
+    )
+    // 置信度上限（需求 2.3）：similar-candidate 上限 low；reviewed-compatible 上限 medium
+    const cap: CandidateConfidence = reviewed ? "medium" : "low"
+    const bestConfidence = CONFIDENCE_RANK[rawBest] > CONFIDENCE_RANK[cap] ? cap : rawBest
+
+    out.push({
+      fingerprint: groupId,
+      category: "script-extraction",
+      title: `${typeof latest.proposal.title === "string" ? latest.proposal.title : "相似脚本"}（相似组 ${groupId.slice(4, 12)}）`,
+      occurrences,
+      occurrenceCount: occurrences.length,
+      distinctRunCount: new Set(occurrences.map((o) => o.runId)).size,
+      aggregatedEvidenceRefs: mergedRefs,
+      bestConfidence,
+      patchEligible: occurrences.every(
+        (o) => o.workflowSourceKind === "file" && !!o.workflowScriptPath && !!o.workflowScriptHash,
+      ),
+      matchMode: "similar",
+      similarityGroupId: groupId,
+      matchResult,
+      matchLevel: reviewed ? "L3" : group.level,
+    })
+  }
+  return out
 }
 
 // ============================================================
@@ -282,14 +451,18 @@ export function runAggregationCycle(workflowsDir: string): AggregationCycleResul
   manager.load(workflowsDir)
 
   // 全量聚合：candidates.json 是完整视图，不因活跃 Job 占用而丢展示；
-  // Job 防重由 createOnce 幂等保证（活跃态返回既有，不新建）
-  const candidates = aggregateCandidates(historyDir)
+  // Job 防重由 createOnce 幂等保证（活跃态返回既有，不新建）；
+  // P4.1-A：相似组复核状态从 similarity-reviews 读取（三分类）
+  const reviews = loadSimilarityReviews(workflowsDir)
+  const candidates = aggregateCandidates(historyDir, { reviews })
   writeAggregatedCandidates(workflowsDir, candidates)
 
   const createdJobs: OptimizationJob[] = []
   for (const candidate of candidates) {
     if (!candidate.patchEligible) continue
     if (candidate.distinctRunCount < 2) continue
+    // P4.1-A：similar-candidate 不自动生成（需求 2.4 误报防线：必须人工确认 + L3 复核）
+    if (candidate.matchMode === "similar" && candidate.matchResult !== "reviewed-compatible") continue
 
     // 按目标 Workflow 分组（P0-1：聚合共享，Patch 分离）
     const byTarget = new Map<string, CandidateOccurrence[]>()

@@ -50,6 +50,7 @@ import {
   type ApplyTarget,
 } from "../development/candidate-apply.js"
 import { sha256Text } from "../development/workflow-source.js"
+import { runAggregationCycle, saveSimilarityReview } from "../development/aggregator.js"
 
 /** 读取候选目录里的 optimization-plan.json */
 function loadPlan(job: OptimizationJob, workflowsDir: string): OptimizationPlan | undefined {
@@ -169,11 +170,13 @@ export function createOptimizationControlTool(input: PluginInput): ReturnType<ty
   return tool({
     description:
       "P4 自优化任务管理：list 列出全部优化任务；status 查看 详情（含 A/B 结果摘要）；" +
-      "approve 人工批准并应用候选（弹前台确认，多文件事务部署，失败自动回滚）；reject 拒绝候选。" +
+      "approve 人工批准并应用候选（弹前台确认，多文件事务部署，失败自动回滚）；reject 拒绝候选；" +
+      "confirm 人工确认相似组（P4.1：触发 L3 复核，通过则转 reviewed-compatible 并可自动生成候选）。" +
       "仅 awaiting_approval 状态的任务可 approve/reject。",
     args: {
-      action: tool.schema.string().describe("list | status | approve | reject"),
+      action: tool.schema.string().describe("list | status | approve | reject | confirm"),
       optimizationId: tool.schema.string().optional().describe("任务 ID（status/approve/reject 必填）"),
+      similarityGroupId: tool.schema.string().optional().describe("相似组 ID（confirm 必填，sim- 前缀，list 可见）"),
     },
     async execute(args, context) {
       const manager = new OptimizationJobManager()
@@ -188,6 +191,51 @@ export function createOptimizationControlTool(input: PluginInput): ReturnType<ty
           (j) => `- ${j.optimizationId} [${STATE_LABEL[j.state] ?? j.state}] 目标: ${j.targetWorkflowPath}${j.title ? ` | ${j.title}` : ""}`,
         )
         return { title: "optimization", output: lines.join("\n") }
+      }
+
+      if (args.action === "confirm") {
+        // P4.1-A：相似组人工确认（需求 2.4 误报防线：similar-candidate 不自动生成，必须经此门槛）
+        const groupId = args.similarityGroupId
+        if (!groupId) {
+          return { title: "optimization", output: "confirm 需要 similarityGroupId 参数（sim- 前缀，从 list 或 candidates.json 查看）" }
+        }
+        const candPath = join(workflowsDir, "development", "aggregated", "candidates.json")
+        if (!existsSync(candPath)) {
+          return { title: "optimization", output: "candidates.json 不存在（尚未聚合）" }
+        }
+        const candidates = (JSON.parse(readFileSync(candPath, "utf8")) as { candidates: Array<{ similarityGroupId?: string; matchMode?: string; occurrences?: Array<{ sourceScript?: string; suggestedTarget?: string; runId?: string }> }> }).candidates ?? []
+        const group = candidates.find((c) => c.similarityGroupId === groupId)
+        if (!group || group.matchMode !== "similar") {
+          return { title: "optimization", output: `相似组不存在：${groupId}` }
+        }
+
+        // L3 复核（一次 Agent 调用；结论是评审意见非行为证明，通过后仍需 A/B 实证）
+        const anchor = group.occurrences?.[0]?.sourceScript ?? ""
+        const latest = group.occurrences?.[group.occurrences.length - 1]?.sourceScript ?? ""
+        const verdict = await runL3Review(input.client, context.sessionID, {
+          groupId,
+          anchorScript: anchor,
+          latestScript: latest,
+          memberCount: group.occurrences?.length ?? 0,
+        })
+        saveSimilarityReview(workflowsDir, groupId, verdict)
+
+        if (!verdict.compatible) {
+          return {
+            title: "optimization",
+            output: `L3 复核不通过，相似组保持 similar-candidate（不自动生成）：\n${verdict.note}\n（组 ${groupId} 可在修复脚本差异后重新 confirm）`,
+          }
+        }
+
+        // 复核通过：转 reviewed-compatible，并立即重跑聚合周期（达标即创建 Job 进入自动链）
+        const cycle = runAggregationCycle(workflowsDir)
+        const created = cycle.createdJobs.map((j) => `${j.optimizationId}(${j.state})`).join(", ")
+        return {
+          title: "optimization",
+          output:
+            `L3 复核通过，相似组已转 reviewed-compatible（仍需 A/B 实证与人工审批）：\n${verdict.note}\n` +
+            (created ? `已创建优化任务：${created}（下一个 DevJob 完成后自动生成候选并 A/B 验证）` : "本轮未创建任务（distinctRunCount < 2 或无 Patch 资格）"),
+        }
       }
 
       const id = args.optimizationId
@@ -302,9 +350,46 @@ export function createOptimizationControlTool(input: PluginInput): ReturnType<ty
         }
       }
 
-      return { title: "optimization", output: `未知 action：${args.action}（支持 list/status/approve/reject）` }
+      return { title: "optimization", output: `未知 action：${args.action}（支持 list/status/approve/reject/confirm）` }
     },
   })
+}
+
+/** L3 复核（P4.1-A）：经 OpenCodeSessionAdapter（结构化三路出口与降级已处理）判定相似组是否值得共同固化。
+ *  结论是评审意见非行为等价证明（reviewed-compatible 仍需 A/B 实证）。
+ *  失败不阻断：网络/模型异常时返回 compatible=false 并带原因（人工可重新 confirm）。 */
+async function runL3Review(
+  client: ClientLike,
+  parentSessionId: string,
+  input: { groupId: string; anchorScript: string; latestScript: string; memberCount: number },
+): Promise<{ compatible: boolean; note: string; reviewedAt: number }> {
+  const prompt =
+    `对比以下两个脚本，判断它们是否为同一业务逻辑的变体（可以安全地用同一固化工具替代）：\n\n` +
+    `【锦点脚本】\n\`\`\`\n${input.anchorScript}\n\`\`\`\n\n` +
+    `【最新成员脚本（共 ${input.memberCount} 个成员）】\n\`\`\`\n${input.latestScript}\n\`\`\`\n\n` +
+    `判定要点：变量/函数重命名、注释、参数化差异可忽略；阈值、字段名、配置键、协议差异为业务差异（不可合并）。\n` +
+    `以 JSON 返回：{"compatible": boolean, "reason": string}`
+  try {
+    const adapter = new OpenCodeSessionAdapter({ client, parentSessionId })
+    const result = (await adapter.run(prompt, {
+      agentType: "explore",
+      label: `L3 复核 ${input.groupId.slice(4, 12)}`,
+      schema: {
+        type: "object",
+        properties: {
+          compatible: { type: "boolean", description: "是否为同一业务逻辑的变体（仅结构相似但业务规则不同则 false）" },
+          reason: { type: "string", description: "判定理由（阈值/字段/键名差异要点）" },
+        },
+        required: ["compatible", "reason"],
+      },
+    })) as { type: string; value?: { compatible?: boolean; reason?: string } }
+    const value = result.type === "structured" ? result.value : undefined
+    const compatible = value?.compatible === true
+    const note = value?.reason ?? `（复核未给出结构化理由，原始返回：${JSON.stringify(result).slice(0, 200)}）`
+    return { compatible, note: compatible ? note : `复核意见：${note}`, reviewedAt: Date.now() }
+  } catch (e) {
+    return { compatible: false, note: `L3 复核调用失败：${e instanceof Error ? e.message : String(e)}`, reviewedAt: Date.now() }
+  }
 }
 
 /** 前台批准通道：context.ask（拒绝/取消返回 false） */
