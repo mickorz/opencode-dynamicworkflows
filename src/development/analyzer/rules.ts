@@ -15,6 +15,7 @@
  */
 
 import { createHash } from "node:crypto"
+import { getBaseName } from "./script-extraction.js"
 import type { AgentRecord } from "../../types/index.js"
 import type {
   AnalysisToolEvent,
@@ -256,10 +257,10 @@ export function detectDependencies(events: AnalysisToolEvent[]): DependencyObser
         }
       }
 
-      // 检查 bash 的 command 中是否包含该路径
+      // 检查 bash 的 command 中是否引用该路径（token 归一化匹配，容忍 ./ 前缀与绝对/相对形式差异）
       if (event.tool === "bash") {
         const command = event.input.command as string | undefined
-        if (command && command.includes(filePath)) {
+        if (command && commandReferencesPath(command, filePath)) {
           chain.push({
             ts: event.startedAt ?? 0,
             tool: event.tool,
@@ -285,6 +286,26 @@ export function detectDependencies(events: AnalysisToolEvent[]): DependencyObser
 /** 简单路径匹配（忽略首尾斜杠差异） */
 function pathsMatch(a: string, b: string): boolean {
   return a.replace(/^[./]+/, "").replace(/\/+$/, "") === b.replace(/^[./]+/, "").replace(/\/+$/, "")
+}
+
+/**
+ * 判断 bash 命令是否引用了指定文件路径（P4-前置修复）
+ *
+ * 原 includes(filePath) 对 ./ 前缀（write 产出 ./temp/a.py，命令写 temp/a.py）
+ * 与绝对/相对形式差异漏检，且会把 a.py.bak 误判为引用 a.py。
+ * 改为按 shell 词法拆 token 后逐个比对：
+ *  1. pathsMatch 归一化全路径比对（容忍 ./ 前缀与首尾斜杠差异）
+ *  2. 兑底：basename 相等（容忍绝对/相对路径形式差异，与 script-extraction 的
+ *     mentionsFile 语义一致）；附带修复了后缀文件误判（validate.py.bak != validate.py）
+ */
+function commandReferencesPath(command: string, filePath: string): boolean {
+  const tokens = command.split(/[\s|;&()<>'"`={}\[\]]+/).filter(Boolean)
+  const base = getBaseName(filePath)
+  for (const token of tokens) {
+    if (pathsMatch(token, filePath)) return true
+    if (getBaseName(token) === base) return true
+  }
+  return false
 }
 
 // ============================================================

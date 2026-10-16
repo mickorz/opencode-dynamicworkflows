@@ -42,6 +42,7 @@ import fs from "node:fs"
 import path from "node:path"
 import type { BackgroundRunManager } from "../tools/background-runs.js"
 import { OPTIMIZER_SCRIPT } from "./optimizer-script.js"
+import { sha256Text } from "./workflow-source.js"
 import type { DevJob, DevJobFile, CreateOnceInput } from "./types.js"
 import type { AgentRecord } from "../types/index.js"
 import { TraceStore } from "../trace/store.js"
@@ -62,9 +63,11 @@ export function makeJobKey(runId: string, runAttemptId?: string): string {
 export class DevJobManager {
   private readonly background: BackgroundRunManager
   private jobs = new Map<string, DevJob>()
+  private readonly onJobCompleted?: (directory: string, ctx: { client: import("../adapters/opencode-session-adapter.js").ClientLike; parentSessionId: string }) => void
 
-  constructor(background: BackgroundRunManager) {
+  constructor(background: BackgroundRunManager, opts: { onJobCompleted?: (directory: string, ctx: { client: import("../adapters/opencode-session-adapter.js").ClientLike; parentSessionId: string }) => void } = {}) {
     this.background = background
+    this.onJobCompleted = opts.onJobCompleted
   }
 
   /** 启动时加载持久化 Job 状态并恢复 */
@@ -198,6 +201,11 @@ export class DevJobManager {
         },
         {
           script: OPTIMIZER_SCRIPT,
+          // P4-0 契约一：Optimizer 自身是 inline 脚本，同样落溯源（无 Patch 资格，但保持溯源完整）
+          workflowSource: {
+            kind: "inline",
+            scriptHash: sha256Text(OPTIMIZER_SCRIPT),
+          },
           args: {
             originRunId: job.originRunId,
             historyPath: job.historyPath,
@@ -213,7 +221,7 @@ export class DevJobManager {
           onFinished: (info) => {
             // P3.2: 用复合键查找 Job（与 createOnce 一致）
             const jobKey = makeJobKey(job.runId, job.runAttemptId)
-            this.onOptimizerFinished(jobKey, input.directory, info.status, info.error)
+            this.onOptimizerFinished(jobKey, input, info.status, info.error)
           },
         },
       )
@@ -256,7 +264,7 @@ export class DevJobManager {
   /** Optimizer Run 完成回调（P3.2: 用复合键查找 Job） */
   private onOptimizerFinished(
     jobKey: string,
-    directory: string,
+    input: CreateOnceInput,
     status: string,
     error?: string,
   ): void {
@@ -265,7 +273,15 @@ export class DevJobManager {
     job.status = status === "completed" ? "completed" : "failed"
     if (error) job.error = error
     job.endedAt = Date.now()
-    this.persist(directory)
+    this.persist(input.directory)
+    // P4-A：DevJob 完成后触发聚合扫描（回调失败不阻断，聚合是尽力而为）
+    if (job.status === "completed" && this.onJobCompleted) {
+      try {
+        this.onJobCompleted(input.directory, { client: input.client, parentSessionId: input.parentSessionId })
+      } catch {
+        // 聚合失败不影响 DevJob 终态
+      }
+    }
   }
 
   /** 持久化到磁盘（原子写，同 JournalStore / TraceStore 范式） */

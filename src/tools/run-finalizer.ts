@@ -40,7 +40,7 @@
  */
 
 import { TraceStore } from "../trace/store.js"
-import type { TraceManifest, SessionManifestEntry } from "../trace/types.js"
+import type { TraceManifest, SessionManifestEntry, WorkflowSource } from "../trace/types.js"
 import type { ToolCallEvent } from "../trace/collector.js"
 import type { AgentRecord, WorkflowExecutionRecord, CompositeRecord } from "../types/index.js"
 import { buildHistory } from "../history/builder.js"
@@ -67,6 +67,8 @@ export interface FinalizerInput {
   resumeFromRunId?: string
   /** P2: 是否开启 Development 模式（记录到 manifest） */
   development?: boolean
+  /** P4-0 契约一：顶层 Workflow 脚本溯源（记录到 manifest） */
+  workflowSource?: WorkflowSource
 }
 
 export interface FinalizerResult {
@@ -170,6 +172,7 @@ export async function finalizeRun(input: FinalizerInput): Promise<FinalizerResul
     completeness,
     ...(input.trigger ? { trigger: input.trigger } : {}),
     ...(input.development !== undefined ? { development: input.development } : {}),
+    ...(input.workflowSource ? { workflowSource: input.workflowSource } : {}),
     sessions: sessionEntries,
   }
   store.writeManifest(input.runId, manifest, input.runAttemptId)

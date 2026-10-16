@@ -141,6 +141,28 @@ test("正常完成采集：manifest completeness = full，traces 有文件", asy
   })
 })
 
+test("workflowSource：透传后写入 manifest（P4-0 契约一）", async () => {
+  await withTempDir(async (dir) => {
+    const result = await finalizeRun(makeInput(dir, {
+      workflowSource: {
+        kind: "file",
+        scriptPath: "/proj/scripts/wf.js",
+        scriptHash: "abc123",
+      },
+    }))
+
+    assert.deepEqual(result.manifest.workflowSource, {
+      kind: "file",
+      scriptPath: "/proj/scripts/wf.js",
+      scriptHash: "abc123",
+    })
+    // 落盘的 manifest.json 同样含溯源字段
+    const manifestPath = join(dir, ".opencode-workflows", "history", "run-test", "attempts", "run-test-abc", "manifest.json")
+    const persisted = JSON.parse(readFileSync(manifestPath, "utf8"))
+    assert.equal(persisted.workflowSource.scriptHash, "abc123")
+  })
+})
+
 test("部分 agent 无 sessionId：completeness = partial", async () => {
   await withTempDir(async (dir) => {
     const agentA = makeAgent({ id: "run-test:0", label: "good", sessionId: "ses-a" })
@@ -271,10 +293,12 @@ test("混合回放与真实 agent：真实采集，回放标记 provenance", asy
     assert.equal(result.manifest.sessions.length, 2)
 
     const realEntry = result.manifest.sessions.find((s) => s.agentId === "run-test:0")
+    assert.ok(realEntry, "应找到真实执行 session")
     assert.equal(realEntry.replayed, false)
     assert.equal(realEntry.outputIntegrity, "full")
 
     const replayedEntry = result.manifest.sessions.find((s) => s.agentId === "run-test:1")
+    assert.ok(replayedEntry, "应找到回放 session")
     assert.equal(replayedEntry.replayed, true)
     assert.equal(replayedEntry.outputIntegrity, "full")
     assert.equal(replayedEntry.sourceRunAttemptId, "run-prev")

@@ -23,6 +23,7 @@ import { FIXTURES } from "./analyzer-fixtures.js"
 import { OpenCodeSessionAdapter } from "../src/adapters/opencode-session-adapter.js"
 import type { BackgroundRunManager } from "../src/tools/background-runs.js"
 import type { BackgroundStartDeps, BackgroundStartInput } from "../src/tools/background-runs.js"
+import type { AnalysisToolEvent } from "../src/development/analyzer/types.js"
 
 /** Fake BackgroundRunManager：记录 start 调用，可控制 onFinished 时序 */
 function makeFakeBackground(opts: {
@@ -318,7 +319,7 @@ test("isConfirmedExecution: python script.py 算执行", () => {
 
 test("isConfirmedExecution: ./script.sh 算执行（shell 脚本直接执行）", () => {
 
-  const events = [
+  const events: AnalysisToolEvent[] = [
     { callID: "c1", tool: "write", messageID: "m1", partID: "p1", status: "completed", input: { filePath: "run.sh", content: "#!/bin/bash\necho hello" }, startedAt: 1000, endedAt: 1100, partIndex: 0, messageIndex: 0, agentId: "a1", agentLabel: "A", sessionId: "s1", workflowScopePath: ["root"], replayed: false },
     { callID: "c2", tool: "bash", messageID: "m2", partID: "p2", status: "completed", input: { command: "./run.sh" }, output: "hello", startedAt: 2000, endedAt: 2100, partIndex: 0, messageIndex: 0, agentId: "a1", agentLabel: "A", sessionId: "s1", workflowScopePath: ["root"], replayed: false },
   ]

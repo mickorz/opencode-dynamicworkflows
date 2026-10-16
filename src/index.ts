@@ -21,11 +21,27 @@ import { createScheduleTools } from "./tools/schedule.js"
 import { BackgroundRunManager } from "./tools/background-runs.js"
 import { ScheduleRuntime } from "./schedule/runtime.js"
 import { DevJobManager } from "./development/job-manager.js"
+import { runAggregationCycle } from "./development/aggregator.js"
+import { advanceOptimizationJobs } from "./tools/optimization.js"
+import { createOptimizationControlTool } from "./tools/optimization.js"
+import { join } from "node:path"
 
 export const DynamicWorkflowPlugin: Plugin = async (input) => {
   const background = new BackgroundRunManager()
-  // P2: Development Job 管理（自动触发 Optimizer 分析）
-  const devJobManager = new DevJobManager(background)
+  // P2: Development Job 管理（自动触发 Optimizer 分析）；
+  // P4-A: DevJob 完成后触发跨 Run 聚合（Exact Match + 幂等创建 OptimizationJob）；
+  // P4-B/C: 聚合后自动推进候选生成与双 worktree A/B 验证，停在 awaiting_approval 等人工
+  const devJobManager = new DevJobManager(background, {
+    onJobCompleted: (directory, ctx) => {
+      const workflowsDir = join(directory, ".opencode-workflows")
+      runAggregationCycle(workflowsDir)
+      // B->C 自动链（异步不阻塞；失败已落入 Job 状态）
+      void advanceOptimizationJobs(workflowsDir, {
+        client: ctx.client,
+        parentSessionId: ctx.parentSessionId,
+      })
+    },
+  })
   // 启动恢复：加载历史 Job，标记中断的 running 为 failed
   devJobManager.load(input.directory)
   // 定时调度：与插件同生命周期；schedules 目录不存在时 tick 即空列表，无需前置检测
@@ -39,6 +55,7 @@ export const DynamicWorkflowPlugin: Plugin = async (input) => {
     tool: {
       workflow: createWorkflowTool(input, background, devJobManager),
       workflow_control: createWorkflowControlTool(background),
+      optimization_control: createOptimizationControlTool(input),
       ...createScheduleTools(input, scheduler),
     },
   }

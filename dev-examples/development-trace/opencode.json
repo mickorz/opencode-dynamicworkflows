@@ -2,7 +2,8 @@
   "$schema": "https://opencode.ai/config.json",
   "plugin": ["../.."],
   "permission": {
-    "workflow-checkpoint:*": "ask"
+    "workflow-checkpoint:*": "ask",
+    "optimization-approve:*": "allow"
   },
   "skills": {
     "paths": ["../../skills"]

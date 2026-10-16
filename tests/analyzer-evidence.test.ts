@@ -19,11 +19,14 @@ function makeCandidate(opts: {
   observedExecutions?: number
   determinism?: "likely" | "unknown" | "unlikely"
 }): ScriptExtractionCandidate {
+  const createEvent = FIXTURES.scriptExtraction()[0]
   return {
     sourceTool: opts.sourceTool ?? "write",
     scriptContent: opts.scriptContent ?? "print('hello')",
     filePath: opts.filePath ?? "test.py",
+    createEvent,
     executionEvents: [],
+    possibleExecutions: [],
     toolCallCompleted: opts.toolCallCompleted ?? true,
     observedExecutions: opts.observedExecutions ?? 1,
     determinism: opts.determinism ?? "likely",

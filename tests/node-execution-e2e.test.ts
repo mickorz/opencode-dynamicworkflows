@@ -18,6 +18,7 @@ import type { AgentSessionRunner } from "../src/agent/session-runner.js"
 import { JournalStore } from "../src/persistence/journal.js"
 import { createWorkflowTool } from "../src/tools/workflow.js"
 import { BackgroundRunManager } from "../src/tools/background-runs.js"
+import { DevJobManager } from "../src/development/job-manager.js"
 import { textResult } from "./helpers.js"
 
 test("parallel 同 label x5：record.id 与 journal key 全唯一，结果不串位", async () => {
@@ -125,7 +126,7 @@ test("前台 tool 全链路：journal entry 含展示元数据，失败 attempt 
       },
     }
     const manager = new BackgroundRunManager()
-    const workflowTool = createWorkflowTool({ client } as unknown as PluginInput, manager)
+    const workflowTool = createWorkflowTool({ client } as unknown as PluginInput, manager, new DevJobManager(manager))
     const context = {
       sessionID: "parent-1",
       messageID: "m-1",

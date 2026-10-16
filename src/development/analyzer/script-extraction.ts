@@ -402,7 +402,7 @@ function isScriptFile(filePath: string): boolean {
 }
 
 /** 获取文件名（不含目录） */
-function getBaseName(filePath: string): string {
+export function getBaseName(filePath: string): string {
   const parts = filePath.replace(/\\/g, "/").split("/")
   return parts[parts.length - 1] || filePath
 }

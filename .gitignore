@@ -62,3 +62,8 @@ demo-note.txt
 
 # Claude Code 项目规则（本地，不入库；规则单源见 AGENTS.md）
 CLAUDE.md
+dev-examples/**/p4e_*.txt
+
+# P4 验收运行产物（固化工具与临时脚本不入库）
+dev-examples/**/p3_validate.py
+dev-examples/**/tools/p3_validate.py

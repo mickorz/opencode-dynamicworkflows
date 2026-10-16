@@ -20,6 +20,7 @@ import type { ToolContext } from "@opencode-ai/plugin"
 import { createWorkflowTool } from "../src/tools/workflow.js"
 import { createWorkflowControlTool } from "../src/tools/workflow-control.js"
 import { BackgroundRunManager, type BackgroundRunSnapshot } from "../src/tools/background-runs.js"
+import { DevJobManager } from "../src/development/job-manager.js"
 import { registerAgentSession, unregisterAgentSessions } from "../src/tools/run-lineage.js"
 
 type Client = PluginInput["client"]
@@ -98,7 +99,7 @@ test("background:true 立即返回 runId，完成后结果回传主会话，jour
   try {
     const fake = makeFakeClient()
     const manager = new BackgroundRunManager()
-    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager)
+    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager, new DevJobManager(manager))
 
     const result = (await workflowTool.execute(
       {
@@ -137,7 +138,7 @@ test("workflow_control stop 停止运行中的后台 run，abort 级联子会话
   try {
     const fake = makeFakeClient({ blockChildren: true })
     const manager = new BackgroundRunManager()
-    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager)
+    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager, new DevJobManager(manager))
     const control = createWorkflowControlTool(manager)
 
     const result = (await workflowTool.execute(
@@ -180,7 +181,7 @@ test("缺省即后台：background 省略时立即返回 runId，不阻塞", asy
   try {
     const fake = makeFakeClient()
     const manager = new BackgroundRunManager()
-    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager)
+    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager, new DevJobManager(manager))
 
     const result = (await workflowTool.execute(
       { script: `export const meta = { name: 'bg_default' }\nreturn await agent('任务A')` },
@@ -200,7 +201,7 @@ test("前台路径：显式 background:false 阻塞执行并返回结果", async
   try {
     const fake = makeFakeClient()
     const manager = new BackgroundRunManager()
-    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager)
+    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager, new DevJobManager(manager))
     const result = (await workflowTool.execute(
       { script: `export const meta = { name: 'fg_demo' }\nreturn await agent('同步任务')`, background: false },
       makeToolContext(dir),
@@ -219,7 +220,7 @@ test("嵌套 agent 会话强制前台：即使缺省后台，也能同步拿到�
   try {
     const fake = makeFakeClient()
     const manager = new BackgroundRunManager()
-    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager)
+    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager, new DevJobManager(manager))
     const ctx = { ...makeToolContext(dir), sessionID: "agent-sess-1" } as ToolContext
     const result = (await workflowTool.execute(
       { script: `export const meta = { name: 'nested_fg' }\nreturn await agent('子层任务')` },
@@ -238,7 +239,7 @@ test("resumeFromRunId 强制前台：续跑请求不会退化为无回放的后�
   try {
     const fake = makeFakeClient()
     const manager = new BackgroundRunManager()
-    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager)
+    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager, new DevJobManager(manager))
     // 不存在的 journal：验证续跑请求走前台路径（返回 journal 缺失提示而非启动后台 run）
     const result = (await workflowTool.execute(
       {
@@ -259,7 +260,7 @@ test("后台脚本校验错误同步返回，不启动 run", async () => {
   try {
     const fake = makeFakeClient()
     const manager = new BackgroundRunManager()
-    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager)
+    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager, new DevJobManager(manager))
     const result = (await workflowTool.execute(
       { script: `await agent('没有 meta')`, background: true },
       makeToolContext(dir),
@@ -277,7 +278,7 @@ test("status 进度含进行中 agent：running 计入分母（修复进度永�
   const manager = new BackgroundRunManager()
   try {
     const fake = makeFakeClient({ blockChildren: true })
-    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager)
+    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager, new DevJobManager(manager))
     const control = createWorkflowControlTool(manager)
 
     const started = (await workflowTool.execute(
@@ -313,7 +314,7 @@ test("内存瘦身：完成历史裁剪到 5 条，logs 封顶 200 条", async (
   try {
     const fake = makeFakeClient()
     const manager = new BackgroundRunManager()
-    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager)
+    const workflowTool = createWorkflowTool({ client: fake.client } as PluginInput, manager, new DevJobManager(manager))
 
     // 连续跑 8 个后台 run（每个单 agent，日志刷屏：脚本里 log 300 条）
     const runIds: string[] = []

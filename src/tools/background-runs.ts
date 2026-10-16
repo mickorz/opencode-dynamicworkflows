@@ -31,6 +31,7 @@ import {
 } from "./run-snapshot.js"
 import { lookupRootSessionId, registerAgentSession, registerDevelopmentForbidden, unregisterAgentSessions } from "./run-lineage.js"
 import { finalizeRun } from "./run-finalizer.js"
+import type { WorkflowSource } from "../trace/types.js"
 import type { AgentRecord, CompositeRecord, WorkflowRunResult } from "../types/index.js"
 
 export type BackgroundRunStatus = "running" | "completed" | "failed" | "aborted"
@@ -79,6 +80,8 @@ export interface BackgroundStartInput {
   trigger?: RunTrigger
   /** P2: Development 模式（透传给 finalizeRun 记录 manifest） */
   development?: boolean
+  /** P4-0 契约一：顶层脚本溯源（透传给 finalizeRun 记录 manifest） */
+  workflowSource?: WorkflowSource
   /** P2: 防递归标记（Optimizer Run 设为 true，禁止本 Run 再触发 Optimizer） */
   developmentForbidden?: boolean
   /** P2: History 就绪后回调（finalizeRun 完成后调用，用于触发 DevJobManager） */
@@ -322,6 +325,7 @@ export class BackgroundRunManager {
           adapter,
           ...(input.trigger ? { trigger: input.trigger } : {}),
           ...(input.development !== undefined ? { development: input.development } : {}),
+          ...(input.workflowSource ? { workflowSource: input.workflowSource } : {}),
         })
       } catch {
         // 采集失败不阻断

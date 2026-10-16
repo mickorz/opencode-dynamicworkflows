@@ -26,8 +26,28 @@ export interface TraceManifest {
   development?: boolean
   /** 触发来源（manual / schedule / development-optimizer） */
   trigger?: { type: string; scheduleId?: string; scheduledAt?: string }
+  /** P4-0 契约一：顶层 Workflow 脚本溯源（Patch 资格与基线校验依据） */
+  workflowSource?: WorkflowSource
   /** 各 Session 的采集明细 */
   sessions: SessionManifestEntry[]
+}
+
+/**
+ * P4-0 契约一（Workflow Source Provenance）：顶层 Workflow 脚本溯源。
+ *
+ * 仅 kind=file 且路径可读、哈希可校验的 Workflow 具备自动 Patch 资格；
+ * 内联脚本只产出优化建议（P4 执行文档 4.0.1）。
+ */
+export interface WorkflowSource {
+  kind: "file" | "inline"
+  /** 脚本文件的绝对路径（kind=file 时必有） */
+  scriptPath?: string
+  /** 顶层脚本原文 sha256（kind=file 时等于文件字节哈希，应用前基线校验对齐此值） */
+  scriptHash: string
+  /** 是否在 git 跟踪中（P4-C worktree 隔离需要；缺省未探测） */
+  gitTracked?: boolean
+  /** 脚本文件所在 git commit（缺省未探测） */
+  gitCommit?: string
 }
 
 /** 单个 Session 的采集记录 */

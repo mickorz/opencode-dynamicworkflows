@@ -196,6 +196,44 @@ test("dependency：无关联不产生链", () => {
   assert.equal(deps.length, 0, "两次独立 read 不应产生依赖链")
 })
 
+test("dependency：bash 相对路径引用 ./ 前缀产出不漏检（P4-前置）", () => {
+  const events: AnalysisToolEvent[] = [
+    { ...FIXTURES.scriptExtraction()[0], input: { filePath: "./temp/validate.py", content: "print('ok')" } },
+    {
+      ...FIXTURES.scriptExtraction()[1],
+      input: { command: "python temp/validate.py opencode.json" },
+    },
+  ]
+  const deps = detectDependencies(events)
+  assert.equal(deps.length, 1, "命令 temp/validate.py 应匹配产出 ./temp/validate.py")
+  assert.equal(deps[0].chainType, "write->bash")
+})
+
+test("dependency：bash 相对路径引用绝对路径产出不漏检（basename 兑底）", () => {
+  const events: AnalysisToolEvent[] = [
+    { ...FIXTURES.scriptExtraction()[0], input: { filePath: "/proj/tools/check.py", content: "print('ok')" } },
+    {
+      ...FIXTURES.scriptExtraction()[1],
+      input: { command: "python tools/check.py" },
+    },
+  ]
+  const deps = detectDependencies(events)
+  assert.equal(deps.length, 1, "命令 tools/check.py 应以 basename 兑底匹配产出 /proj/tools/check.py")
+})
+
+test("dependency：不同文件名不产生链（后缀差异不算引用）", () => {
+  const events: AnalysisToolEvent[] = [
+    { ...FIXTURES.scriptExtraction()[0], input: { filePath: "temp/validate.py", content: "print('ok')" } },
+    {
+      ...FIXTURES.scriptExtraction()[1],
+      input: { command: "diff temp/validate.py.bak temp/validate.py.bak2" },
+      output: "",
+    },
+  ]
+  const deps = detectDependencies(events)
+  assert.equal(deps.length, 0, "validate.py.bak 不是对 validate.py 的执行引用")
+})
+
 // ============================================================
 // Rule 4: Latency 分析
 // ============================================================

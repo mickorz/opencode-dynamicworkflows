@@ -11,6 +11,7 @@ import { parseWorkflowScript } from "../runtime/vm.js"
 import { resolveScriptText } from "./script-source.js"
 import { BackgroundRunManager } from "./background-runs.js"
 import { finalizeRun, type FinalizerResult } from "./run-finalizer.js"
+import { computeWorkflowSource } from "../development/workflow-source.js"
 import type { DevJobManager } from "../development/job-manager.js"
 import type { JournalEntry, AgentRecord, AgentExecutionRecord, CompositeRecord, WorkflowRunResult } from "../types/index.js"
 
@@ -69,6 +70,8 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
       if (!normalized) {
         return { title: "workflow", output: "workflow 需要 script（脚本原文）或 scriptPath（文件路径）参数" }
       }
+      // P4-0 契约一：顶层脚本溯源（哈希取 normalize 前的解析文本，kind=file 时等于文件字节）
+      const workflowSource = computeWorkflowSource(input, context.directory, script)
       script = normalized
 
       // B1 嵌套显示：若本会话是某活跃 run 的 agent 子会话，透传其根会话；否则自己就是根
@@ -96,9 +99,10 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
               agentTimeoutMs: input.agentTimeoutMs,
               agentRetries: input.agentRetries,
               continueOnAgentFailure: input.continueOnAgentFailure,
-              trigger: { type: "manual" },
+            trigger: { type: "manual" },
               development: effectiveDevelopment,
               developmentForbidden,
+              workflowSource,
               onHistoryReady: effectiveDevelopment
                 ? (info) => {
                     try {
@@ -349,6 +353,7 @@ export function createWorkflowTool(ctx: PluginInput, background: BackgroundRunMa
             trigger: { type: "manual" },
             ...(input.resumeFromRunId ? { resumeFromRunId: input.resumeFromRunId } : {}),
             development: effectiveDevelopment,
+            workflowSource,
           })
         } catch {
           // 采集失败不阻断
