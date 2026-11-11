@@ -7,6 +7,21 @@ description: 编写 OpenCode 动态工作流 JavaScript 脚本时加载。涉及
 
 编写 workflow 脚本时遵守以下规则；细节 API 参考 references/runtime.md，完整范例看 examples/。
 
+## 生成前问询（必做，动笔之前）
+
+生成 workflow 脚本前，先用环境的问询工具（ask / interview 类）一次性向用户确认以下各项；用户明确说「用默认」的项可跳过：
+
+1. **档位**：速度优先（迭代出稿）/ 质量优先（正式交付）/ 双档开关（args.fast / args.quality）。
+2. **模型**：先探测可用模型，再把候选列出来让用户自己选。探测按可靠度排序：
+   - 既有 workflow 脚本与 dev-docs 里实际用过的 model（用过即证明可用，最可靠）；
+   - 模型列表 CLI（如 `opencode models`）或 provider / model-tiers 配置；
+   - 都拿不到时直接问用户要模型名。
+
+   分析类（扫描 / 对照 / 枚举 / 归类）与写作类（长输出报告 / 终稿）分两问让用户各选一个；写作类缺省用会话默认模型。
+3. **并发**：默认 16（运行时钳制上限，组数 ≤ 并发才能一波跑完）；网关限流环境建议 8；允许自定义正整数。
+
+答案直接落成脚本头部：model 常量、args 默认值与 `setConcurrency(并发)`，并在头注释里记录用户选择。档位执行细节见 [性能与质量模式手册](references/performance.md)。
+
 ## 不变量（违反即报错）
 
 1. 脚本首条语句必须是 `export const meta = { name: 'short_snake_case', description: '一句话说明' }`；可选 `id`（稳定标识，可含斜杠如 `ui/main-menu`，供按名引用与定时寻址；缺省回落 name）
@@ -143,25 +158,6 @@ await check(() => args.config.debug !== undefined, 'config.debug 必须存在')
 // 职责边界：check=客观事实 / verify=AI 质量判断 / checkpoint=人工决定
 ```
 
-## 确定性工具节点（runTool，零 token）
-
-`runTool(scriptPath, options)` 调用项目内脚本并返回结构化输出，适合已固化的确定性业务逻辑（校验/统计/转换）。**非沙箱**：与 commandSuccess 同边界，仅限项目目录内、扩展名 .py/.js/.sh；args 经数组传递不经 shell 拼接。
-
-```javascript
-// 缺省失败即抛 TOOL_FAILED（可恢复：fallback 换候选 / retry 重试 / sequence 停止）
-const r = await runTool('tools/validate.py', { args: ['opencode.json'], parseJson: true })
-const summary = await agent(`根据校验结果生成报告：${JSON.stringify(r.parsed)}`)
-
-// 需要自行检查失败详情时显式声明 return 模式
-const r2 = await runTool('tools/check.py', { onFailure: 'return' })
-if (!r2.ok) log(`失败：exit ${r2.exitCode} ${r2.stderr.slice(0, 200)}`)
-```
-
-要点：返回 `{ ok, exitCode, stdout, stderr, durationMs, parsed? }`；parseJson 仅在 stdout
-为合法 JSON 时填 parsed；runTool 不计 agent 配额，纯 runTool 工作流（零 Agent 零 token）合法；
-resume 时工具一律重跑（执行记录进 journal executions，下游 agent 若引用其输出会因 prompt
-变化自动失效重跑）。
-
 ## 质量与控制助手
 
 ```javascript
@@ -181,6 +177,20 @@ await checkpoint('即将改动生产配置，确认？')
 try { await checkpoint('即将改动生产配置，确认？') } catch { return '已取消' }
 ```
 
+## 速度与质量两种模式
+
+写有扇出的 workflow 前，先定档：**速度优先**（迭代出稿，压墙钟）或**质量优先**（正式交付，压缺陷率）。token 消耗不设限时——质量靠并行冗余买（不增加串行回合），速度靠砍串行买，两档共用同一脚本，用 args 开关切换。
+
+| 维度 | 速度优先 | 质量优先 |
+|---|---|---|
+| 串行回合 | 能砍则砍：确定性去重、质检跳过或改 check 客观校验 | 保留并加厚：verify 多 reviewer、有界修正循环 |
+| 波次 | 组数 ≤ 并发上限，一波跑完 | 不敏感，冗余并行随便加 |
+| 模型 | 分析对照类用快模型，写作保留默认 | 关键路径全强模型 + best-of-N 选优 |
+| 写作输入 | 瘦身字段（P0/P1 全量、P2 抽样） | 全量字段、全量详情 |
+| 大输入 | >20KB 按章节分片并行 | 同样分片（分片与质量不冲突） |
+
+默认建议：日常迭代用速度档快速反馈，正式交付前用质量档重跑一遍。细节与代码片段见 [性能与质量模式手册](references/performance.md)。
+
 ## 交付前语法自检（必做）
 
 生成或修改 workflow 脚本后、写盘交付前，先跑本 skill 自带的语法检查：
@@ -195,7 +205,9 @@ node <skill 目录>/scripts/wf-syntax-check.cjs <脚本路径> [更多脚本...]
 
 ## 参考
 
+- [生成前问询：本文件开头章节，动笔前必读](#生成前问询必做动笔之前)
 - [runtime API 详解](references/runtime.md)
+- [性能与质量模式手册](references/performance.md)
 - [Schedule 定时执行](references/schedule.md)
 - [范例：扇出汇总](examples/fan-out-and-synthesize.js)
 - [范例：分阶段流水线](examples/phased-pipeline-review.js)
